@@ -1,0 +1,13 @@
+services:
+  web-agent:
+    build: .
+    container_name: web-agent
+    ports:
+      - "89:89"
+    volumes:
+      - ./workspace:/app/workspace
+      - ./data:/app/data
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
