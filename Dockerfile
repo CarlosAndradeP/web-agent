@@ -3,7 +3,8 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ .
-RUN npm run build
+RUN chmod +x node_modules/.bin/* || true
+RUN npx vite build
 
 FROM node:22-alpine AS builder-backend
 WORKDIR /app

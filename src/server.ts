@@ -52,7 +52,9 @@ app.use('/api/files', createFilesRouter(configRepo));
 app.use('/api/config', createConfigRouter(configRepo));
 app.use('/api/sessions', createSessionsRouter(db));
 
-const publicDir = join(process.cwd(), 'frontend', 'dist');
+const publicDir = existsSync(join(process.cwd(), 'public'))
+  ? join(process.cwd(), 'public')
+  : join(process.cwd(), 'frontend', 'dist');
 if (existsSync(publicDir)) {
   app.use(express.static(publicDir));
   app.get('{*path}', (_req, res) => {

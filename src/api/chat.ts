@@ -3,11 +3,14 @@ import type Database from 'better-sqlite3';
 import type { TaskManager } from '../services/task-manager.js';
 import { MessagesRepository } from '../db/repositories/messages.js';
 import { ConfigRepository } from '../db/repositories/config.js';
+import { SessionsRepository } from '../db/repositories/sessions.js';
+import { config } from '../config.js';
 
 export function createChatRouter(db: Database.Database, taskManager: TaskManager) {
   const router = Router();
   const messagesRepo = new MessagesRepository(db);
   const configRepo = new ConfigRepository(db);
+  const sessionsRepo = new SessionsRepository(db);
 
   router.post('/', async (req, res) => {
     const { sessionId, model, messages, maxSteps } = req.body;
@@ -17,7 +20,16 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       return;
     }
 
-    const effectiveSessionId = sessionId ?? (db.prepare('SELECT id FROM sessions LIMIT 1').get() as any)?.id ?? 'default';
+    let effectiveSessionId = sessionId;
+    if (!effectiveSessionId) {
+      const sessions = sessionsRepo.list();
+      if (sessions.length === 0) {
+        const session = sessionsRepo.create('Default Session', config.defaultModel);
+        effectiveSessionId = session.id;
+      } else {
+        effectiveSessionId = sessions[0].id;
+      }
+    }
 
     for (const msg of messages) {
       messagesRepo.create(effectiveSessionId, msg.role, msg.content);
