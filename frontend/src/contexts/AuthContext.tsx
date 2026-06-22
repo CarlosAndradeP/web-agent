@@ -76,7 +76,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accessToken]);
 
   const updateCredits = useCallback((credits: number) => {
-    setUser(prev => prev ? { ...prev, credits } : null);
+    setUser(prev => {
+      if (!prev) return null;
+      const updated = { ...prev, credits };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
   }, []);
 
   const socketRef = useRef<Socket | null>(null);
@@ -86,6 +91,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const socket = io('/', { path: '/socket.io' });
     socketRef.current = socket;
+
+    socket.emit('user:join', { userId: user.id });
 
     socket.on('credits:deducted', (data: { userId: string; newBalance: number }) => {
       if (user && data.userId === user.id) {

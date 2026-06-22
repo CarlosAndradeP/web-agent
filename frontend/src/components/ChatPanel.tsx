@@ -169,10 +169,16 @@ export default function ChatPanel({ sessionId }: Props) {
             <select
               value={selectedModel}
               onChange={e => setSelectedModel(e.target.value)}
-              className="bg-zinc-700 border border-zinc-600 rounded-md px-2 py-1 text-[11px] text-zinc-300 max-w-[140px] truncate shrink-0"
+              className="bg-zinc-700 border border-zinc-600 rounded-md px-2 py-1 text-[11px] text-zinc-300 max-w-[180px] truncate shrink-0"
+              title={models.find(m => m.id === selectedModel)
+                ? `${models.find(m => m.id === selectedModel)!.displayName || selectedModel} — ${models.find(m => m.id === selectedModel)?.costPerStep ?? 1} cr/step`
+                : selectedModel
+              }
             >
               {models.map(m => (
-                <option key={m.id} value={m.id}>{m.id.length > 20 ? m.id.slice(0, 20) + '...' : m.id}</option>
+                <option key={m.id} value={m.id}>
+                  {(m.displayName || m.id.length > 25 ? (m.displayName || m.id.slice(0, 25) + '...') : m.id)} ({m.costPerStep ?? 1}cr/s)
+                </option>
               ))}
             </select>
             {isStreaming ? (

@@ -57,6 +57,8 @@ export class TasksRepository {
       currentStep: row.current_step,
       result: row.result,
       error: row.error,
+      userId: row.user_id ?? undefined,
+      workspaceDir: row.workspace_dir ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

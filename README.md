@@ -1,6 +1,6 @@
 # Web Agent
 
-Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cada usuário tem workspace isolado, sistema de créditos, e pode criar projetos publicáveis com chat vinculado e URL pública.
+Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cada usuário tem workspace isolado, sistema de créditos configurável por modelo, e pode criar projetos publicáveis com chat vinculado e URL pública.
 
 ## Stack
 
@@ -47,21 +47,32 @@ npm run dev:frontend
 - Painel admin: gerenciar usuários, créditos, roles
 
 ### Sistema de Créditos
-- 1 crédito por step do agente (cada tool use)
-- Atualização em tempo real via Socket.IO
+- Custo por step configurável por modelo (admin define no painel)
+- Atualização em tempo real via Socket.IO (room-scoped por usuário)
 - Tarefa abortada automaticamente se créditos esgotam
 - Mensagem amigável "Créditos esgotados"
 - Novo usuário: 100 créditos (configurável)
+- Exibição do custo por step no seletor de modelo do chat
+
+### Gerenciamento de Modelos (Admin)
+- Habilitar/desabilitar modelos para usuários
+- Definir custo por step para cada modelo
+- Definir nome de exibição (displayName) customizado
+- Modelos offline (não disponíveis na API) são sinalizados
+- Alterações refletem imediatamente no chat dos usuários
 
 ### Projetos
 - Sidebar mostra projetos (não sessões)
 - Cada projeto tem chat vinculado = contexto do agente
+- Cada projeto opera em sua subpasta no workspace (isolamento)
 - URL pública: `/p/<uuid>/`
 - 3 tipos: Static, PHP (Apache), Node.js (subprocess)
 - Publish direto do FileManager
+- Projetos com falha de mount são marcados como `error` automaticamente
 
 ### FileManager
 - Árvore de arquivos com preview
+- Escopado ao projeto ativo (não lista toda a workspace)
 - Criar arquivo/pasta, renomear, deletar (arquivo e pasta)
 - Upload drag & drop
 - Publicar pasta como projeto
@@ -71,6 +82,7 @@ npm run dev:frontend
 - Autocorreção: analisa erros, corrige e tenta novamente
 - Streaming em tempo real via SSE
 - Aprovação customizável (nenhuma/todas/custom) — UI pronta, fluxo de pausa pendente
+- Opera no escopo do projeto ativo (workspace do projeto, não raiz do usuário)
 
 ## Configuração
 
@@ -102,13 +114,13 @@ npm run dev:frontend
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `POST` | `/api/chat` | Chat com agente (SSE, credit check) |
-| `GET` | `/api/models` | Modelos disponíveis |
+| `GET` | `/api/models` | Modelos disponíveis (habilitados, com costPerStep) |
 | `GET/POST` | `/api/tasks` | Listar/criar tarefas |
 | `PATCH` | `/api/tasks/:id` | Atualizar/cancelar tarefa |
 | `GET/PUT/DELETE/POST` | `/api/files/*` | Operações de arquivo (per-user) |
 | `GET/PUT` | `/api/config` | Configurações |
 | `GET/POST` | `/api/sessions` | Sessões (filtradas por user) |
-| `GET/POST` | `/api/projects` | Projetos (auto-cria sessão) |
+| `GET/POST` | `/api/projects` | Projetos (auto-cria sessão + pasta) |
 
 ### Admin (auth + admin role)
 | Método | Rota | Descrição |
@@ -117,12 +129,16 @@ npm run dev:frontend
 | `POST` | `/api/admin/users/:id/credits` | Adicionar créditos |
 | `PATCH` | `/api/admin/users/:id/role` | Alterar role |
 | `DELETE` | `/api/admin/users/:id` | Deletar usuário |
-| `GET` | `/api/admin/stats` | Estatísticas globais |
+| `GET` | `/api/admin/users/:id/credits/history` | Histórico de créditos |
+| `GET` | `/api/admin/stats` | Estatísticas globais (ampliadas) |
+| `GET` | `/api/admin/models` | Listar todos os modelos com config |
+| `PUT` | `/api/admin/models/:modelId` | Configurar modelo (enabled, costPerStep, displayName) |
+| `DELETE` | `/api/admin/models/:modelId` | Remover configuração de modelo |
 
 ### Projetos (público por UUID)
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/p/<uuid>/*` | Servir projeto publicado |
+| `GET` | `/p/<uuid>/*` | Servir projeto publicado (static, php, node) |
 
 ## Ferramentas do Agente
 
@@ -143,23 +159,24 @@ npm run dev:frontend
 ```
 web-agent/
 ├── src/                    # Backend TypeScript
-│   ├── server.ts           # Express + Socket.IO + auth bootstrap
+│   ├── server.ts           # Express + Socket.IO + auth bootstrap + project remount
 │   ├── agent/              # ToolLoopAgent + 9 tools + provider
-│   ├── api/                # 9 REST routers (factory pattern)
-│   ├── db/                 # Schema + migration + 7 repositories
+│   ├── api/                # REST routers (auth, admin, chat, models, tasks, files, config, sessions, projects)
+│   ├── db/                 # Schema + migration + 8 repositories (incl. ModelConfigRepository)
 │   ├── middleware/          # Auth + Admin middleware
 │   ├── lib/                # JWT utilities
 │   ├── services/           # TaskManager, CreditManager, ProjectRouter, etc.
-│   └── websocket/          # Socket.IO events
+│   └── websocket/          # Socket.IO events (room-scoped)
 ├── frontend/               # React + Vite + TailwindCSS
 │   └── src/
-│       ├── components/     # 15+ components
-│       ├── contexts/       # AuthContext (auth + credits listener)
-│       ├── hooks/          # 6 hooks (useChat, useProjects, etc.)
+│       ├── components/     # 15+ components (AdminPanel com Models tab)
+│       ├── contexts/       # AuthContext (auth + credits listener + localStorage sync)
+│       ├── hooks/          # 6 hooks (useChat, useProjects, useFiles com basePath, etc.)
 │       └── lib/            # api.ts, auth-api.ts
 ├── apache/                 # Apache config (ports, vhost)
 ├── Dockerfile              # php:8.3-apache-bookworm multi-stage
 ├── docker-compose.yml
+├── fix.md                  # Documentação dos bugs corrigidos
 ├── documentation.md         # Documentação técnica completa
 └── plano.md                # Plano de desenvolvimento
 ```
@@ -174,9 +191,7 @@ web-agent/
 | `npm run build:frontend` | Build do frontend |
 | `npm run dev:frontend` | Frontend dev server (porta 5173) |
 
-## Bugs Conhecidos
-
-Veja detalhes em [`documentation.md`](documentation.md#15-bugs-conhecidos-e-pendências).
+## Bugs Conhecidos (pendentes)
 
 | Severidade | Bug |
 |-----------|-----|
@@ -186,3 +201,30 @@ Veja detalhes em [`documentation.md`](documentation.md#15-bugs-conhecidos-e-pend
 | Médio | Sem path traversal protection nas agent tools |
 | Baixo | `execution-sandbox.ts` é código morto |
 | Baixo | Node.js projects sem restart-on-crash |
+
+## Bugs Corrigidos
+
+Veja detalhes completos em [`fix.md`](fix.md).
+
+| Severidade | Bug | Resumo |
+|-----------|-----|--------|
+| Crítico | Créditos nunca eram deduzidos | `mapRow()` não mapeava `user_id`/`workspace_dir` |
+| Crítico | Agente escrevia no workspace global | Mesma causa — fallback para `appConfig.workspaceDir` |
+| Crítico | Rotas admin sem proteção de role | `adminMiddleware` não aplicado |
+| Médio | Projetos sem `index.html` carregavam SPA | `next()` no project-router caía no catch-all |
+| Médio | Projetos com falha de mount ficavam "active" | Status não atualizado no `catch` do startup |
+| Médio | Steps duplicados em `agent_steps` | Inserção no `onStepFinish` + `eventStream` |
+| Médio | Créditos broadcastados para todos os usuários | `io.emit()` → `io.to(user:ID).emit()` |
+| Baixo | Cache de créditos stale no localStorage | `updateCredits()` não sincronizava |
+
+## Schema — Tabela model_config
+
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| `id` | TEXT PK | UUID interno |
+| `model_id` | TEXT UNIQUE | ID do modelo (ex: `z-ai/glm-5.1`) |
+| `enabled` | INTEGER | 1=habilitado, 0=desabilitado (default 1) |
+| `cost_per_step` | REAL | Créditos por step (default 1) |
+| `display_name` | TEXT | Nome de exibição customizado |
+| `created_at` | DATETIME | |
+| `updated_at` | DATETIME | |

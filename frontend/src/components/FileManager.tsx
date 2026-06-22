@@ -117,8 +117,8 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
   );
 }
 
-export default function FileManager() {
-  const { tree, loading, refresh } = useFiles();
+export default function FileManager({ basePath = '.' }: { basePath?: string }) {
+  const { tree, loading, refresh } = useFiles(basePath);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('view');

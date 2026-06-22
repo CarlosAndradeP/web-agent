@@ -28,6 +28,7 @@ import { ApprovalManager } from './services/approval-manager.js';
 import { FileWatcher } from './services/file-watcher.js';
 import { setupWebSocket } from './websocket/index.js';
 import { authMiddleware } from './middleware/auth.js';
+import { adminMiddleware } from './middleware/admin.js';
 import { createLogger } from './services/logger.js';
 
 const log = createLogger('Server');
@@ -104,10 +105,10 @@ for (const u of allUsers) {
 
 app.use('/api/auth', createAuthRouter(db));
 
-app.use('/api/admin', authMiddleware, createAdminRouter(db, usersRepo, creditsRepo));
+app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo));
 
 app.use('/api/chat', authMiddleware, createChatRouter(db, taskManager, creditManager));
-app.use('/api/models', createModelsRouter(configRepo));
+app.use('/api/models', authMiddleware, createModelsRouter(db, configRepo));
 app.use('/api/tasks', authMiddleware, createTasksRouter(db, taskManager));
 app.use('/api/files', authMiddleware, createFilesRouter(configRepo));
 app.use('/api/config', authMiddleware, createConfigRouter(configRepo));
@@ -147,6 +148,9 @@ for (const p of allProjects) {
     }
   } catch (err: any) {
     log.warn('Failed to remount project on startup', { uuid: p.uuid, error: err.message });
+    try {
+      projectsRepo.updateStatus(p.id, 'error');
+    } catch {}
   }
 }
 

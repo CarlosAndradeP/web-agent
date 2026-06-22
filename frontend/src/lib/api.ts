@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction } from '../types';
 
 const BASE = '/api';
 
@@ -155,6 +155,14 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}`, { method: 'DELETE' }),
     creditHistory: (userId: string, limit?: number, offset?: number) =>
       fetchJSON<{ history: CreditTransaction[]; balance: number }>(`${BASE}/admin/users/${userId}/credits/history?limit=${limit || 50}&offset=${offset || 0}`),
-    stats: () => fetchJSON<{ totalUsers: number; totalProjects: number; totalTasks: number; totalCreditsUsed: number; totalCreditsGranted: number }>(`${BASE}/admin/stats`),
+    stats: () => fetchJSON<{ totalUsers: number; totalProjects: number; totalTasks: number; totalCreditsUsed: number; totalCreditsGranted: number; activeProjects: number; runningTasks: number; totalSteps: number }>(`${BASE}/admin/stats`),
+    models: () => fetchJSON<{ models: AdminModelInfo[] }>(`${BASE}/admin/models`),
+    updateModel: (modelId: string, data: { enabled?: boolean; costPerStep?: number; displayName?: string | null }) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/models/${encodeURIComponent(modelId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    deleteModelConfig: (modelId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/models/${encodeURIComponent(modelId)}`, { method: 'DELETE' }),
   },
 };

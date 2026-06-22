@@ -1,24 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import type { UserPublic, CreditTransaction } from '../types';
+import type { UserPublic, CreditTransaction, AdminModelInfo } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
-import { Users, CreditCard, BarChart3 } from 'lucide-react';
+import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-type AdminTab = 'users' | 'projects' | 'stats';
+type AdminTab = 'users' | 'models' | 'stats';
 
 export default function AdminPanel() {
   const [tab, setTab] = useState<AdminTab>('users');
   const [users, setUsers] = useState<UserPublic[]>([]);
   const [stats, setStats] = useState<any>(null);
+  const [models, setModels] = useState<AdminModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<UserPublic | null>(null);
   const [creditAmount, setCreditAmount] = useState('');
   const [creditHistory, setCreditHistory] = useState<CreditTransaction[]>([]);
   const [historyBalance, setHistoryBalance] = useState(0);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [editingModel, setEditingModel] = useState<string | null>(null);
+  const [editCost, setEditCost] = useState('');
+  const [editDisplayName, setEditDisplayName] = useState('');
 
   const loadUsers = useCallback(async () => {
     try {
@@ -38,10 +43,22 @@ export default function AdminPanel() {
     }
   }, []);
 
+  const loadModels = useCallback(async () => {
+    setModelsLoading(true);
+    try {
+      const data = await api.admin.models();
+      setModels(data.models);
+    } catch (err) {
+      console.error('Failed to load models:', err);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     setLoading(true);
-    loadUsers().then(() => loadStats()).then(() => setLoading(false));
-  }, [loadUsers, loadStats]);
+    Promise.all([loadUsers(), loadStats(), loadModels()]).finally(() => setLoading(false));
+  }, [loadUsers, loadStats, loadModels]);
 
   const handleAddCredits = async () => {
     if (!selectedUser || !creditAmount) return;
@@ -50,12 +67,12 @@ export default function AdminPanel() {
     try {
       await api.admin.addCredits(selectedUser.id, amount);
       setCreditAmount('');
-      loadUsers();
-      if (selectedUser) {
-        const data = await api.admin.creditHistory(selectedUser.id);
-        setCreditHistory(data.history);
-        setHistoryBalance(data.balance);
-      }
+      await loadUsers();
+      const refreshedUser = (await api.admin.users()).users.find((u: UserPublic) => u.id === selectedUser.id);
+      if (refreshedUser) setSelectedUser(refreshedUser);
+      const data = await api.admin.creditHistory(selectedUser.id);
+      setCreditHistory(data.history);
+      setHistoryBalance(data.balance);
     } catch (err) {
       console.error('Failed to add credits:', err);
     }
@@ -75,7 +92,7 @@ export default function AdminPanel() {
   const handleChangeRole = async (userId: string, role: 'admin' | 'user') => {
     try {
       await api.admin.changeRole(userId, role);
-      loadUsers();
+      await loadUsers();
     } catch (err) {
       console.error('Failed to change role:', err);
     }
@@ -86,10 +103,42 @@ export default function AdminPanel() {
     try {
       await api.admin.deleteUser(userId);
       if (selectedUser?.id === userId) setSelectedUser(null);
-      loadUsers();
+      await loadUsers();
     } catch (err) {
       console.error('Failed to delete user:', err);
     }
+  };
+
+  const handleToggleModel = async (modelId: string, currentEnabled: boolean) => {
+    try {
+      await api.admin.updateModel(modelId, { enabled: !currentEnabled });
+      await loadModels();
+    } catch (err) {
+      console.error('Failed to toggle model:', err);
+    }
+  };
+
+  const handleSaveModelConfig = async (modelId: string) => {
+    const cost = parseFloat(editCost);
+    if (isNaN(cost) || cost < 0) return;
+    try {
+      await api.admin.updateModel(modelId, {
+        costPerStep: cost,
+        displayName: editDisplayName || null,
+      });
+      setEditingModel(null);
+      setEditCost('');
+      setEditDisplayName('');
+      await loadModels();
+    } catch (err) {
+      console.error('Failed to save model config:', err);
+    }
+  };
+
+  const startEditModel = (model: AdminModelInfo) => {
+    setEditingModel(model.id);
+    setEditCost(String(model.costPerStep));
+    setEditDisplayName(model.displayName || '');
   };
 
   if (loading) {
@@ -98,7 +147,8 @@ export default function AdminPanel() {
 
   const tabs: { id: AdminTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'users', label: 'Users', icon: Users },
-    { id: 'stats', label: 'Statistics', icon: BarChart3 },
+    { id: 'models', label: 'Models', icon: Cpu },
+    { id: 'stats', label: 'Dashboard', icon: BarChart3 },
   ];
 
   return (
@@ -140,7 +190,7 @@ export default function AdminPanel() {
                     )}
                   >
                     <div className="h-7 w-7 rounded-full bg-zinc-700 flex items-center justify-center text-[10px] font-bold text-zinc-300">
-                      {u.username[0].toUpperCase()}
+                      {u.username ? u.username[0].toUpperCase() : '?'}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-zinc-200 truncate">{u.username}</div>
@@ -226,28 +276,186 @@ export default function AdminPanel() {
           </div>
         )}
 
-        {tab === 'stats' && stats && (
-          <div className="p-4">
-            <h2 className="text-sm font-semibold mb-4">Platform Statistics</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <StatCard label="Total Users" value={stats.totalUsers} />
-              <StatCard label="Total Projects" value={stats.totalProjects} />
-              <StatCard label="Total Tasks" value={stats.totalTasks} />
-              <StatCard label="Credits Used" value={stats.totalCreditsUsed} />
-              <StatCard label="Credits Granted" value={stats.totalCreditsGranted} />
+        {tab === 'models' && (
+          <ScrollArea className="h-full p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold">Model Management</h2>
+              <span className="text-[10px] text-zinc-500">{models.length} models available</span>
             </div>
-          </div>
+
+            {modelsLoading ? (
+              <div className="text-zinc-500 text-xs">Loading models...</div>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_80px_80px_80px_60px] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                  <span>Model</span>
+                  <span>Cost/Step</span>
+                  <span>Status</span>
+                  <span>Display Name</span>
+                  <span>Actions</span>
+                </div>
+
+                {models.map(model => (
+                  <div
+                    key={model.id}
+                    className={cn(
+                      'grid grid-cols-[1fr_80px_80px_80px_60px] gap-2 px-3 py-2.5 rounded-md items-center text-xs',
+                      model.enabled ? 'bg-zinc-900/50' : 'bg-zinc-900/30 opacity-60',
+                      model.offline && 'border border-yellow-500/30'
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono text-zinc-200 truncate text-[11px]">{model.id}</div>
+                      <div className="text-[10px] text-zinc-500 truncate">{model.name !== model.id ? model.name : ''}</div>
+                      {model.offline && <span className="text-[9px] text-yellow-500">offline</span>}
+                    </div>
+
+                    {editingModel === model.id ? (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={editCost}
+                          onChange={e => setEditCost(e.target.value)}
+                          className="h-6 text-[11px] w-16 px-1"
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-zinc-300 text-[11px] font-medium">
+                        {model.costPerStep} cr
+                      </span>
+                    )}
+
+                    <div>
+                      <button
+                        onClick={() => handleToggleModel(model.id, model.enabled)}
+                        className={cn(
+                          'flex items-center gap-1 text-[11px] transition-colors',
+                          model.enabled ? 'text-emerald-400' : 'text-red-400'
+                        )}
+                        title={model.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+                      >
+                        {model.enabled ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
+                        {model.enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+
+                    {editingModel === model.id ? (
+                      <Input
+                        value={editDisplayName}
+                        onChange={e => setEditDisplayName(e.target.value)}
+                        placeholder="Display name"
+                        className="h-6 text-[11px] w-full px-1"
+                      />
+                    ) : (
+                      <span className="text-zinc-400 text-[11px] truncate">
+                        {model.displayName || '—'}
+                      </span>
+                    )}
+
+                    <div className="flex gap-1">
+                      {editingModel === model.id ? (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[10px] text-emerald-400"
+                            onClick={() => handleSaveModelConfig(model.id)}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[10px]"
+                            onClick={() => setEditingModel(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => startEditModel(model)}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        )}
+
+        {tab === 'stats' && stats && (
+          <ScrollArea className="h-full p-4">
+            <h2 className="text-sm font-semibold mb-4">Dashboard</h2>
+
+            <div className="grid grid-cols-4 gap-3 mb-6">
+              <StatCard label="Total Users" value={stats.totalUsers} color="blue" />
+              <StatCard label="Active Projects" value={stats.activeProjects} color="emerald" />
+              <StatCard label="Total Tasks" value={stats.totalTasks} color="purple" />
+              <StatCard label="Running Tasks" value={stats.runningTasks} color="amber" />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              <StatCard label="Credits Granted" value={stats.totalCreditsGranted} color="green" />
+              <StatCard label="Credits Used" value={stats.totalCreditsUsed} color="red" />
+              <StatCard label="Agent Steps" value={stats.totalSteps} color="cyan" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <StatCard label="Total Projects" value={stats.totalProjects} color="emerald" />
+              <StatCard
+                label="Avg Credits/User"
+                value={stats.totalUsers > 0 ? Math.round((stats.totalCreditsGranted / stats.totalUsers) * 10) / 10 : 0}
+                color="blue"
+              />
+            </div>
+
+            {users.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold text-zinc-400 mb-3">Top Users by Credits</h3>
+                <div className="space-y-1">
+                  {[...users].sort((a, b) => b.credits - a.credits).slice(0, 5).map((u, i) => (
+                    <div key={u.id} className="flex items-center gap-2 px-2 py-1.5 text-xs">
+                      <span className="text-zinc-500 w-4 text-right">{i + 1}.</span>
+                      <span className="text-zinc-200 flex-1">{u.username}</span>
+                      <span className={cn('font-medium', u.credits > 0 ? 'text-emerald-400' : 'text-red-400')}>
+                        {u.credits.toLocaleString()} cr
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </ScrollArea>
         )}
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
+function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+  const colorClasses: Record<string, string> = {
+    blue: 'border-blue-500/20 text-blue-400',
+    emerald: 'border-emerald-500/20 text-emerald-400',
+    purple: 'border-purple-500/20 text-purple-400',
+    amber: 'border-amber-500/20 text-amber-400',
+    green: 'border-green-500/20 text-green-400',
+    red: 'border-red-500/20 text-red-400',
+    cyan: 'border-cyan-500/20 text-cyan-400',
+  };
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
+    <div className={cn('bg-zinc-900 border rounded-lg p-3', colorClasses[color] || 'border-zinc-800')}>
       <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">{label}</div>
-      <div className="text-lg font-bold text-zinc-100 mt-1">{value.toLocaleString()}</div>
+      <div className="text-lg font-bold mt-1">{value.toLocaleString()}</div>
     </div>
   );
 }

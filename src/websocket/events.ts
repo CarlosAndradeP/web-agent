@@ -11,6 +11,11 @@ export function registerSocketEvents(socket: Socket, io: Server, approvalManager
     socket.join(`session:${data.sessionId}`);
   });
 
+  socket.on('user:join', (data: { userId: string }) => {
+    log.debug('User join', { socketId: socket.id, userId: data.userId });
+    socket.join(`user:${data.userId}`);
+  });
+
   socket.on('task:subscribe', (data: { taskId: string }) => {
     log.debug('Task subscribe', { socketId: socket.id, taskId: data.taskId });
     socket.join(`task:${data.taskId}`);

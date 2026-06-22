@@ -25,7 +25,7 @@ export class ProjectRouter {
   middleware(): express.RequestHandler {
     return (req, res, next) => {
       const urlPath = req.url;
-      const match = urlPath.match(/^\/([^/]+)(?:\/(.*))?$/);
+      const match = urlPath.match(/^\/([^/?]+)(?:\/([^?]*))?(?:\?.*)?$/);
       if (!match) {
         next();
         return;
@@ -38,8 +38,16 @@ export class ProjectRouter {
         return;
       }
 
-      req.url = match[2] ? `/${match[2]}` : '/';
-      active.middleware(req, res, next);
+      req.url = match[2] !== undefined && match[2] !== '' ? `/${match[2]}` : '/';
+
+      const originalNext = next;
+      active.middleware(req, res, (err?: any) => {
+        if (active.project.type === 'static') {
+          res.status(404).send('Not Found');
+        } else {
+          originalNext(err);
+        }
+      });
     };
   }
 

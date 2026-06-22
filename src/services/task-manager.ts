@@ -73,8 +73,8 @@ export class TaskManager {
     this.tasksRepo.updateStatus(taskId, 'running');
     const appConfig = this.configRepo.getAll();
     const model = task.model ?? appConfig.defaultModel;
-    const workspaceDir = (task as any).workspace_dir ?? appConfig.workspaceDir;
-    const userId = (task as any).user_id;
+    const workspaceDir = task.workspaceDir ?? appConfig.workspaceDir;
+    const userId = task.userId;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -97,6 +97,7 @@ export class TaskManager {
 
       const self = this;
       const creditManager = this.creditManager;
+      const costPerStep = creditManager.getCostPerStep(model);
 
       const result = await agent.generate({
         prompt: task.description,
@@ -108,21 +109,11 @@ export class TaskManager {
           }
           if (userId && toolResults?.length) {
             try {
-              creditManager.deductCredit(userId, taskId);
+              creditManager.deductCredit(userId, taskId, costPerStep);
             } catch (creditErr: any) {
               log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
               abortController.abort();
             }
-          }
-          for (const tr of toolResults ?? []) {
-            const tc = toolCalls?.find((t: any) => t.toolCallId === (tr as any).toolCallId);
-            self.insertStep(
-              taskId, stepNumber,
-              tc?.toolName ?? null,
-              tc ? JSON.stringify((tc as any).input ?? {}).slice(0, 5000) : null,
-              JSON.stringify((tr as any).output ?? (tr as any)).slice(0, 5000),
-              null
-            );
           }
         },
       });
@@ -154,8 +145,8 @@ export class TaskManager {
     this.tasksRepo.updateStatus(taskId, 'running');
     const appConfig = this.configRepo.getAll();
     const model = task.model ?? appConfig.defaultModel;
-    const workspaceDir = (task as any).workspace_dir ?? appConfig.workspaceDir;
-    const userId = (task as any).user_id;
+    const workspaceDir = task.workspaceDir ?? appConfig.workspaceDir;
+    const userId = task.userId;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -177,6 +168,8 @@ export class TaskManager {
 
     log.info('Agent created, calling stream()...', { taskId, model });
 
+    const costPerStep = this.creditManager.getCostPerStep(model);
+
     try {
       const streamResult = await agent.stream({
         prompt: task.description,
@@ -188,21 +181,11 @@ export class TaskManager {
           }
           if (userId && toolResults?.length) {
             try {
-              this.creditManager.deductCredit(userId, taskId);
+              this.creditManager.deductCredit(userId, taskId, costPerStep);
             } catch (creditErr: any) {
               log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
               abortController.abort();
             }
-          }
-          for (const tr of toolResults ?? []) {
-            const tc = toolCalls?.find((t: any) => t.toolCallId === (tr as any).toolCallId);
-            this.insertStep(
-              taskId, stepNumber,
-              tc?.toolName ?? null,
-              tc ? JSON.stringify((tc as any).input ?? {}).slice(0, 5000) : null,
-              JSON.stringify((tr as any).output ?? (tr as any)).slice(0, 5000),
-              null
-            );
           }
         },
       });

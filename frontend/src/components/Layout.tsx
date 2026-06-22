@@ -142,7 +142,7 @@ export default function Layout() {
             </div>
           </div>
           <div className={activeTab === 'files' ? 'h-full' : 'h-full hidden'}>
-            <FileManager />
+            <FileManager basePath={activeProject?.folderPath || '.'} />
           </div>
           <div className={activeTab === 'config' ? 'h-full' : 'h-full hidden'}>
             <ConfigPanel />

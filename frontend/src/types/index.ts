@@ -77,6 +77,19 @@ export interface ModelInfo {
   id: string;
   name: string;
   contextLength?: number;
+  costPerStep?: number;
+  displayName?: string;
+}
+
+export interface AdminModelInfo {
+  id: string;
+  name: string;
+  contextLength?: number;
+  enabled: boolean;
+  costPerStep: number;
+  displayName: string | null;
+  configured: boolean;
+  offline?: boolean;
 }
 
 export interface UserPublic {

@@ -6,9 +6,11 @@ import { MessagesRepository } from '../db/repositories/messages.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { SessionsRepository } from '../db/repositories/sessions.js';
 import { UsersRepository } from '../db/repositories/users.js';
+import { ProjectsRepository } from '../db/repositories/projects.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { config } from '../config.js';
 import { resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
 
 const log = createLogger('ChatAPI');
@@ -19,6 +21,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
   const configRepo = new ConfigRepository(db);
   const sessionsRepo = new SessionsRepository(db);
   const usersRepo = new UsersRepository(db);
+  const projectsRepo = new ProjectsRepository(db);
 
   router.post('/', async (req, res) => {
     const { sessionId, model, messages, maxSteps } = req.body;
@@ -27,16 +30,9 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     const username = user?.username ?? 'default';
 
     let workspaceDir = resolve(config.workspaceBaseDir, username);
+
     if (userId && !creditManager.hasCredits(userId)) {
       res.status(402).json({ error: 'Insufficient credits. Please contact admin to add more credits.' });
-      return;
-    }
-
-    log.info('Chat request received', { sessionId, model, messageCount: messages?.length, maxSteps, userId });
-
-    if (!messages?.length) {
-      log.warn('Chat request rejected: no messages');
-      res.status(400).json({ error: 'messages are required' });
       return;
     }
 
@@ -69,6 +65,28 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
             db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
           } catch {}
         }
+      }
+    }
+
+    log.info('Chat request received', { sessionId: model, messageCount: messages?.length, maxSteps, userId, workspaceDir });
+
+    if (!messages?.length) {
+      log.warn('Chat request rejected: no messages');
+      res.status(400).json({ error: 'messages are required' });
+      return;
+    }
+
+    if (effectiveSessionId) {
+      try {
+        const projectRow = db.prepare('SELECT * FROM projects WHERE session_id = ?').get(effectiveSessionId) as any;
+        if (projectRow && projectRow.folder_path) {
+          const projectDir = resolve(config.workspaceBaseDir, username, projectRow.folder_path);
+          mkdirSync(projectDir, { recursive: true });
+          workspaceDir = projectDir;
+          log.info('Using project workspace directory', { sessionId: effectiveSessionId, workspaceDir });
+        }
+      } catch (err: any) {
+        log.warn('Failed to resolve project workspace', { error: err.message });
       }
     }
 
