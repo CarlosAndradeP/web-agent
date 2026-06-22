@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import { ProjectsRepository } from '../db/repositories/projects.js';
+import { SessionsRepository } from '../db/repositories/sessions.js';
 import { ProjectRouter } from '../services/project-router.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { config } from '../config.js';
 import { resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
 
 const log = createLogger('ProjectsAPI');
@@ -13,6 +15,7 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
   const router = Router();
   const projectsRepo = new ProjectsRepository(db);
   const usersRepo = new UsersRepository(db);
+  const sessionsRepo = new SessionsRepository(db);
 
   router.get('/', (req, res) => {
     const userId = req.user!.userId;
@@ -38,12 +41,24 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
       return;
     }
 
-    const project = projectsRepo.create(userId, name, folderPath, type);
+    const session = sessionsRepo.create(name, config.defaultModel);
+    try {
+      db.prepare('UPDATE sessions SET user_id = ?, project_id = ? WHERE id = ?').run(userId, null, session.id);
+    } catch {}
+
+    const workspaceDir = resolve(config.workspaceBaseDir, user.username);
+    mkdirSync(workspaceDir, { recursive: true });
+    const projectDir = resolve(workspaceDir, folderPath);
+    mkdirSync(projectDir, { recursive: true });
+
+    const project = projectsRepo.create(userId, name, folderPath, type, session.id);
 
     try {
-      const workspaceDir = resolve(config.workspaceBaseDir, user.username);
-      const fullFolderPath = resolve(workspaceDir, folderPath);
+      db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
+    } catch {}
 
+    try {
+      const fullFolderPath = resolve(workspaceDir, folderPath);
       projectRouter.mountProject(project, fullFolderPath);
       log.info('Project published', { projectId: project.id, uuid: project.uuid, type });
     } catch (err: any) {
@@ -78,6 +93,12 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
       projectRouter.unmountProject(project);
     } catch (err: any) {
       log.warn('Failed to unmount project cleanly', { projectId: project.id, error: err.message });
+    }
+
+    if (project.sessionId) {
+      try {
+        sessionsRepo.delete(project.sessionId);
+      } catch {}
     }
 
     projectsRepo.delete(project.id);

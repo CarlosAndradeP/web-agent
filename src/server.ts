@@ -21,6 +21,7 @@ import { createAuthRouter } from './api/auth.js';
 import { createAdminRouter } from './api/admin.js';
 import { createProjectsRouter } from './api/projects.js';
 import { ProjectRouter } from './services/project-router.js';
+import { ProjectsRepository } from './db/repositories/projects.js';
 import { CreditManager } from './services/credit-manager.js';
 import { TaskManager } from './services/task-manager.js';
 import { ApprovalManager } from './services/approval-manager.js';
@@ -92,6 +93,15 @@ const fileWatcher = new FileWatcher();
 
 mkdirSync(config.workspaceBaseDir, { recursive: true });
 
+const allUsers = usersRepo.list();
+for (const u of allUsers) {
+  const userDir = resolve(config.workspaceBaseDir, u.username);
+  if (!existsSync(userDir)) {
+    mkdirSync(userDir, { recursive: true });
+    log.info('Created workspace for user', { username: u.username, dir: userDir });
+  }
+}
+
 app.use('/api/auth', createAuthRouter(db));
 
 app.use('/api/admin', authMiddleware, createAdminRouter(db, usersRepo, creditsRepo));
@@ -122,10 +132,23 @@ if (existsSync(publicDir)) {
 setupWebSocket(io, approvalManager, taskManager);
 log.info('WebSocket setup complete');
 
-const adminWorkspaceDir = resolve(config.workspaceBaseDir, 'admin');
-mkdirSync(adminWorkspaceDir, { recursive: true });
-fileWatcher.start(adminWorkspaceDir, io);
-log.info('File watcher started', { dir: adminWorkspaceDir });
+fileWatcher.start(config.workspaceBaseDir, io);
+log.info('File watcher started', { dir: config.workspaceBaseDir });
+
+const projectsRepo = new ProjectsRepository(db);
+const allProjects = projectsRepo.listAll();
+for (const p of allProjects) {
+  try {
+    const pUser = usersRepo.findById(p.userId);
+    if (pUser && p.status === 'active') {
+      const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, p.folderPath);
+      projectRouter.mountProject(p, fullFolderPath);
+      log.info('Remounted project on startup', { uuid: p.uuid, name: p.name });
+    }
+  } catch (err: any) {
+    log.warn('Failed to remount project on startup', { uuid: p.uuid, error: err.message });
+  }
+}
 
 httpServer.listen(config.port, () => {
   log.info(`Web Agent running on http://localhost:${config.port}`);

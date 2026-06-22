@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
-import TaskManager from './TaskManager';
 import FileManager from './FileManager';
 import ConfigPanel from './ConfigPanel';
 import AdminPanel from './AdminPanel';
@@ -9,19 +8,25 @@ import Header from './Header';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
+import { useProjects } from '../hooks/useProjects';
 import { useSessions } from '../hooks/useSessions';
 import { useSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../lib/api';
+import type { Project } from '../types';
 
 type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin';
 
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
-  const [sessionId, setSessionId] = useState('default');
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [newSessionName, setNewSessionName] = useState('');
-  const { sessions, createSession, deleteSession } = useSessions();
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectType, setNewProjectType] = useState<'static' | 'php' | 'node'>('static');
+  const { projects, createProject, deleteProject, refresh: refreshProjects } = useProjects();
+  const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
   const { user } = useAuth();
 
@@ -33,25 +38,50 @@ export default function Layout() {
     setMobileMenuOpen(false);
   }, [isAdmin]);
 
-  const handleSessionCreate = useCallback(async () => {
-    const name = newSessionName.trim() || `Session ${sessions.length + 1}`;
-    const session = await createSession(name);
-    setSessionId(session.id);
-    setNewSessionName('');
-    setShowCreateDialog(false);
-  }, [newSessionName, sessions.length, createSession]);
-
-  const handleSessionDelete = useCallback(async (id: string) => {
-    await deleteSession(id);
-    if (id === sessionId) {
-      setSessionId(sessions.length > 1 ? sessions.find(s => s.id !== id)?.id || 'default' : 'default');
+  const handleProjectCreate = useCallback(async () => {
+    const name = newProjectName.trim() || `Project ${projects.length + 1}`;
+    const folderPath = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    try {
+      const project = await createProject(name, folderPath, newProjectType);
+      setActiveProjectId(project.id);
+      if (project.sessionId) {
+        setSessionId(project.sessionId);
+      }
+      setNewProjectName('');
+      setNewProjectType('static');
+      setShowCreateDialog(false);
+      setActiveTab('chat');
+    } catch (err: any) {
+      alert(`Failed to create project: ${err.message}`);
     }
-  }, [deleteSession, sessionId, sessions]);
+  }, [newProjectName, newProjectType, projects.length, createProject]);
 
-  const handleSessionSelect = useCallback((id: string) => {
-    setSessionId(id);
+  const handleProjectDelete = useCallback(async (id: string) => {
+    const project = projects.find(p => p.id === id);
+    await deleteProject(id);
+    if (id === activeProjectId) {
+      const remaining = projects.filter(p => p.id !== id);
+      if (remaining.length > 0) {
+        setActiveProjectId(remaining[0].id);
+        setSessionId(remaining[0].sessionId);
+      } else {
+        setActiveProjectId(null);
+        setSessionId(null);
+      }
+    }
+  }, [deleteProject, activeProjectId, projects]);
+
+  const handleProjectSelect = useCallback((projectId: string, projSessionId: string | null) => {
+    setActiveProjectId(projectId);
+    if (projSessionId) {
+      setSessionId(projSessionId);
+    }
+    setActiveTab('chat');
     setMobileMenuOpen(false);
   }, []);
+
+  const effectiveSessionId = sessionId || 'default';
+  const activeProject = projects.find(p => p.id === activeProjectId);
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-zinc-950 text-zinc-100">
@@ -59,11 +89,11 @@ export default function Layout() {
         <Sidebar
           activeTab={activeTab}
           onTabChange={handleTabChange}
-          sessions={sessions}
-          activeSessionId={sessionId}
-          onSessionSelect={handleSessionSelect}
-          onSessionCreate={() => setShowCreateDialog(true)}
-          onSessionDelete={handleSessionDelete}
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onProjectSelect={handleProjectSelect}
+          onProjectCreate={() => setShowCreateDialog(true)}
+          onProjectDelete={handleProjectDelete}
           isRunning={false}
         />
       </div>
@@ -75,11 +105,11 @@ export default function Layout() {
             <Sidebar
               activeTab={activeTab}
               onTabChange={handleTabChange}
-              sessions={sessions}
-              activeSessionId={sessionId}
-              onSessionSelect={handleSessionSelect}
-              onSessionCreate={() => setShowCreateDialog(true)}
-              onSessionDelete={handleSessionDelete}
+              projects={projects}
+              activeProjectId={activeProjectId}
+              onProjectSelect={handleProjectSelect}
+              onProjectCreate={() => setShowCreateDialog(true)}
+              onProjectDelete={handleProjectDelete}
               isRunning={false}
             />
           </div>
@@ -91,15 +121,25 @@ export default function Layout() {
           onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
           menuOpen={mobileMenuOpen}
           isRunning={false}
-          sessionName={sessions.find(s => s.id === sessionId)?.name}
+          sessionName={activeProject?.name}
         />
 
         <main className="flex-1 overflow-hidden relative">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
-            <ChatPanel sessionId={sessionId} />
+            {effectiveSessionId ? (
+              <ChatPanel sessionId={effectiveSessionId} />
+            ) : (
+              <div className="flex items-center justify-center h-full text-zinc-600">
+                <div className="text-center">
+                  <p className="text-sm">Select or create a project to start</p>
+                </div>
+              </div>
+            )}
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
-            <TaskManager />
+            <div className="flex items-center justify-center h-full text-zinc-600">
+              <p className="text-sm">Tasks are tracked per-project in the chat</p>
+            </div>
           </div>
           <div className={activeTab === 'files' ? 'h-full' : 'h-full hidden'}>
             <FileManager />
@@ -118,20 +158,32 @@ export default function Layout() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Session</DialogTitle>
-            <DialogDescription>Create a new conversation session</DialogDescription>
+            <DialogTitle>New Project</DialogTitle>
+            <DialogDescription>Create a new project with a linked chat session</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <Input
-              placeholder="Session name..."
-              value={newSessionName}
-              onChange={e => setNewSessionName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSessionCreate()}
+              placeholder="Project name..."
+              value={newProjectName}
+              onChange={e => setNewProjectName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleProjectCreate()}
               autoFocus
             />
+            <div>
+              <label className="text-xs text-zinc-500 mb-1 block">Project Type</label>
+              <select
+                value={newProjectType}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewProjectType(e.target.value as any)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
+              >
+                <option value="static">Static (HTML/CSS/JS)</option>
+                <option value="php">PHP (via Apache)</option>
+                <option value="node">Node.js (Express, etc.)</option>
+              </select>
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
-              <Button onClick={handleSessionCreate}>Create</Button>
+              <Button onClick={handleProjectCreate}>Create</Button>
             </div>
           </div>
         </DialogContent>

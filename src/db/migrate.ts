@@ -9,6 +9,8 @@ export function migrate(db: Database.Database): void {
     { table: 'messages', column: 'user_id', type: 'TEXT' },
     { table: 'tasks', column: 'user_id', type: 'TEXT' },
     { table: 'tasks', column: 'workspace_dir', type: 'TEXT' },
+    { table: 'sessions', column: 'project_id', type: 'TEXT' },
+    { table: 'projects', column: 'session_id', type: 'TEXT' },
   ];
 
   for (const stmt of alterStatements) {

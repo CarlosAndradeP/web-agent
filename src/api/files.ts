@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { resolve } from 'node:path';
-import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, createReadStream, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, createReadStream, existsSync, renameSync } from 'node:fs';
 import multer from 'multer';
 import type { ConfigRepository } from '../db/repositories/config.js';
 import type { FileEntry } from '../types/index.js';
@@ -14,17 +14,18 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   const getWorkspaceDir = (req: any) => {
     const userId = req.user?.userId;
-    if (userId) {
-      try {
-        const db = (configRepo as any).db;
-        const usersRepo = new UsersRepository(db);
-        const user = usersRepo.findById(userId);
-        if (user) {
-          return resolve(config.workspaceBaseDir, user.username);
-        }
-      } catch {}
+    if (!userId) {
+      return null;
     }
-    return configRepo.getAll().workspaceDir;
+    const db = (configRepo as any).db;
+    const usersRepo = new UsersRepository(db);
+    const user = usersRepo.findById(userId);
+    if (!user) {
+      return null;
+    }
+    const dir = resolve(config.workspaceBaseDir, user.username);
+    mkdirSync(dir, { recursive: true });
+    return dir;
   };
 
   const safePath = (workspaceDir: string, path: string): string => {
@@ -37,6 +38,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.get('/', (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const path = (req.query.path as string) ?? '.';
     const recursive = req.query.recursive === 'true';
     try {
@@ -50,6 +55,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.get('/content', (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const path = req.query.path as string;
     if (!path) {
       res.status(400).json({ error: 'path query parameter is required' });
@@ -73,6 +82,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.get('/download', (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const path = req.query.path as string;
     if (!path) {
       res.status(400).json({ error: 'path query parameter is required' });
@@ -98,6 +111,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.put('/', (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const { path, content } = req.body;
     if (!path || content === undefined) {
       res.status(400).json({ error: 'path and content are required' });
@@ -115,6 +132,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.post('/upload', upload.array('files', 20), (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const files = req.files as Express.Multer.File[];
     const dest = (req.body.destination as string) || '';
     if (!files || files.length === 0) {
@@ -141,6 +162,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.post('/mkdir', (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const { path } = req.body;
     if (!path) {
       res.status(400).json({ error: 'path is required' });
@@ -157,6 +182,10 @@ export function createFilesRouter(configRepo: ConfigRepository) {
 
   router.delete('/', (req, res) => {
     const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const path = req.query.path as string;
     if (!path) {
       res.status(400).json({ error: 'path query parameter is required' });
@@ -165,6 +194,48 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     try {
       const fullPath = safePath(workspaceDir, path);
       rmSync(fullPath, { recursive: true, force: true });
+      res.json({ success: true, path });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/rename', (req, res) => {
+    const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const { oldPath, newPath } = req.body;
+    if (!oldPath || !newPath) {
+      res.status(400).json({ error: 'oldPath and newPath are required' });
+      return;
+    }
+    try {
+      const fullOld = safePath(workspaceDir, oldPath);
+      const fullNew = safePath(workspaceDir, newPath);
+      renameSync(fullOld, fullNew);
+      res.json({ success: true, oldPath, newPath });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/create-file', (req, res) => {
+    const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const { path } = req.body;
+    if (!path) {
+      res.status(400).json({ error: 'path is required' });
+      return;
+    }
+    try {
+      const fullPath = safePath(workspaceDir, path);
+      mkdirSync(resolve(fullPath, '..'), { recursive: true });
+      writeFileSync(fullPath, '', 'utf-8');
       res.json({ success: true, path });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

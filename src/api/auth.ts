@@ -6,6 +6,9 @@ import { CreditsRepository } from '../db/repositories/credits.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { createLogger } from '../services/logger.js';
 import { v4 as uuid } from 'uuid';
+import { resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { config } from '../config.js';
 
 const log = createLogger('AuthAPI');
 
@@ -60,6 +63,9 @@ export function createAuthRouter(db: Database.Database) {
     const initialCredits = 100;
     const user = usersRepo.create(username, password, 'user', initialCredits, email);
     creditsRepo.add(user.id, initialCredits, 'bonus', 'Initial credits');
+
+    mkdirSync(resolve(config.workspaceBaseDir, username), { recursive: true });
+
     log.info('User registered', { userId: user.id, username: user.username });
 
     const accessToken = signAccessToken({ userId: user.id, role: user.role });

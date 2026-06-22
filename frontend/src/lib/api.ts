@@ -105,6 +105,16 @@ export const api = {
       const token = localStorage.getItem('webagent_access_token');
       return `${BASE}/files/download?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
     },
+    rename: (oldPath: string, newPath: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/files/rename`, {
+        method: 'POST',
+        body: JSON.stringify({ oldPath, newPath }),
+      }),
+    createFile: (path: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/files/create-file`, {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      }),
   },
   chat: {
     stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number) => {

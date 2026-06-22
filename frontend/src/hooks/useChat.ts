@@ -58,6 +58,9 @@ export function useChat(sessionId: string) {
       const response = await api.chat.stream(sessionId, model, allMessages, maxSteps);
 
       if (!response.ok) {
+        if (response.status === 402) {
+          throw new Error('Créditos esgotados. Contate o administrador para adicionar mais créditos.');
+        }
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
 

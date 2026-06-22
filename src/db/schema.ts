@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   name TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT 'z-ai/glm-5.1',
   user_id TEXT,
+  project_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS projects (
   port INTEGER,
   pid INTEGER,
   status TEXT NOT NULL DEFAULT 'active',
+  session_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

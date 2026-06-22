@@ -110,6 +110,7 @@ export interface Project {
   port: number | null;
   pid: number | null;
   status: 'active' | 'stopped' | 'error';
+  sessionId: string | null;
   createdAt: string;
   updatedAt: string;
 }

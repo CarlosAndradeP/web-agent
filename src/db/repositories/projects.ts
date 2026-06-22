@@ -14,6 +14,7 @@ export interface Project {
   port: number | null;
   pid: number | null;
   status: 'active' | 'stopped' | 'error';
+  sessionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,14 +22,14 @@ export interface Project {
 export class ProjectsRepository {
   constructor(private db: Database.Database) {}
 
-  create(userId: string, name: string, folderPath: string, type: Project['type']): Project {
+  create(userId: string, name: string, folderPath: string, type: Project['type'], sessionId?: string): Project {
     const id = uuid();
     const projectUuid = uuid();
     const now = new Date().toISOString();
     this.db.prepare(
-      'INSERT INTO projects (id, uuid, user_id, name, folder_path, type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, projectUuid, userId, name, folderPath, type, 'active', now, now);
-    log.info('Project created', { id, uuid: projectUuid, userId, name, type });
+      'INSERT INTO projects (id, uuid, user_id, name, folder_path, type, status, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, projectUuid, userId, name, folderPath, type, 'active', sessionId ?? null, now, now);
+    log.info('Project created', { id, uuid: projectUuid, userId, name, type, sessionId });
     return this.findById(id)!;
   }
 
@@ -86,6 +87,7 @@ export class ProjectsRepository {
       port: row.port,
       pid: row.pid,
       status: row.status,
+      sessionId: row.session_id ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

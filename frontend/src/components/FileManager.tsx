@@ -25,6 +25,7 @@ import {
   FilePlus,
   FolderPlus,
   Globe,
+  Pencil,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -36,11 +37,12 @@ interface FileNodeProps {
   depth: number;
   selectedPath: string | null;
   onSelect: (path: string, type: string) => void;
-  onDelete: (path: string) => void;
+  onDelete: (path: string, type: string) => void;
+  onRename: (path: string, type: string) => void;
   onDownload: (path: string) => void;
 }
 
-function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onDownload }: FileNodeProps) {
+function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRename, onDownload }: FileNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const isDir = entry.type === 'directory';
   const isSelected = selectedPath === path;
@@ -72,8 +74,15 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onDown
         {entry.size != null && (
           <span className="text-[10px] text-zinc-600 shrink-0">{(entry.size / 1024).toFixed(1)}KB</span>
         )}
-        {!isDir && (
-          <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+        <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+          <button
+            onClick={e => { e.stopPropagation(); onRename(path, entry.type); }}
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors"
+            title="Rename"
+          >
+            <Pencil className="h-3 w-3 text-zinc-400" />
+          </button>
+          {!isDir && (
             <button
               onClick={e => { e.stopPropagation(); onDownload(path); }}
               className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors"
@@ -81,15 +90,15 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onDown
             >
               <Download className="h-3 w-3 text-zinc-400" />
             </button>
-            <button
-              onClick={e => { e.stopPropagation(); onDelete(path); }}
-              className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors"
-              title="Delete"
-            >
-              <Trash2 className="h-3 w-3 text-zinc-400 hover:text-red-400" />
-            </button>
-          </div>
-        )}
+          )}
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(path, entry.type); }}
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors"
+            title="Delete"
+          >
+            <Trash2 className="h-3 w-3 text-zinc-400 hover:text-red-400" />
+          </button>
+        </div>
       </div>
       {isDir && expanded && entry.children && entry.children.map(child => (
         <FileNode
@@ -100,6 +109,7 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onDown
           selectedPath={selectedPath}
           onSelect={onSelect}
           onDelete={onDelete}
+          onRename={onRename}
           onDownload={onDownload}
         />
       ))}
@@ -118,9 +128,12 @@ export default function FileManager() {
   const [createName, setCreateName] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deletePath, setDeletePath] = useState('');
+  const [deleteType, setDeleteType] = useState<string>('file');
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [renameOldPath, setRenameOldPath] = useState('');
+  const [renameNewName, setRenameNewName] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
 
   const handleSelect = async (path: string, type: string) => {
     if (type === 'file') {
@@ -142,10 +155,25 @@ export default function FileManager() {
   const handleDelete = async () => {
     await api.files.delete(deletePath);
     setShowDeleteDialog(false);
-    if (selectedFile === deletePath) {
+    if (selectedFile === deletePath || selectedFile?.startsWith(deletePath + '/')) {
       setSelectedFile(null);
       setFileContent('');
     }
+    refresh();
+  };
+
+  const handleRename = async () => {
+    const newName = renameNewName.trim();
+    if (!newName) return;
+    const parts = renameOldPath.split('/');
+    parts[parts.length - 1] = newName;
+    const newPath = parts.join('/');
+    await api.files.rename(renameOldPath, newPath);
+    setShowRenameDialog(false);
+    if (selectedFile === renameOldPath) {
+      setSelectedFile(newPath);
+    }
+    setRenameNewName('');
     refresh();
   };
 
@@ -153,9 +181,9 @@ export default function FileManager() {
     const name = createName.trim();
     if (!name) return;
     if (createType === 'file') {
-      await api.files.write(name, '');
+      await api.files.createFile(name);
     } else {
-      await api.files.write(name + '/.gitkeep', '');
+      await api.files.mkdir(name);
     }
     setShowCreateDialog(false);
     setCreateName('');
@@ -241,7 +269,12 @@ export default function FileManager() {
                 depth={0}
                 selectedPath={selectedFile}
                 onSelect={handleSelect}
-                onDelete={p => { setDeletePath(p); setShowDeleteDialog(true); }}
+                onDelete={(p, type) => { setDeletePath(p); setDeleteType(type); setShowDeleteDialog(true); }}
+                onRename={(p) => {
+                  setRenameOldPath(p);
+                  setRenameNewName(p.split('/').pop() || '');
+                  setShowRenameDialog(true);
+                }}
                 onDownload={handleDownload}
               />
             ))}
@@ -338,8 +371,12 @@ export default function FileManager() {
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete File</DialogTitle>
-            <DialogDescription>Are you sure you want to delete <span className="font-mono text-zinc-300">{deletePath}</span>? This cannot be undone.</DialogDescription>
+            <DialogTitle>Delete {deleteType === 'directory' ? 'Folder' : 'File'}</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <span className="font-mono text-zinc-300">{deletePath}</span>?
+              {deleteType === 'directory' && ' This will delete all contents inside.'}
+              This cannot be undone.
+            </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
@@ -348,11 +385,29 @@ export default function FileManager() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename</DialogTitle>
+            <DialogDescription>Enter a new name for <span className="font-mono text-zinc-300">{renameOldPath}</span></DialogDescription>
+          </DialogHeader>
+          <Input
+            value={renameNewName}
+            onChange={e => setRenameNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleRename()}
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowRenameDialog(false)}>Cancel</Button>
+            <Button onClick={handleRename}>Rename</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <PublishProjectDialog
         open={showPublishDialog}
         onOpenChange={setShowPublishDialog}
         tree={tree}
-        onPublished={(project) => setProjects(prev => [...prev, project])}
       />
     </div>
   );

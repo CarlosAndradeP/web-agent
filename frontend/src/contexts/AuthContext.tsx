@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { authApi, type UserPublic } from '../lib/auth-api';
+import { io, type Socket } from 'socket.io-client';
 
 interface AuthState {
   user: UserPublic | null;
@@ -77,6 +78,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateCredits = useCallback((credits: number) => {
     setUser(prev => prev ? { ...prev, credits } : null);
   }, []);
+
+  const socketRef = useRef<Socket | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const socket = io('/', { path: '/socket.io' });
+    socketRef.current = socket;
+
+    socket.on('credits:deducted', (data: { userId: string; newBalance: number }) => {
+      if (user && data.userId === user.id) {
+        updateCredits(data.newBalance);
+      }
+    });
+
+    socket.on('credits:exhausted', (data: { userId: string }) => {
+      if (user && data.userId === user.id) {
+        updateCredits(0);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (!accessToken || !refreshToken) return;
