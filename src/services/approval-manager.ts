@@ -1,5 +1,8 @@
 import type { Server } from 'socket.io';
 import type { ApprovalRequest } from '../types/index.js';
+import { createLogger } from '../services/logger.js';
+
+const log = createLogger('ApprovalManager');
 
 interface PendingApproval {
   resolve: (approved: boolean) => void;
@@ -12,12 +15,15 @@ export class ApprovalManager {
 
   setIo(io: Server): void {
     this.io = io;
+    log.info('Socket.IO instance set');
   }
 
   requestApproval(request: ApprovalRequest): Promise<boolean> {
+    log.info('Approval requested', { id: request.id, toolName: request.toolName });
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pending.delete(request.id);
+        log.warn('Approval timed out (5min)', { id: request.id });
         resolve(false);
       }, 300000);
 
@@ -25,6 +31,9 @@ export class ApprovalManager {
 
       if (this.io) {
         this.io.emit('approval:request', request);
+        log.info('Approval request emitted via Socket.IO', { id: request.id });
+      } else {
+        log.warn('No Socket.IO instance, approval request not sent to client', { id: request.id });
       }
     });
   }
@@ -35,6 +44,9 @@ export class ApprovalManager {
       clearTimeout(entry.timeout);
       entry.resolve(approved);
       this.pending.delete(id);
+      log.info('Approval responded', { id, approved });
+    } else {
+      log.warn('No pending approval found for response', { id });
     }
   }
 

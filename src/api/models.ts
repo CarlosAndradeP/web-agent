@@ -7,7 +7,7 @@ export function createModelsRouter(configRepo: ConfigRepository) {
 
   router.get('/', async (_req, res) => {
     const appConfig = configRepo.getAll();
-    const models = await resolveModels(appConfig.apiBaseUrl, appConfig.apiKey);
+    const models = await resolveModels(appConfig.apiBaseUrl);
     res.json({ models });
   });
 

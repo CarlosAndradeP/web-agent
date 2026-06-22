@@ -18,7 +18,7 @@ export function createSessionsRouter(db: Database.Database) {
       res.status(400).json({ error: 'name is required' });
       return;
     }
-    const session = sessionsRepo.create(name, model ?? 'meta/llama-3.1-405b-instruct');
+    const session = sessionsRepo.create(name, model ?? 'z-ai/glm-5.1');
     res.status(201).json({ session });
   });
 

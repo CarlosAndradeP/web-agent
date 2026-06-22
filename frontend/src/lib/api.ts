@@ -65,6 +65,28 @@ export const api = {
       }),
     delete: (path: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+    upload: async (files: File[], destination?: string) => {
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append('files', file);
+      }
+      if (destination) {
+        formData.append('destination', destination);
+      }
+      const res = await fetch(`${BASE}/files/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+      return res.json() as Promise<{ success: boolean; uploaded: string[] }>;
+    },
+    mkdir: (path: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/files/mkdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      }),
+    downloadUrl: (path: string) => `${BASE}/files/download?path=${encodeURIComponent(path)}`,
   },
   chat: {
     stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number) => {

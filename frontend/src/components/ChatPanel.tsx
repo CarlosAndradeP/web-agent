@@ -1,33 +1,47 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '../hooks/useChat';
 import { useSocket } from '../hooks/useSocket';
 import { api } from '../lib/api';
-import type { ModelInfo } from '../types';
+import type { AppConfig, ModelInfo, ApprovalRequest } from '../types';
 import MessageBubble from './MessageBubble';
-import ToolCallDisplay from './ToolCallDisplay';
 import ApprovalDialog from './ApprovalDialog';
-import type { ApprovalRequest } from '../types';
+import StepProgressBar from './StepProgressBar';
+import TypingIndicator from './TypingIndicator';
+import { ScrollArea } from './ui/scroll-area';
+import { Button } from './ui/button';
+import { Send, Square, Paperclip, ChevronDown } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 interface Props {
   sessionId: string;
 }
 
 export default function ChatPanel({ sessionId }: Props) {
-  const { messages, send, cancel, isStreaming } = useChat(sessionId);
+  const { messages, send, cancel, isStreaming, currentStep, totalSteps } = useChat(sessionId);
   const { socket } = useSocket();
   const [input, setInput] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState('meta/llama-3.1-405b-instruct');
+  const [selectedModel, setSelectedModel] = useState('');
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    api.models.list().then(data => {
-      setModels(data.models);
-      if (data.models.length > 0 && !data.models.find(m => m.id === selectedModel)) {
-        setSelectedModel(data.models[0].id);
-      }
-    });
+    let defaultModel = '';
+    api.config.get()
+      .then(cfg => { defaultModel = cfg.defaultModel; })
+      .catch(() => {})
+      .finally(() => {
+        api.models.list().then(data => {
+          setModels(data.models);
+          if (data.models.length > 0) {
+            const exists = defaultModel && data.models.find(m => m.id === defaultModel);
+            setSelectedModel(exists ? defaultModel : data.models[0].id);
+          }
+        }).catch(() => {});
+      });
   }, []);
 
   useEffect(() => {
@@ -41,14 +55,33 @@ export default function ChatPanel({ sessionId }: Props) {
     }
   }, [socket]);
 
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(scrollToBottom, 100);
+    return () => clearTimeout(timer);
+  }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowScrollBottom(distFromBottom > 100);
+    };
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
 
   const handleSend = () => {
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
     send(text, selectedModel);
   };
 
@@ -59,6 +92,13 @@ export default function ChatPanel({ sessionId }: Props) {
     }
   };
 
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+  };
+
   const handleApproval = (approved: boolean) => {
     if (socket && approval) {
       socket.emit('approval:respond', { id: approval.id, approved });
@@ -67,66 +107,89 @@ export default function ChatPanel({ sessionId }: Props) {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-gray-700 flex items-center gap-3">
-        <h2 className="text-lg font-semibold">Chat</h2>
-        <select
-          value={selectedModel}
-          onChange={e => setSelectedModel(e.target.value)}
-          className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm flex-1"
-        >
-          {models.map(m => (
-            <option key={m.id} value={m.id}>{m.id}</option>
+    <div className="flex flex-col h-full relative">
+      <StepProgressBar currentStep={currentStep} totalSteps={totalSteps} isStreaming={isStreaming} />
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="h-16 w-16 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center mb-4">
+                <span className="text-2xl">🤖</span>
+              </div>
+              <h2 className="text-xl font-semibold text-zinc-200 mb-2">Web Agent</h2>
+              <p className="text-sm text-zinc-500 max-w-md">
+                Describe a task and the agent will execute it autonomously. It can read, write, search files, run commands, and more.
+              </p>
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <MessageBubble
+              key={msg.timestamp ?? i}
+              role={msg.isUser ? 'user' : 'assistant'}
+              content={msg.content}
+              toolCalls={msg.toolCalls}
+              isStreaming={isStreaming && i === messages.length - 1 && !msg.isUser}
+            />
           ))}
-        </select>
+          {isStreaming && messages.length > 0 && !messages[messages.length - 1].content && (!messages[messages.length - 1].toolCalls || messages[messages.length - 1].toolCalls!.length === 0) && (
+            <TypingIndicator />
+          )}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg, i) => (
-          <div key={i}>
-            {msg.isUser ? (
-              <MessageBubble role="user" content={msg.content} />
+      {showScrollBottom && (
+        <button
+          onClick={scrollToBottom}
+          className="absolute bottom-24 right-6 h-8 w-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center shadow-lg hover:bg-zinc-700 transition-colors z-10"
+        >
+          <ChevronDown className="h-4 w-4 text-zinc-400" />
+        </button>
+      )}
+
+      <div className="border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-sm">
+        <div className="max-w-3xl mx-auto p-3">
+          <div className="flex items-end gap-2 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 focus-within:ring-1 focus-within:ring-zinc-500 transition-shadow">
+            <button
+              className="shrink-0 h-8 w-8 flex items-center justify-center rounded-lg hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-zinc-200"
+              title="Attach file"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Describe a task for the agent..."
+              rows={1}
+              className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder:text-zinc-500 min-h-[32px] max-h-[160px] py-1.5"
+            />
+            <select
+              value={selectedModel}
+              onChange={e => setSelectedModel(e.target.value)}
+              className="bg-zinc-700 border border-zinc-600 rounded-md px-2 py-1 text-[11px] text-zinc-300 max-w-[140px] truncate shrink-0"
+            >
+              {models.map(m => (
+                <option key={m.id} value={m.id}>{m.id.length > 20 ? m.id.slice(0, 20) + '...' : m.id}</option>
+              ))}
+            </select>
+            {isStreaming ? (
+              <Button size="icon" variant="destructive" onClick={cancel} className="shrink-0 h-8 w-8">
+                <Square className="h-3.5 w-3.5" />
+              </Button>
             ) : (
-              <MessageBubble role="assistant" content={msg.content} />
+              <Button size="icon" onClick={handleSend} disabled={!input.trim()} className="shrink-0 h-8 w-8">
+                <Send className="h-3.5 w-3.5" />
+              </Button>
             )}
           </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div className="p-3 border-t border-gray-700">
-        <div className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Describe a task for the agent..."
-            rows={2}
-            className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {isStreaming ? (
-            <button
-              onClick={cancel}
-              className="bg-red-600 hover:bg-red-700 rounded px-4 py-2 text-sm font-medium"
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              className="bg-blue-600 hover:bg-blue-700 rounded px-4 py-2 text-sm font-medium"
-            >
-              Send
-            </button>
-          )}
         </div>
       </div>
 
       {approval && (
-        <ApprovalDialog
-          request={approval}
-          onRespond={handleApproval}
-        />
+        <ApprovalDialog request={approval} onRespond={handleApproval} />
       )}
     </div>
   );

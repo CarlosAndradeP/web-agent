@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { ApprovalMode, AppConfig } from '../../types/index.js';
-import { config as envConfig } from '../../config.js';
+import { config as envConfig, rewriteUrlForDocker } from '../../config.js';
 
 const DEFAULTS: Record<string, string> = {
   default_model: envConfig.defaultModel,
@@ -10,6 +10,11 @@ const DEFAULTS: Record<string, string> = {
   api_base_url: envConfig.apiBaseUrl,
   api_key: envConfig.apiKey,
   workspace_dir: envConfig.workspaceDir,
+  agent_type: envConfig.agentType,
+};
+
+const LEGACY_MODEL_MAP: Record<string, string> = {
+  'meta/llama-3.1-405b-instruct': 'z-ai/glm-5.1',
 };
 
 export class ConfigRepository {
@@ -17,7 +22,15 @@ export class ConfigRepository {
 
   get(key: string): string | undefined {
     const row = this.db.prepare('SELECT value FROM config WHERE key = ?').get(key) as any;
-    return row?.value ?? DEFAULTS[key];
+    let value = row?.value ?? DEFAULTS[key];
+    if (key === 'default_model' && value && LEGACY_MODEL_MAP[value]) {
+      value = LEGACY_MODEL_MAP[value];
+      this.set(key, value);
+    }
+    if (key === 'api_base_url' && value) {
+      value = rewriteUrlForDocker(value);
+    }
+    return value;
   }
 
   set(key: string, value: string): void {
@@ -36,6 +49,7 @@ export class ConfigRepository {
       apiBaseUrl: this.get('api_base_url')!,
       apiKey: this.get('api_key')!,
       workspaceDir: this.get('workspace_dir')!,
+      agentType: this.get('agent_type') ?? 'none',
     };
   }
 
@@ -47,5 +61,6 @@ export class ConfigRepository {
     if (data.apiBaseUrl !== undefined) this.set('api_base_url', data.apiBaseUrl);
     if (data.apiKey !== undefined) this.set('api_key', data.apiKey);
     if (data.workspaceDir !== undefined) this.set('workspace_dir', data.workspaceDir);
+    if (data.agentType !== undefined) this.set('agent_type', data.agentType);
   }
 }

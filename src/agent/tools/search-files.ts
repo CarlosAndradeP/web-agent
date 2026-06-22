@@ -1,7 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { resolve } from 'node:path';
-import { execSync } from 'node:child_process';
+import { resolve, relative } from 'node:path';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 
 export function createSearchFilesTool(workspaceDir: string) {
   return tool({
@@ -9,22 +9,63 @@ export function createSearchFilesTool(workspaceDir: string) {
     inputSchema: z.object({
       pattern: z.string().describe('Regex pattern to search for'),
       path: z.string().optional().describe('Directory to search in (default: workspace root)'),
-      include: z.string().optional().describe('File pattern to include (e.g., "*.ts")'),
+      include: z.string().optional().describe('File glob to include (e.g., "*.ts")'),
     }),
     execute: async ({ pattern, path = '.', include }) => {
       try {
         const searchDir = resolve(workspaceDir, path);
-        let cmd = `grep -rn --include="${include ?? '*'}" -E "${pattern.replace(/"/g, '\\"')}" "${searchDir}" --max-count=100 || true`;
-        const output = execSync(cmd, {
-          encoding: 'utf-8',
-          timeout: 15000,
-          maxBuffer: 1024 * 1024 * 5,
-        });
-        const lines = output.trim().split('\n').filter(Boolean).slice(0, 100);
-        return { matches: lines, total: lines.length };
+        const regex = new RegExp(pattern, 'i');
+        const includeRegex = include ? globToRegex(include) : null;
+        const matches: string[] = [];
+        searchDirRecursive(searchDir, regex, includeRegex, matches, workspaceDir, 100);
+        return { matches, total: matches.length };
       } catch (err: any) {
         return { matches: [], total: 0, error: err.message };
       }
     },
   });
+}
+
+function globToRegex(glob: string): RegExp {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+function searchDirRecursive(
+  dir: string,
+  pattern: RegExp,
+  includeRegex: RegExp | null,
+  matches: string[],
+  workspaceDir: string,
+  maxMatches: number,
+) {
+  if (matches.length >= maxMatches) return;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (matches.length >= maxMatches) return;
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      searchDirRecursive(full, pattern, includeRegex, matches, workspaceDir, maxMatches);
+    } else if (entry.isFile()) {
+      if (includeRegex && !includeRegex.test(entry.name)) continue;
+      try {
+        const content = readFileSync(full, 'utf-8');
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length && matches.length < maxMatches; i++) {
+          if (pattern.test(lines[i])) {
+            const relPath = relative(workspaceDir, full).replace(/\\/g, '/');
+            matches.push(`${relPath}:${i + 1}: ${lines[i].trim()}`);
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
 }

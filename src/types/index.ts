@@ -56,6 +56,7 @@ export interface AppConfig {
   apiBaseUrl: string;
   apiKey: string;
   workspaceDir: string;
+  agentType: string;
 }
 
 export interface ApprovalRequest {

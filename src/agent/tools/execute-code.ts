@@ -1,10 +1,12 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const execAsync = promisify(exec);
 
 export function createExecuteCodeTool(workspaceDir: string) {
   return tool({
@@ -32,19 +34,17 @@ export function createExecuteCodeTool(workspaceDir: string) {
       }
 
       try {
-        const stdout = execSync(command, {
+        const { stdout, stderr } = await execAsync(command, {
           cwd: workspaceDir,
           timeout: timeout * 1000,
-          encoding: 'utf-8',
           maxBuffer: 1024 * 1024 * 10,
-          stdio: ['pipe', 'pipe', 'pipe'],
         });
-        return { stdout, stderr: '', exitCode: 0 };
+        return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
       } catch (err: any) {
         return {
           stdout: err.stdout ?? '',
           stderr: err.stderr ?? err.message,
-          exitCode: err.status ?? 1,
+          exitCode: err.code ?? 1,
         };
       } finally {
         try { rmSync(filePath, { force: true }); } catch {}

@@ -3,28 +3,24 @@ import { useTasks } from '../hooks/useTasks';
 import { api } from '../lib/api';
 import type { Task, AgentStep } from '../types';
 import ProgressLog from './ProgressLog';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { ScrollArea } from './ui/scroll-area';
+import { ListTodo, Circle, CheckCircle2, XCircle, Clock, Ban } from 'lucide-react';
+import { cn } from '../lib/utils';
 
-const statusColors: Record<string, string> = {
-  pending: 'bg-gray-500',
-  running: 'bg-blue-500',
-  completed: 'bg-green-500',
-  failed: 'bg-red-500',
-  cancelled: 'bg-yellow-500',
+const statusConfig: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; badge: 'default' | 'secondary' | 'destructive' | 'success' | 'outline' }> = {
+  pending: { icon: Clock, color: 'text-zinc-400', badge: 'secondary' },
+  running: { icon: Circle, color: 'text-blue-400', badge: 'default' },
+  completed: { icon: CheckCircle2, color: 'text-emerald-400', badge: 'success' },
+  failed: { icon: XCircle, color: 'text-red-400', badge: 'destructive' },
+  cancelled: { icon: Ban, color: 'text-yellow-400', badge: 'outline' },
 };
 
 export default function TaskManager() {
   const { tasks, loading, refresh } = useTasks();
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const [steps, setSteps] = useState<AgentStep[]>([]);
-  const [newDesc, setNewDesc] = useState('');
-  const [newModel, setNewModel] = useState('meta/llama-3.1-405b-instruct');
-
-  const handleCreate = async () => {
-    if (!newDesc.trim()) return;
-    await api.tasks.create({ description: newDesc.trim(), model: newModel });
-    setNewDesc('');
-    refresh();
-  };
 
   const toggleExpand = async (taskId: string) => {
     if (expandedTask === taskId) {
@@ -36,53 +32,56 @@ export default function TaskManager() {
     setSteps(data.steps);
   };
 
-  if (loading) return <div className="p-4 text-gray-400">Loading tasks...</div>;
+  if (loading) return <div className="p-4 text-zinc-500">Loading tasks...</div>;
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-gray-700">
-        <h2 className="text-lg font-semibold">Tasks</h2>
+      <div className="p-4 border-b border-zinc-800">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-200">Tasks</h2>
+          <Button variant="ghost" size="sm" onClick={refresh}>Refresh</Button>
+        </div>
       </div>
-      <div className="p-3 border-b border-gray-700 flex gap-2">
-        <input
-          value={newDesc}
-          onChange={e => setNewDesc(e.target.value)}
-          placeholder="Task description..."
-          className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm"
-          onKeyDown={e => e.key === 'Enter' && handleCreate()}
-        />
-        <button
-          onClick={handleCreate}
-          className="bg-blue-600 hover:bg-blue-700 rounded px-3 py-1.5 text-sm"
-        >
-          Create
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {tasks.map(task => (
-          <div key={task.id} className="bg-gray-800 rounded-lg p-3">
-            <div
-              className="flex items-center justify-between cursor-pointer"
-              onClick={() => toggleExpand(task.id)}
-            >
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${statusColors[task.status]}`} />
-                <span className="text-sm">{task.description}</span>
-              </div>
-              <span className="text-xs text-gray-500">{task.status}</span>
+
+      <ScrollArea className="flex-1">
+        <div className="p-3 space-y-2">
+          {tasks.length === 0 && (
+            <div className="py-16 text-center">
+              <ListTodo className="h-10 w-10 mx-auto mb-2 text-zinc-700" />
+              <p className="text-sm text-zinc-600">No tasks yet</p>
+              <p className="text-xs text-zinc-700 mt-1">Tasks are created when you send a message in Chat</p>
             </div>
-            {task.status === 'running' && (
-              <button
-                onClick={() => api.tasks.cancel(task.id).then(refresh)}
-                className="mt-2 text-xs text-red-400 hover:text-red-300"
-              >
-                Cancel
-              </button>
-            )}
-            {expandedTask === task.id && <ProgressLog steps={steps} />}
-          </div>
-        ))}
-      </div>
+          )}
+          {tasks.map(task => {
+            const cfg = statusConfig[task.status] || statusConfig.pending;
+            const Icon = cfg.icon;
+            return (
+              <div key={task.id} className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+                <div
+                  className="flex items-center gap-3 p-3 cursor-pointer hover:bg-zinc-800/50 transition-colors"
+                  onClick={() => toggleExpand(task.id)}
+                >
+                  <Icon className={cn('h-4 w-4 shrink-0', cfg.color, task.status === 'running' && 'animate-pulse')} />
+                  <span className="text-xs text-zinc-300 truncate flex-1">{task.description}</span>
+                  <Badge variant={cfg.badge} className="text-[10px] shrink-0">{task.status}</Badge>
+                </div>
+                {task.status === 'running' && (
+                  <div className="px-3 pb-2">
+                    <Button variant="ghost" size="sm" onClick={() => api.tasks.cancel(task.id).then(refresh)} className="h-6 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/10">
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+                {expandedTask === task.id && (
+                  <div className="border-t border-zinc-800 p-3 animate-in">
+                    <ProgressLog steps={steps} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

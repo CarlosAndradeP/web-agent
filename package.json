@@ -10,13 +10,15 @@
     "dev:frontend": "cd frontend && npm run dev"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^0.2.16",
+    "@ai-sdk/openai-compatible": "^2.0.51",
+    "@types/multer": "^2.1.0",
     "ai": "^6.0.208",
     "better-sqlite3": "^12.11.1",
     "chokidar": "^5.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "multer": "^2.2.0",
     "socket.io": "^4.8.3",
     "uuid": "^14.0.1",
     "zod": "^3.25.76"

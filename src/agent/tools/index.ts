@@ -8,12 +8,17 @@ import { createSearchFilesTool } from './search-files.js';
 import { createWebFetchTool } from './web-fetch.js';
 import { createInstallPackageTool } from './install-package.js';
 import type { ApprovalMode } from '../../types/index.js';
+import { createLogger } from '../../services/logger.js';
+
+const log = createLogger('ToolSet');
 
 export function buildToolSet(options: {
   workspaceDir: string;
   approvalMode: ApprovalMode;
   approvalTools: string[];
 }) {
+  log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode });
+
   const allTools: Record<string, any> = {
     writeFile: createWriteFileTool(options.workspaceDir),
     readFile: createReadFileTool(options.workspaceDir),
@@ -27,6 +32,7 @@ export function buildToolSet(options: {
   };
 
   if (options.approvalMode === 'none') {
+    log.info('Approval mode: none — all tools execute immediately');
     return allTools;
   }
 
@@ -34,6 +40,7 @@ export function buildToolSet(options: {
     for (const key of Object.keys(allTools)) {
       allTools[key] = { ...allTools[key], needsApproval: true };
     }
+    log.info('Approval mode: all — all tools require approval');
     return allTools;
   }
 
@@ -42,6 +49,7 @@ export function buildToolSet(options: {
       allTools[toolName] = { ...allTools[toolName], needsApproval: true };
     }
   }
+  log.info('Approval mode: custom', { approvalTools: options.approvalTools });
 
   return allTools;
 }

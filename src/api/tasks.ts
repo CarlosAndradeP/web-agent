@@ -2,11 +2,13 @@ import { Router } from 'express';
 import type { TaskManager } from '../services/task-manager.js';
 import type Database from 'better-sqlite3';
 import { TasksRepository } from '../db/repositories/tasks.js';
-import { v4 as uuid } from 'uuid';
+import { SessionsRepository } from '../db/repositories/sessions.js';
+import { config } from '../config.js';
 
 export function createTasksRouter(db: Database.Database, taskManager: TaskManager) {
   const router = Router();
   const tasksRepo = new TasksRepository(db);
+  const sessionsRepo = new SessionsRepository(db);
 
   router.get('/', (_req, res) => {
     res.json({ tasks: taskManager.getTasks() });
@@ -19,8 +21,22 @@ export function createTasksRouter(db: Database.Database, taskManager: TaskManage
       return;
     }
     try {
-      const sessionsRow = db.prepare('SELECT id FROM sessions LIMIT 1').get() as any;
-      const effectiveSessionId = sessionId ?? sessionsRow?.id ?? uuid();
+      let effectiveSessionId = sessionId;
+      if (!effectiveSessionId) {
+        const sessions = sessionsRepo.list();
+        if (sessions.length === 0) {
+          const session = sessionsRepo.create('Default Session', config.defaultModel);
+          effectiveSessionId = session.id;
+        } else {
+          effectiveSessionId = sessions[0].id;
+        }
+      } else {
+        const existing = sessionsRepo.findById(effectiveSessionId);
+        if (!existing) {
+          const session = sessionsRepo.create('Default Session', config.defaultModel);
+          effectiveSessionId = session.id;
+        }
+      }
       const task = taskManager.createTask(effectiveSessionId, description, model ?? null, maxSteps);
       res.status(201).json({ task });
     } catch (err: any) {

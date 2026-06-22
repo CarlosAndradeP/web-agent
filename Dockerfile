@@ -24,4 +24,5 @@ RUN mkdir -p /app/workspace /app/data
 EXPOSE 89
 ENV PORT=89
 ENV NODE_ENV=production
+ENV DOCKER_CONTAINER=1
 CMD ["node", "dist/server.js"]

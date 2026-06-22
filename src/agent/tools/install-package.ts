@@ -1,6 +1,9 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { execSync } from 'node:child_process';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execAsync = promisify(exec);
 
 export function createInstallPackageTool(workspaceDir: string) {
   return tool({
@@ -14,18 +17,17 @@ export function createInstallPackageTool(workspaceDir: string) {
         const command = manager === 'npm'
           ? `npm install --prefix "${workspaceDir}" ${pkg}`
           : `pip install ${pkg}`;
-        const stdout = execSync(command, {
+        const { stdout, stderr } = await execAsync(command, {
           timeout: 60000,
-          encoding: 'utf-8',
           maxBuffer: 1024 * 1024 * 5,
           cwd: workspaceDir,
         });
-        return { stdout, stderr: '', exitCode: 0 };
+        return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
       } catch (err: any) {
         return {
           stdout: err.stdout ?? '',
           stderr: err.stderr ?? err.message,
-          exitCode: err.status ?? 1,
+          exitCode: err.code ?? 1,
         };
       }
     },

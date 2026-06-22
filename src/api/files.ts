@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { resolve } from 'node:path';
-import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, createReadStream, existsSync } from 'node:fs';
+import multer from 'multer';
 import type { ConfigRepository } from '../db/repositories/config.js';
 import type { FileEntry } from '../types/index.js';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 export function createFilesRouter(configRepo: ConfigRepository) {
   const router = Router();
@@ -32,9 +35,41 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     try {
       const fullPath = resolve(workspaceDir, path);
       const content = readFileSync(fullPath, 'utf-8');
+      if (req.query.download === 'true') {
+        const filename = path.split('/').pop() || 'file';
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.send(content);
+        return;
+      }
       res.json({ path, content });
     } catch (err: any) {
       res.status(404).json({ error: err.message });
+    }
+  });
+
+  router.get('/download', (req, res) => {
+    const workspaceDir = getWorkspaceDir();
+    const path = req.query.path as string;
+    if (!path) {
+      res.status(400).json({ error: 'path query parameter is required' });
+      return;
+    }
+    try {
+      const fullPath = resolve(workspaceDir, path);
+      if (!existsSync(fullPath)) {
+        res.status(404).json({ error: 'File not found' });
+        return;
+      }
+      const stat = statSync(fullPath);
+      const filename = path.split('/').pop() || 'file';
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Length', stat.size.toString());
+      const stream = createReadStream(fullPath);
+      stream.pipe(res);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -49,6 +84,44 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       const fullPath = resolve(workspaceDir, path);
       mkdirSync(resolve(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, content, 'utf-8');
+      res.json({ success: true, path });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/upload', upload.array('files', 20), (req, res) => {
+    const workspaceDir = getWorkspaceDir();
+    const files = req.files as Express.Multer.File[];
+    const dest = (req.body.destination as string) || '';
+    if (!files || files.length === 0) {
+      res.status(400).json({ error: 'No files uploaded' });
+      return;
+    }
+    try {
+      const uploaded: string[] = [];
+      for (const file of files) {
+        const targetPath = dest ? resolve(workspaceDir, dest, file.originalname) : resolve(workspaceDir, file.originalname);
+        mkdirSync(resolve(targetPath, '..'), { recursive: true });
+        writeFileSync(targetPath, file.buffer);
+        uploaded.push(file.originalname);
+      }
+      res.json({ success: true, uploaded });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/mkdir', (req, res) => {
+    const workspaceDir = getWorkspaceDir();
+    const { path } = req.body;
+    if (!path) {
+      res.status(400).json({ error: 'path is required' });
+      return;
+    }
+    try {
+      const fullPath = resolve(workspaceDir, path);
+      mkdirSync(fullPath, { recursive: true });
       res.json({ success: true, path });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

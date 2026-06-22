@@ -10,4 +10,13 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
+      - DOCKER_CONTAINER=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-net
     restart: unless-stopped
+
+networks:
+  agent-net:
+    driver: bridge
