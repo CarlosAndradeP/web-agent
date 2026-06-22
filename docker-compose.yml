@@ -11,6 +11,10 @@ services:
     environment:
       - NODE_ENV=production
       - DOCKER_CONTAINER=1
+      - WORKSPACE_BASE_DIR=/app/workspace
+      - JWT_SECRET=${JWT_SECRET:-web-agent-jwt-secret-change-me}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - INITIAL_CREDITS=100
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

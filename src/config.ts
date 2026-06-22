@@ -33,10 +33,14 @@ export const config = {
   apiBaseUrl: rewriteUrlForDocker(process.env.API_BASE_URL || 'http://192.168.3.5:11431/v1'),
   apiKey: process.env.API_KEY || '',
   workspaceDir: process.env.WORKSPACE_DIR || './workspace',
+  workspaceBaseDir: process.env.WORKSPACE_BASE_DIR || './workspace',
   dataDir: process.env.DATA_DIR || './data',
   maxSteps: parseInt(process.env.MAX_STEPS || '100', 10),
   defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.1',
   agentType: (process.env.AGENT_TYPE || 'none') as 'main' | 'sub' | 'none',
+  jwtSecret: process.env.JWT_SECRET || 'web-agent-jwt-secret-change-me-in-production',
+  adminPassword: process.env.ADMIN_PASSWORD || 'admin123',
+  initialCredits: parseInt(process.env.INITIAL_CREDITS || '100', 10),
 };
 
 export { rewriteUrlForDocker, IS_DOCKER };

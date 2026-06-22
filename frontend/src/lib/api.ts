@@ -1,9 +1,29 @@
-import type { AppConfig, ModelInfo, Session, Task, Message, AgentStep, FileEntry } from '../types';
+import type { AppConfig, ModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction } from '../types';
 
 const BASE = '/api';
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem('webagent_access_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
+function getAuthHeadersNoContentType(): Record<string, string> {
+  const token = localStorage.getItem('webagent_access_token');
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, options);
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...getAuthHeaders(),
+      ...(options?.headers as Record<string, string> || {}),
+    },
+  });
   if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -14,7 +34,6 @@ export const api = {
     update: (data: Partial<AppConfig>) =>
       fetchJSON<AppConfig>(`${BASE}/config`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }),
   },
@@ -26,7 +45,6 @@ export const api = {
     create: (name: string, model?: string) =>
       fetchJSON<{ session: Session }>(`${BASE}/sessions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, model }),
       }),
     delete: (id: string) =>
@@ -39,14 +57,12 @@ export const api = {
     create: (data: { sessionId?: string; description: string; model?: string; maxSteps?: number }) =>
       fetchJSON<{ task: Task }>(`${BASE}/tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }),
     get: (id: string) => fetchJSON<{ task: Task }>(`${BASE}/tasks/${id}`),
     cancel: (id: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/tasks/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'cancelled' }),
       }),
     steps: (id: string) =>
@@ -60,7 +76,6 @@ export const api = {
     write: (path: string, content: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/files`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, content }),
       }),
     delete: (path: string) =>
@@ -75,6 +90,7 @@ export const api = {
       }
       const res = await fetch(`${BASE}/files/upload`, {
         method: 'POST',
+        headers: getAuthHeadersNoContentType(),
         body: formData,
       });
       if (!res.ok) throw new Error(`Upload error: ${res.status}`);
@@ -83,18 +99,52 @@ export const api = {
     mkdir: (path: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/files/mkdir`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
       }),
-    downloadUrl: (path: string) => `${BASE}/files/download?path=${encodeURIComponent(path)}`,
+    downloadUrl: (path: string) => {
+      const token = localStorage.getItem('webagent_access_token');
+      return `${BASE}/files/download?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
+    },
   },
   chat: {
     stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const token = localStorage.getItem('webagent_access_token');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       return fetch(`${BASE}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ sessionId, model, messages, maxSteps }),
       });
     },
+  },
+  projects: {
+    list: () => fetchJSON<{ projects: Project[] }>(`${BASE}/projects`),
+    create: (data: { name: string; folderPath: string; type: 'static' | 'php' | 'node' }) =>
+      fetchJSON<{ project: Project }>(`${BASE}/projects`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    get: (id: string) => fetchJSON<{ project: Project }>(`${BASE}/projects/${id}`),
+    delete: (id: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}`, { method: 'DELETE' }),
+  },
+  admin: {
+    users: () => fetchJSON<{ users: UserPublic[] }>(`${BASE}/admin/users`),
+    addCredits: (userId: string, amount: number, description?: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}/credits`, {
+        method: 'POST',
+        body: JSON.stringify({ amount, description }),
+      }),
+    changeRole: (userId: string, role: 'admin' | 'user') =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      }),
+    deleteUser: (userId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}`, { method: 'DELETE' }),
+    creditHistory: (userId: string, limit?: number, offset?: number) =>
+      fetchJSON<{ history: CreditTransaction[]; balance: number }>(`${BASE}/admin/users/${userId}/credits/history?limit=${limit || 50}&offset=${offset || 0}`),
+    stats: () => fetchJSON<{ totalUsers: number; totalProjects: number; totalTasks: number; totalCreditsUsed: number; totalCreditsGranted: number }>(`${BASE}/admin/stats`),
   },
 };

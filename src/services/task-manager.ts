@@ -3,6 +3,7 @@ import type { Task, AgentStep } from '../types/index.js';
 import { TasksRepository } from '../db/repositories/tasks.js';
 import { createAgent } from '../agent/index.js';
 import { ConfigRepository } from '../db/repositories/config.js';
+import { CreditManager } from '../services/credit-manager.js';
 import { createLogger } from '../services/logger.js';
 import type { Server } from 'socket.io';
 import { v4 as uuid } from 'uuid';
@@ -10,7 +11,7 @@ import { v4 as uuid } from 'uuid';
 const log = createLogger('TaskManager');
 
 export interface StreamEvent {
-  type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'finish' | 'error';
+  type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'finish' | 'error' | 'credits-exhausted';
   taskId: string;
   [key: string]: unknown;
 }
@@ -18,12 +19,14 @@ export interface StreamEvent {
 export class TaskManager {
   private tasksRepo: TasksRepository;
   private configRepo: ConfigRepository;
+  private creditManager: CreditManager;
   private io: Server | null = null;
   private activeControllers = new Map<string, AbortController>();
 
-  constructor(private db: Database.Database) {
+  constructor(private db: Database.Database, creditManager: CreditManager) {
     this.tasksRepo = new TasksRepository(db);
     this.configRepo = new ConfigRepository(db);
+    this.creditManager = creditManager;
   }
 
   private insertStep(taskId: string, stepNumber: number, toolName: string | null, toolInput: string | null, toolOutput: string | null, durationMs: number | null): void {
@@ -43,9 +46,16 @@ export class TaskManager {
     log.info('Socket.IO instance set');
   }
 
-  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number): Task {
-    log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps });
+  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string): Task {
+    log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps, userId });
     const task = this.tasksRepo.create(sessionId, description, model, maxSteps);
+    if (userId) {
+      try {
+        this.db.prepare('UPDATE tasks SET user_id = ?, workspace_dir = ? WHERE id = ?').run(userId, workspaceDir ?? null, task.id);
+      } catch (err: any) {
+        log.warn('Failed to set task user_id', { taskId: task.id, error: err.message });
+      }
+    }
     if (this.io) {
       this.io.emit('task:created', { task });
     }
@@ -63,6 +73,8 @@ export class TaskManager {
     this.tasksRepo.updateStatus(taskId, 'running');
     const appConfig = this.configRepo.getAll();
     const model = task.model ?? appConfig.defaultModel;
+    const workspaceDir = (task as any).workspace_dir ?? appConfig.workspaceDir;
+    const userId = (task as any).user_id;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -74,7 +86,7 @@ export class TaskManager {
         model,
         maxSteps: task.maxSteps,
         sessionId: task.sessionId,
-        workspaceDir: appConfig.workspaceDir,
+        workspaceDir,
         approvalMode: appConfig.approvalMode,
         approvalTools: appConfig.approvalTools,
         apiBaseUrl: appConfig.apiBaseUrl,
@@ -84,6 +96,7 @@ export class TaskManager {
       });
 
       const self = this;
+      const creditManager = this.creditManager;
 
       const result = await agent.generate({
         prompt: task.description,
@@ -92,6 +105,14 @@ export class TaskManager {
           self.tasksRepo.incrementStep(taskId);
           if (this.io) {
             this.io.emit('task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc: any) => tc.toolName) });
+          }
+          if (userId && toolResults?.length) {
+            try {
+              creditManager.deductCredit(userId, taskId);
+            } catch (creditErr: any) {
+              log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
+              abortController.abort();
+            }
           }
           for (const tr of toolResults ?? []) {
             const tc = toolCalls?.find((t: any) => t.toolCallId === (tr as any).toolCallId);
@@ -133,6 +154,8 @@ export class TaskManager {
     this.tasksRepo.updateStatus(taskId, 'running');
     const appConfig = this.configRepo.getAll();
     const model = task.model ?? appConfig.defaultModel;
+    const workspaceDir = (task as any).workspace_dir ?? appConfig.workspaceDir;
+    const userId = (task as any).user_id;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -143,7 +166,7 @@ export class TaskManager {
       model,
       maxSteps: task.maxSteps,
       sessionId: task.sessionId,
-      workspaceDir: appConfig.workspaceDir,
+      workspaceDir,
       approvalMode: appConfig.approvalMode,
       approvalTools: appConfig.approvalTools,
       apiBaseUrl: appConfig.apiBaseUrl,
@@ -162,6 +185,14 @@ export class TaskManager {
           this.tasksRepo.incrementStep(taskId);
           if (this.io) {
             this.io.emit('task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc: any) => tc.toolName) });
+          }
+          if (userId && toolResults?.length) {
+            try {
+              this.creditManager.deductCredit(userId, taskId);
+            } catch (creditErr: any) {
+              log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
+              abortController.abort();
+            }
           }
           for (const tr of toolResults ?? []) {
             const tc = toolCalls?.find((t: any) => t.toolCallId === (tr as any).toolCallId);

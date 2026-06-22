@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { schema } from './schema.js';
+import { migrate } from './migrate.js';
 import { createLogger } from '../services/logger.js';
 
 const log = createLogger('Database');
@@ -13,7 +14,8 @@ export function initDatabase(dbPath: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(schema);
-  log.info('Database initialized, schema applied');
+  migrate(db);
+  log.info('Database initialized, schema applied, migrations ran');
   return db;
 }
 

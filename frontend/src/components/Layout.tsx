@@ -4,14 +4,16 @@ import ChatPanel from './ChatPanel';
 import TaskManager from './TaskManager';
 import FileManager from './FileManager';
 import ConfigPanel from './ConfigPanel';
+import AdminPanel from './AdminPanel';
 import Header from './Header';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { useSessions } from '../hooks/useSessions';
 import { useSocket } from '../hooks/useSocket';
+import { useAuth } from '../contexts/AuthContext';
 
-type Tab = 'chat' | 'tasks' | 'files' | 'config';
+type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin';
 
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
@@ -21,11 +23,15 @@ export default function Layout() {
   const [newSessionName, setNewSessionName] = useState('');
   const { sessions, createSession, deleteSession } = useSessions();
   const { connected } = useSocket();
+  const { user } = useAuth();
+
+  const isAdmin = user?.role === 'admin';
 
   const handleTabChange = useCallback((tab: Tab) => {
+    if (tab === 'admin' && !isAdmin) return;
     setActiveTab(tab);
     setMobileMenuOpen(false);
-  }, []);
+  }, [isAdmin]);
 
   const handleSessionCreate = useCallback(async () => {
     const name = newSessionName.trim() || `Session ${sessions.length + 1}`;
@@ -101,6 +107,11 @@ export default function Layout() {
           <div className={activeTab === 'config' ? 'h-full' : 'h-full hidden'}>
             <ConfigPanel />
           </div>
+          {isAdmin && (
+            <div className={activeTab === 'admin' ? 'h-full' : 'h-full hidden'}>
+              <AdminPanel />
+            </div>
+          )}
         </main>
       </div>
 

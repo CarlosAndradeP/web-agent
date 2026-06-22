@@ -1,25 +1,38 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import type { TaskManager, StreamEvent } from '../services/task-manager.js';
+import type { CreditManager } from '../services/credit-manager.js';
 import { MessagesRepository } from '../db/repositories/messages.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { SessionsRepository } from '../db/repositories/sessions.js';
+import { UsersRepository } from '../db/repositories/users.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { config } from '../config.js';
+import { resolve } from 'node:path';
 import { createLogger } from '../services/logger.js';
 
 const log = createLogger('ChatAPI');
 
-export function createChatRouter(db: Database.Database, taskManager: TaskManager) {
+export function createChatRouter(db: Database.Database, taskManager: TaskManager, creditManager: CreditManager) {
   const router = Router();
   const messagesRepo = new MessagesRepository(db);
   const configRepo = new ConfigRepository(db);
   const sessionsRepo = new SessionsRepository(db);
+  const usersRepo = new UsersRepository(db);
 
   router.post('/', async (req, res) => {
     const { sessionId, model, messages, maxSteps } = req.body;
+    const userId = req.user?.userId;
+    const user = userId ? usersRepo.findById(userId) : undefined;
+    const username = user?.username ?? 'default';
 
-    log.info('Chat request received', { sessionId, model, messageCount: messages?.length, maxSteps });
+    let workspaceDir = resolve(config.workspaceBaseDir, username);
+    if (userId && !creditManager.hasCredits(userId)) {
+      res.status(402).json({ error: 'Insufficient credits. Please contact admin to add more credits.' });
+      return;
+    }
+
+    log.info('Chat request received', { sessionId, model, messageCount: messages?.length, maxSteps, userId });
 
     if (!messages?.length) {
       log.warn('Chat request rejected: no messages');
@@ -29,10 +42,18 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
 
     let effectiveSessionId = sessionId;
     if (!effectiveSessionId) {
-      const sessions = sessionsRepo.list();
+      let sessions = sessionsRepo.list();
+      if (userId) {
+        sessions = sessions.filter(s => (s as any).user_id === userId);
+      }
       if (sessions.length === 0) {
         const session = sessionsRepo.create('Default Session', config.defaultModel);
         effectiveSessionId = session.id;
+        if (userId) {
+          try {
+            db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
+          } catch {}
+        }
       } else {
         effectiveSessionId = sessions[0].id;
       }
@@ -43,6 +64,11 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
         log.warn('Session not found, creating new', { sessionId: effectiveSessionId });
         const session = sessionsRepo.create('Default Session', config.defaultModel);
         effectiveSessionId = session.id;
+        if (userId) {
+          try {
+            db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
+          } catch {}
+        }
       }
     }
 
@@ -69,7 +95,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
 
     log.info('Creating task for chat', { selectedModel, descriptionLength: description.length });
 
-    const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps);
+    const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir);
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');

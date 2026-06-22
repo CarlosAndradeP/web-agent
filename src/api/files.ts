@@ -4,20 +4,43 @@ import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, 
 import multer from 'multer';
 import type { ConfigRepository } from '../db/repositories/config.js';
 import type { FileEntry } from '../types/index.js';
+import { UsersRepository } from '../db/repositories/users.js';
+import { config } from '../config.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 export function createFilesRouter(configRepo: ConfigRepository) {
   const router = Router();
 
-  const getWorkspaceDir = () => configRepo.getAll().workspaceDir;
+  const getWorkspaceDir = (req: any) => {
+    const userId = req.user?.userId;
+    if (userId) {
+      try {
+        const db = (configRepo as any).db;
+        const usersRepo = new UsersRepository(db);
+        const user = usersRepo.findById(userId);
+        if (user) {
+          return resolve(config.workspaceBaseDir, user.username);
+        }
+      } catch {}
+    }
+    return configRepo.getAll().workspaceDir;
+  };
+
+  const safePath = (workspaceDir: string, path: string): string => {
+    const fullPath = resolve(workspaceDir, path);
+    if (!fullPath.startsWith(resolve(workspaceDir))) {
+      throw new Error('Path traversal detected');
+    }
+    return fullPath;
+  };
 
   router.get('/', (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const path = (req.query.path as string) ?? '.';
     const recursive = req.query.recursive === 'true';
-    const fullPath = resolve(workspaceDir, path);
     try {
+      const fullPath = safePath(workspaceDir, path);
       const tree = listDir(fullPath, recursive);
       res.json({ tree });
     } catch (err: any) {
@@ -26,14 +49,14 @@ export function createFilesRouter(configRepo: ConfigRepository) {
   });
 
   router.get('/content', (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const path = req.query.path as string;
     if (!path) {
       res.status(400).json({ error: 'path query parameter is required' });
       return;
     }
     try {
-      const fullPath = resolve(workspaceDir, path);
+      const fullPath = safePath(workspaceDir, path);
       const content = readFileSync(fullPath, 'utf-8');
       if (req.query.download === 'true') {
         const filename = path.split('/').pop() || 'file';
@@ -49,14 +72,14 @@ export function createFilesRouter(configRepo: ConfigRepository) {
   });
 
   router.get('/download', (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const path = req.query.path as string;
     if (!path) {
       res.status(400).json({ error: 'path query parameter is required' });
       return;
     }
     try {
-      const fullPath = resolve(workspaceDir, path);
+      const fullPath = safePath(workspaceDir, path);
       if (!existsSync(fullPath)) {
         res.status(404).json({ error: 'File not found' });
         return;
@@ -74,14 +97,14 @@ export function createFilesRouter(configRepo: ConfigRepository) {
   });
 
   router.put('/', (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const { path, content } = req.body;
     if (!path || content === undefined) {
       res.status(400).json({ error: 'path and content are required' });
       return;
     }
     try {
-      const fullPath = resolve(workspaceDir, path);
+      const fullPath = safePath(workspaceDir, path);
       mkdirSync(resolve(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, content, 'utf-8');
       res.json({ success: true, path });
@@ -91,7 +114,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
   });
 
   router.post('/upload', upload.array('files', 20), (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const files = req.files as Express.Multer.File[];
     const dest = (req.body.destination as string) || '';
     if (!files || files.length === 0) {
@@ -101,7 +124,11 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     try {
       const uploaded: string[] = [];
       for (const file of files) {
-        const targetPath = dest ? resolve(workspaceDir, dest, file.originalname) : resolve(workspaceDir, file.originalname);
+        const safeDest = dest ? safePath(workspaceDir, dest) : workspaceDir;
+        const targetPath = resolve(safeDest, file.originalname);
+        if (!targetPath.startsWith(resolve(workspaceDir))) {
+          throw new Error('Path traversal detected in upload destination');
+        }
         mkdirSync(resolve(targetPath, '..'), { recursive: true });
         writeFileSync(targetPath, file.buffer);
         uploaded.push(file.originalname);
@@ -113,14 +140,14 @@ export function createFilesRouter(configRepo: ConfigRepository) {
   });
 
   router.post('/mkdir', (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const { path } = req.body;
     if (!path) {
       res.status(400).json({ error: 'path is required' });
       return;
     }
     try {
-      const fullPath = resolve(workspaceDir, path);
+      const fullPath = safePath(workspaceDir, path);
       mkdirSync(fullPath, { recursive: true });
       res.json({ success: true, path });
     } catch (err: any) {
@@ -129,14 +156,14 @@ export function createFilesRouter(configRepo: ConfigRepository) {
   });
 
   router.delete('/', (req, res) => {
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = getWorkspaceDir(req);
     const path = req.query.path as string;
     if (!path) {
       res.status(400).json({ error: 'path query parameter is required' });
       return;
     }
     try {
-      const fullPath = resolve(workspaceDir, path);
+      const fullPath = safePath(workspaceDir, path);
       rmSync(fullPath, { recursive: true, force: true });
       res.json({ success: true, path });
     } catch (err: any) {

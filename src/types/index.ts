@@ -6,6 +6,7 @@ export interface Session {
   id: string;
   name: string;
   model: string;
+  userId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -18,6 +19,7 @@ export interface Message {
   toolCalls: string | null;
   toolCallId: string | null;
   stepNumber: number | null;
+  userId?: string;
   createdAt: string;
 }
 
@@ -31,6 +33,8 @@ export interface Task {
   currentStep: number;
   result: string | null;
   error: string | null;
+  userId?: string;
+  workspaceDir?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -84,4 +88,39 @@ export interface ChatRequest {
   model: string;
   messages: Array<{ role: string; content: string }>;
   maxSteps?: number;
+}
+
+export interface UserPublic {
+  id: string;
+  username: string;
+  email: string | null;
+  role: 'admin' | 'user';
+  credits: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Project {
+  id: string;
+  uuid: string;
+  userId: string;
+  name: string;
+  folderPath: string;
+  type: 'static' | 'php' | 'node';
+  port: number | null;
+  pid: number | null;
+  status: 'active' | 'stopped' | 'error';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreditTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  balanceAfter: number;
+  type: 'purchase' | 'consumption' | 'refund' | 'bonus';
+  description: string | null;
+  taskId: string | null;
+  createdAt: string;
 }

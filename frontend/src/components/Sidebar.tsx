@@ -1,11 +1,12 @@
-import { MessageSquare, ListTodo, FolderOpen, Settings, Plus, Trash2, ChevronRight } from 'lucide-react';
+import { MessageSquare, ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
+import { useAuth } from '../contexts/AuthContext';
 import type { Session } from '../types';
 
-type Tab = 'chat' | 'tasks' | 'files' | 'config';
+type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin';
 
 interface Props {
   activeTab: Tab;
@@ -18,14 +19,18 @@ interface Props {
   isRunning: boolean;
 }
 
-const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'chat', label: 'Chat', icon: MessageSquare },
-  { id: 'tasks', label: 'Tasks', icon: ListTodo },
-  { id: 'files', label: 'Files', icon: FolderOpen },
-  { id: 'config', label: 'Config', icon: Settings },
-];
-
 export default function Sidebar({ activeTab, onTabChange, sessions, activeSessionId, onSessionSelect, onSessionCreate, onSessionDelete, isRunning }: Props) {
+  const { user, logout } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'chat', label: 'Chat', icon: MessageSquare },
+    { id: 'tasks', label: 'Tasks', icon: ListTodo },
+    { id: 'files', label: 'Files', icon: FolderOpen },
+    { id: 'config', label: 'Config', icon: Settings },
+    ...(isAdmin ? [{ id: 'admin' as Tab, label: 'Admin', icon: Shield }] : []),
+  ];
+
   return (
     <div className="flex flex-col h-full bg-zinc-900 border-r border-zinc-800 w-56">
       <div className="p-3">
@@ -99,7 +104,25 @@ export default function Sidebar({ activeTab, onTabChange, sessions, activeSessio
         </div>
       </ScrollArea>
 
-      <div className="p-3 border-t border-zinc-800">
+      <div className="p-3 border-t border-zinc-800 space-y-2">
+        {user && (
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded-full bg-zinc-700 flex items-center justify-center text-[10px] font-bold text-zinc-300">
+              {user.username[0].toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-medium text-zinc-300 truncate">{user.username}</div>
+              <div className="text-[10px] text-zinc-600">{user.credits} credits</div>
+            </div>
+            <button
+              onClick={logout}
+              className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
+              title="Logout"
+            >
+              <LogOut className="h-3 w-3 text-zinc-500 hover:text-red-400" />
+            </button>
+          </div>
+        )}
         <div className="text-[10px] text-zinc-600">v1.0.0</div>
       </div>
     </div>

@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useFiles } from '../hooks/useFiles';
 import { api } from '../lib/api';
-import type { FileEntry } from '../types';
+import type { FileEntry, Project } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { ScrollArea } from './ui/scroll-area';
 import { Separator } from './ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
+import PublishProjectDialog from './PublishProjectDialog';
 import {
   FolderOpen,
   File,
@@ -23,6 +24,7 @@ import {
   Folder,
   FilePlus,
   FolderPlus,
+  Globe,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -117,6 +119,8 @@ export default function FileManager() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deletePath, setDeletePath] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
 
   const handleSelect = async (path: string, type: string) => {
     if (type === 'file') {
@@ -212,6 +216,9 @@ export default function FileManager() {
               </Button>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refresh} title="Refresh">
                 <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowPublishDialog(true)} title="Publish Project">
+                <Globe className="h-3.5 w-3.5" />
               </Button>
             </div>
           </div>
@@ -340,6 +347,13 @@ export default function FileManager() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <PublishProjectDialog
+        open={showPublishDialog}
+        onOpenChange={setShowPublishDialog}
+        tree={tree}
+        onPublished={(project) => setProjects(prev => [...prev, project])}
+      />
     </div>
   );
 }
