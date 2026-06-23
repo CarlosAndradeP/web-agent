@@ -12,6 +12,7 @@ interface AuthState {
   register: (username: string, password: string, email?: string) => Promise<void>;
   logout: () => void;
   updateCredits: (credits: number) => void;
+  updateUser: (updates: Partial<UserPublic>) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -84,6 +85,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const updateUser = useCallback((updates: Partial<UserPublic>) => {
+    setUser(prev => {
+      if (!prev) return null;
+      const updated = { ...prev, ...updates };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
@@ -92,21 +102,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const socket = io('/', { path: '/socket.io' });
     socketRef.current = socket;
 
-    socket.emit('user:join', { userId: user.id });
+    const joinRoom = () => {
+      socket.emit('user:join', { userId: user.id });
+    };
+
+    socket.on('connect', joinRoom);
+    if (socket.connected) joinRoom();
 
     socket.on('credits:deducted', (data: { userId: string; newBalance: number }) => {
-      if (user && data.userId === user.id) {
+      if (data.userId === user.id) {
         updateCredits(data.newBalance);
       }
     });
 
     socket.on('credits:exhausted', (data: { userId: string }) => {
-      if (user && data.userId === user.id) {
+      if (data.userId === user.id) {
         updateCredits(0);
       }
     });
 
     return () => {
+      socket.off('connect', joinRoom);
       socket.disconnect();
       socketRef.current = null;
     };
@@ -171,6 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       updateCredits,
+      updateUser,
     }}>
       {children}
     </AuthContext.Provider>

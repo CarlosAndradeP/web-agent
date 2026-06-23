@@ -1,8 +1,8 @@
 import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
 import type { Project } from '../db/repositories/projects.js';
 import { createLogger } from '../services/logger.js';
 
@@ -15,12 +15,16 @@ interface ActiveProject {
   middleware: express.RequestHandler;
   process?: ChildProcess;
   port?: number;
+  symlinkPath?: string;
 }
 
 export class ProjectRouter {
   private activeProjects = new Map<string, ActiveProject>();
+  private workspaceBaseDir: string;
 
-  constructor(private app: express.Express) {}
+  constructor(private app: express.Express) {
+    this.workspaceBaseDir = process.env.WORKSPACE_BASE_DIR || './workspace';
+  }
 
   middleware(): express.RequestHandler {
     return (req, res, next) => {
@@ -38,14 +42,15 @@ export class ProjectRouter {
         return;
       }
 
-      req.url = match[2] !== undefined && match[2] !== '' ? `/${match[2]}` : '/';
+      const queryString = urlPath.includes('?') ? urlPath.slice(urlPath.indexOf('?')) : '';
+      const subPath = match[2] !== undefined && match[2] !== '' ? `/${match[2]}` : '/';
+      req.url = subPath + queryString;
 
-      const originalNext = next;
       active.middleware(req, res, (err?: any) => {
         if (active.project.type === 'static') {
           res.status(404).send('Not Found');
         } else {
-          originalNext(err);
+          next(err);
         }
       });
     };
@@ -62,33 +67,43 @@ export class ProjectRouter {
     }
 
     let middleware: express.RequestHandler;
+    let symlinkPath: string | undefined;
 
     if (project.type === 'static') {
       middleware = express.static(fullFolderPath);
       log.info('Static project mounted', { uuid: project.uuid, path: fullFolderPath });
     } else if (project.type === 'php') {
+      const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+      try {
+        if (lstatSync(uuidLinkPath).isSymbolicLink()) {
+          unlinkSync(uuidLinkPath);
+        }
+      } catch {}
+      symlinkSync(fullFolderPath, uuidLinkPath, 'junction');
+      symlinkPath = uuidLinkPath;
+
       middleware = createProxyMiddleware({
         target: `http://localhost:8080/${project.uuid}/`,
         changeOrigin: true,
-        pathRewrite: { [`^/${project.uuid}`]: `/${project.uuid}` },
       }) as any;
-      log.info('PHP project mounted (proxy to Apache)', { uuid: project.uuid });
+      log.info('PHP project mounted (proxy to Apache via symlink)', { uuid: project.uuid, symlink: uuidLinkPath, target: fullFolderPath });
     } else if (project.type === 'node') {
       const port = nextNodePort++;
       const childProcess = this.spawnNodeProject(fullFolderPath, port, project.uuid);
+
       middleware = createProxyMiddleware({
         target: `http://localhost:${port}`,
         changeOrigin: true,
-        pathRewrite: { [`^/${project.uuid}`]: '' },
       }) as any;
-      this.activeProjects.set(project.uuid, { project, middleware, process: childProcess, port });
+
+      this.activeProjects.set(project.uuid, { project, middleware, process: childProcess, port, symlinkPath });
       log.info('Node project mounted', { uuid: project.uuid, port });
       return;
     } else {
       throw new Error(`Unknown project type: ${project.type}`);
     }
 
-    this.activeProjects.set(project.uuid, { project, middleware });
+    this.activeProjects.set(project.uuid, { project, middleware, symlinkPath });
   }
 
   unmountProject(project: Project): void {
@@ -104,6 +119,17 @@ export class ProjectRouter {
       }
     }
 
+    if (active.symlinkPath) {
+      try {
+        if (lstatSync(active.symlinkPath).isSymbolicLink()) {
+          unlinkSync(active.symlinkPath);
+          log.info('Symlink removed', { path: active.symlinkPath, uuid: project.uuid });
+        }
+      } catch (err: any) {
+        log.warn('Failed to remove symlink', { path: active.symlinkPath, error: err.message });
+      }
+    }
+
     this.activeProjects.delete(project.uuid);
     log.info('Project unmounted', { uuid: project.uuid });
   }
@@ -115,6 +141,13 @@ export class ProjectRouter {
           active.process.kill('SIGTERM');
         } catch {}
       }
+      if (active.symlinkPath) {
+        try {
+          if (lstatSync(active.symlinkPath).isSymbolicLink()) {
+            unlinkSync(active.symlinkPath);
+          }
+        } catch {}
+      }
       this.activeProjects.delete(uuid);
     }
     log.info('All projects shut down');
@@ -122,6 +155,23 @@ export class ProjectRouter {
 
   getActiveProjects(): Map<string, ActiveProject> {
     return this.activeProjects;
+  }
+
+  remountSymlinks(): void {
+    for (const [uuid, active] of this.activeProjects) {
+      if (active.project.type === 'php' && active.symlinkPath) {
+        const linkPath = active.symlinkPath;
+        try {
+          if (!lstatSync(linkPath).isSymbolicLink()) {
+            const fullFolderPath = resolve(this.workspaceBaseDir, active.project.userId, active.project.folderPath);
+            if (existsSync(fullFolderPath)) {
+              symlinkSync(fullFolderPath, linkPath, 'junction');
+              log.info('Recreated symlink on startup', { uuid, path: linkPath });
+            }
+          }
+        } catch {}
+      }
+    }
   }
 
   private spawnNodeProject(folderPath: string, port: number, uuid: string): ChildProcess {

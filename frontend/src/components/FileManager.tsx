@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFiles } from '../hooks/useFiles';
 import { api } from '../lib/api';
 import type { FileEntry, Project } from '../types';
@@ -15,7 +15,6 @@ import {
   Upload,
   Download,
   Trash2,
-  Plus,
   FileEdit,
   Save,
   X,
@@ -26,6 +25,10 @@ import {
   FolderPlus,
   Globe,
   Pencil,
+  ArrowLeft,
+  ChevronUp,
+  Archive,
+  PackageOpen,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -40,9 +43,11 @@ interface FileNodeProps {
   onDelete: (path: string, type: string) => void;
   onRename: (path: string, type: string) => void;
   onDownload: (path: string) => void;
+  onDownloadZip: (path: string) => void;
+  onNavigateInto: (path: string) => void;
 }
 
-function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRename, onDownload }: FileNodeProps) {
+function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRename, onDownload, onDownloadZip, onNavigateInto }: FileNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const isDir = entry.type === 'directory';
   const isSelected = selectedPath === path;
@@ -58,6 +63,9 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
         onClick={() => {
           if (isDir) setExpanded(!expanded);
           onSelect(path, entry.type);
+        }}
+        onDoubleClick={() => {
+          if (isDir) onNavigateInto(path);
         }}
       >
         {isDir ? (
@@ -91,6 +99,15 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
               <Download className="h-3 w-3 text-zinc-400" />
             </button>
           )}
+          {isDir && (
+            <button
+              onClick={e => { e.stopPropagation(); onDownloadZip(path); }}
+              className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors"
+              title="Download as ZIP"
+            >
+              <Archive className="h-3 w-3 text-zinc-400" />
+            </button>
+          )}
           <button
             onClick={e => { e.stopPropagation(); onDelete(path, entry.type); }}
             className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors"
@@ -111,6 +128,8 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
           onDelete={onDelete}
           onRename={onRename}
           onDownload={onDownload}
+          onDownloadZip={onDownloadZip}
+          onNavigateInto={onNavigateInto}
         />
       ))}
     </div>
@@ -118,7 +137,8 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
 }
 
 export default function FileManager({ basePath = '.' }: { basePath?: string }) {
-  const { tree, loading, refresh } = useFiles(basePath);
+  const [currentPath, setCurrentPath] = useState<string>(basePath);
+  const { tree, loading, refresh } = useFiles(currentPath);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('view');
@@ -134,6 +154,39 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
   const [renameNewName, setRenameNewName] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [pathHistory, setPathHistory] = useState<string[]>([basePath]);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setCurrentPath(basePath);
+    setPathHistory([basePath]);
+  }, [basePath]);
+
+  const navigateTo = useCallback((path: string) => {
+    setCurrentPath(path);
+    setSelectedFile(null);
+    setFileContent('');
+    setPathHistory(prev => [...prev, path]);
+  }, []);
+
+  const navigateUp = useCallback(() => {
+    const parent = currentPath.includes('/') ? currentPath.split('/').slice(0, -1).join('/') : '.';
+    setCurrentPath(parent);
+    setSelectedFile(null);
+    setFileContent('');
+  }, [currentPath]);
+
+  const navigateToBreadcrumb = useCallback((index: number) => {
+    const segments = currentPath === '.' ? [] : currentPath.split('/');
+    if (index === -1) {
+      navigateTo('.');
+    } else {
+      const newPath = segments.slice(0, index + 1).join('/');
+      navigateTo(newPath);
+    }
+  }, [currentPath, navigateTo]);
+
+  const pathSegments = currentPath === '.' ? [] : currentPath.split('/');
 
   const handleSelect = async (path: string, type: string) => {
     if (type === 'file') {
@@ -149,6 +202,14 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
     const link = document.createElement('a');
     link.href = api.files.downloadUrl(path);
     link.download = path.split('/').pop() || 'file';
+    link.click();
+  };
+
+  const handleDownloadZip = (path: string) => {
+    const link = document.createElement('a');
+    const token = localStorage.getItem('webagent_access_token');
+    link.href = `/api/files/download-zip?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
+    link.download = `${path.split('/').pop() || 'folder'}.zip`;
     link.click();
   };
 
@@ -198,15 +259,44 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
   };
 
   const handleUpload = async (files: FileList) => {
-    for (const file of Array.from(files)) {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const content = reader.result as string;
-        await api.files.write(file.name, content);
-        refresh();
-      };
-      reader.readAsText(file);
+    const fileArr = Array.from(files);
+    const zipFiles = fileArr.filter(f => f.name.endsWith('.zip'));
+    const otherFiles = fileArr.filter(f => !f.name.endsWith('.zip'));
+
+    for (const file of otherFiles) {
+      const formData = new FormData();
+      formData.append('files', file);
+      if (currentPath !== '.') {
+        formData.append('destination', currentPath);
+      }
+      try {
+        await fetch('/api/files/upload', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('webagent_access_token')}` },
+          body: formData,
+        });
+      } catch {}
     }
+
+    for (const file of zipFiles) {
+      try {
+        await api.files.extractZip(file, currentPath === '.' ? undefined : currentPath);
+      } catch {}
+    }
+
+    refresh();
+  };
+
+  const handleExtractZip = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await api.files.extractZip(file, currentPath === '.' ? undefined : currentPath);
+      refresh();
+    } catch (err: any) {
+      alert(`Failed to extract zip: ${err.message}`);
+    }
+    if (zipInputRef.current) zipInputRef.current.value = '';
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -231,7 +321,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-zinc-800 flex flex-col">
         <div className="p-3 border-b border-zinc-800">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-semibold text-zinc-200">Workspace</h2>
+            <h2 className="text-sm font-semibold text-zinc-200">Files</h2>
             <div className="flex items-center gap-1">
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setCreateType('file'); setShowCreateDialog(true); }} title="New File">
                 <FilePlus className="h-3.5 w-3.5" />
@@ -241,6 +331,9 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
               </Button>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { document.getElementById('file-upload')?.click(); }} title="Upload">
                 <Upload className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { zipInputRef.current?.click(); }} title="Extract ZIP">
+                <PackageOpen className="h-3.5 w-3.5" />
               </Button>
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refresh} title="Refresh">
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -257,6 +350,44 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
             className="hidden"
             onChange={e => e.target.files && handleUpload(e.target.files)}
           />
+          <input
+            ref={zipInputRef}
+            type="file"
+            accept=".zip"
+            className="hidden"
+            onChange={handleExtractZip}
+          />
+
+          <div className="flex items-center gap-1 mb-1">
+            <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={navigateUp} title="Go up" disabled={currentPath === '.'}>
+              <ArrowLeft className="h-3 w-3" />
+            </Button>
+            <div className="flex items-center gap-0.5 overflow-x-auto text-[10px] min-w-0 scrollbar-none">
+              <button
+                onClick={() => navigateTo('.')}
+                className={cn(
+                  'shrink-0 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors',
+                  pathSegments.length === 0 ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-500 hover:text-zinc-300'
+                )}
+              >
+                root
+              </button>
+              {pathSegments.map((seg, i) => (
+                <span key={i} className="flex items-center gap-0.5 shrink-0">
+                  <ChevronRight className="h-2.5 w-2.5 text-zinc-600" />
+                  <button
+                    onClick={() => navigateToBreadcrumb(i)}
+                    className={cn(
+                      'px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors',
+                      i === pathSegments.length - 1 ? 'text-zinc-200 bg-zinc-800' : 'text-zinc-500 hover:text-zinc-300'
+                    )}
+                  >
+                    {seg}
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
 
         <ScrollArea className="flex-1">
@@ -276,8 +407,13 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
                   setShowRenameDialog(true);
                 }}
                 onDownload={handleDownload}
+                onDownloadZip={handleDownloadZip}
+                onNavigateInto={navigateTo}
               />
             ))}
+            {tree.length === 0 && (
+              <div className="p-4 text-center text-zinc-600 text-xs">Empty folder</div>
+            )}
           </div>
         </ScrollArea>
 
@@ -292,7 +428,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
         >
           <div className={cn('border-2 border-dashed rounded-lg p-4 transition-colors', isDragOver ? 'border-blue-500 text-blue-400' : 'border-zinc-700 text-zinc-500')}>
             <Upload className="h-5 w-5 mx-auto mb-1" />
-            <p className="text-xs">Drop files here to upload</p>
+            <p className="text-xs">Drop files or .zip here to upload</p>
           </div>
         </div>
       </div>
@@ -342,7 +478,8 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
             <div className="text-center">
               <File className="h-10 w-10 mx-auto mb-2 opacity-50" />
               <p className="text-sm">Select a file to view</p>
-              <p className="text-xs mt-1">or drag & drop files to upload</p>
+              <p className="text-xs mt-1">Double-click a folder to navigate into it</p>
+              <p className="text-xs mt-1">or drag & drop files / .zip to upload</p>
             </div>
           </div>
         )}

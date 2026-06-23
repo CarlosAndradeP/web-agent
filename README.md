@@ -71,10 +71,14 @@ npm run dev:frontend
 - Projetos com falha de mount são marcados como `error` automaticamente
 
 ### FileManager
-- Árvore de arquivos com preview
+- Navegação estilo explorer com breadcrumbs clicáveis
+- Duplo-clique em pasta para navegar dentro
+- Botão voltar (nível acima)
 - Escopado ao projeto ativo (não lista toda a workspace)
 - Criar arquivo/pasta, renomear, deletar (arquivo e pasta)
-- Upload drag & drop
+- Upload drag & drop (arquivos e .zip)
+- Download de pasta compactada em ZIP
+- Extrair ZIP diretamente no gerenciador
 - Publicar pasta como projeto
 
 ### Agente Autônomo
@@ -101,7 +105,7 @@ npm run dev:frontend
 
 ## API
 
-### Auth (público)
+### Auth (público + autenticado)
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `POST` | `/api/auth/login` | Login |
@@ -109,6 +113,9 @@ npm run dev:frontend
 | `POST` | `/api/auth/refresh` | Refresh token rotation |
 | `GET` | `/api/auth/me` | Dados do usuário logado |
 | `POST` | `/api/auth/logout` | Logout |
+| `POST` | `/api/auth/change-password` | Trocar senha (auth) |
+| `GET` | `/api/auth/credits/history` | Histórico de créditos próprio (auth) |
+| `PATCH` | `/api/auth/profile` | Atualizar email (auth) |
 
 ### Chat + Core (autenticado)
 | Método | Rota | Descrição |
@@ -169,7 +176,7 @@ web-agent/
 │   └── websocket/          # Socket.IO events (room-scoped)
 ├── frontend/               # React + Vite + TailwindCSS
 │   └── src/
-│       ├── components/     # 15+ components (AdminPanel com Models tab)
+│       ├── components/     # 17+ components (AdminPanel, UserPanel, FileManager com explorer)
 │       ├── contexts/       # AuthContext (auth + credits listener + localStorage sync)
 │       ├── hooks/          # 6 hooks (useChat, useProjects, useFiles com basePath, etc.)
 │       └── lib/            # api.ts, auth-api.ts
@@ -211,6 +218,8 @@ Veja detalhes completos em [`fix.md`](fix.md).
 | Crítico | Créditos nunca eram deduzidos | `mapRow()` não mapeava `user_id`/`workspace_dir` |
 | Crítico | Agente escrevia no workspace global | Mesma causa — fallback para `appConfig.workspaceDir` |
 | Crítico | Rotas admin sem proteção de role | `adminMiddleware` não aplicado |
+| Crítico | Créditos não atualizam em tempo real | `creditManager.setIo()` nunca era chamado |
+| Crítico | Links de projetos não funcionam (PHP/Node/Static) | Proxy PHP sem mapeamento UUID→caminho; pathRewrite morto; query strings perdidas |
 | Médio | Projetos sem `index.html` carregavam SPA | `next()` no project-router caía no catch-all |
 | Médio | Projetos com falha de mount ficavam "active" | Status não atualizado no `catch` do startup |
 | Médio | Steps duplicados em `agent_steps` | Inserção no `onStepFinish` + `eventStream` |

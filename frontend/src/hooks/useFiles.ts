@@ -10,12 +10,15 @@ export function useFiles(basePath: string = '.') {
     try {
       const data = await api.files.list(basePath, true);
       setTree(data.tree);
+    } catch {
+      setTree([]);
     } finally {
       setLoading(false);
     }
   }, [basePath]);
 
   useEffect(() => {
+    setLoading(true);
     refresh();
   }, [refresh]);
 

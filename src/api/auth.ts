@@ -148,5 +148,74 @@ export function createAuthRouter(db: Database.Database) {
     res.json({ success: true });
   });
 
+  router.post('/change-password', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authorization required' });
+      return;
+    }
+    try {
+      const payload = verifyToken(authHeader.slice(7));
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({ error: 'currentPassword and newPassword are required' });
+        return;
+      }
+      if (newPassword.length < 6) {
+        res.status(400).json({ error: 'New password must be at least 6 characters' });
+        return;
+      }
+      const user = usersRepo.findById(payload.userId);
+      if (!user) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      if (!usersRepo.verifyPassword(user, currentPassword)) {
+        res.status(401).json({ error: 'Current password is incorrect' });
+        return;
+      }
+      usersRepo.updatePassword(user.id, newPassword);
+      log.info('Password changed', { userId: user.id });
+      res.json({ success: true });
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+    }
+  });
+
+  router.get('/credits/history', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authorization required' });
+      return;
+    }
+    try {
+      const payload = verifyToken(authHeader.slice(7));
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const history = creditsRepo.getHistory(payload.userId, limit, offset);
+      const balance = creditsRepo.getBalance(payload.userId);
+      res.json({ history, balance });
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+    }
+  });
+
+  router.patch('/profile', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authorization required' });
+      return;
+    }
+    try {
+      const payload = verifyToken(authHeader.slice(7));
+      const { email } = req.body;
+      usersRepo.updateEmail(payload.userId, email ?? null);
+      const user = usersRepo.findById(payload.userId);
+      res.json({ user: user ? toPublic(user) : null });
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+    }
+  });
+
   return router;
 }

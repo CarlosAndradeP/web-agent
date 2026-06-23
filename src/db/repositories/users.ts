@@ -93,6 +93,18 @@ export class UsersRepository {
     return bcrypt.compareSync(password, user.password_hash);
   }
 
+  updatePassword(id: string, newPassword: string): void {
+    const now = new Date().toISOString();
+    const passwordHash = bcrypt.hashSync(newPassword, 10);
+    this.db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(passwordHash, now, id);
+    log.info('Password updated', { id });
+  }
+
+  updateEmail(id: string, email: string | null): void {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE users SET email = ?, updated_at = ? WHERE id = ?').run(email, now, id);
+  }
+
   private mapRow(row: any): User {
     return {
       id: row.id,

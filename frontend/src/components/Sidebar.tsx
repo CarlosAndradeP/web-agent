@@ -1,4 +1,4 @@
-import { ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut, Globe, Folder, ExternalLink } from 'lucide-react';
+import { ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut, Globe, Folder, ExternalLink, User } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Separator } from './ui/separator';
@@ -6,7 +6,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { useAuth } from '../contexts/AuthContext';
 import type { Project } from '../types';
 
-type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin';
+type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
 interface Props {
   activeTab: Tab;
@@ -27,7 +27,10 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
     { id: 'chat', label: 'Chat', icon: ListTodo },
     { id: 'files', label: 'Files', icon: FolderOpen },
     { id: 'config', label: 'Config', icon: Settings },
-    ...(isAdmin ? [{ id: 'admin' as Tab, label: 'Admin', icon: Shield }] : []),
+    ...(isAdmin
+      ? [{ id: 'admin' as Tab, label: 'Admin', icon: Shield }]
+      : [{ id: 'account' as Tab, label: 'Account', icon: User }]
+    ),
   ];
 
   const typeBadge: Record<string, { label: string; color: string }> = {

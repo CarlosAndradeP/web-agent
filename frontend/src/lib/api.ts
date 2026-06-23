@@ -105,6 +105,26 @@ export const api = {
       const token = localStorage.getItem('webagent_access_token');
       return `${BASE}/files/download?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
     },
+    downloadZipUrl: (path: string) => {
+      const token = localStorage.getItem('webagent_access_token');
+      return `${BASE}/files/download-zip?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
+    },
+    extractZip: async (file: File, destination?: string) => {
+      const formData = new FormData();
+      formData.append('zipfile', file);
+      if (destination) {
+        formData.append('destination', destination);
+      }
+      const res = await fetch(`${BASE}/files/extract-zip`, {
+        method: 'POST',
+        headers: getAuthHeadersNoContentType(),
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Extract zip error: ${res.status}`);
+      return res.json() as Promise<{ success: boolean; destination: string; extracted: string[] }>;
+    },
+    listFolders: (path = '.') =>
+      fetchJSON<{ folders: { name: string; path: string }[] }>(`${BASE}/files/list-folders?path=${encodeURIComponent(path)}`),
     rename: (oldPath: string, newPath: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/files/rename`, {
         method: 'POST',

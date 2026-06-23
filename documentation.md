@@ -236,6 +236,9 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 | `POST` | `/api/auth/refresh` | Refresh token rotation |
 | `GET` | `/api/auth/me` | Dados do usuário logado |
 | `POST` | `/api/auth/logout` | Invalida refresh token |
+| `POST` | `/api/auth/change-password` | Trocar senha (requer auth) |
+| `GET` | `/api/auth/credits/history` | Histórico de créditos próprio (requer auth) |
+| `PATCH` | `/api/auth/profile` | Atualizar perfil/email (requer auth) |
 
 ### Rotas Autenticadas (authMiddleware)
 
@@ -252,6 +255,9 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 | `POST` | `/api/files/mkdir` | Criar diretório |
 | `POST` | `/api/files/upload` | Upload de arquivos (multipart) |
 | `GET` | `/api/files/download` | Download com token auth |
+| `GET` | `/api/files/download-zip` | Download pasta compactada como ZIP |
+| `POST` | `/api/files/extract-zip` | Extrair ZIP no destino (multipart) |
+| `GET` | `/api/files/list-folders` | Listar subpastas de um diretório |
 | `GET/PUT` | `/api/config` | Configurações |
 | `GET/POST` | `/api/sessions` | Sessões (filtradas por user) |
 | `GET` | `/api/sessions/:id/messages` | Mensagens de uma sessão |
@@ -441,16 +447,16 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 
 ```
 ┌──────────────┬──────────────────────────────────────────┐
-│   Sidebar    │  [Chat] [Files] [Config] [Admin]         │
+│   Sidebar    │  [Chat] [Files] [Config] [Admin/Account]│
 │              ├──────────────────────────────────────────┤
 │  Projects    │                                          │
 │  ─────────  │  Content area based on active tab        │
 │  ● My Site   │                                          │
 │  ● App Node  │  Chat: ChatPanel with project session    │
-│  ● Blog PHP  │  Files: FileManager with rename/delete   │
+│  ● Blog PHP  │  Files: FileManager with explorer nav    │
 │              │  Config: ConfigPanel                      │
 │  [+ New]    │  Admin: AdminPanel (if admin)             │
-│              │                                          │
+│              │  Account: UserPanel (if not admin)        │
 │  ───────    │──────────────────────────────────────────│
 │  👤 admin   │                                          │
 │  999999 cr  │                                          │
@@ -470,9 +476,10 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 | ToolCallDisplay | `ToolCallDisplay.tsx` | Accordion para tool inputs/outputs |
 | StepProgressBar | `StepProgressBar.tsx` | Barra de progresso |
 | TypingIndicator | `TypingIndicator.tsx` | Indicador de digitação |
-| FileManager | `FileManager.tsx` | Árvore + preview + rename + delete + create + publish |
+| FileManager | `FileManager.tsx` | Explorer com navegação + breadcrumbs + preview + rename + delete + create + publish + zip download + zip extract |
 | ConfigPanel | `ConfigPanel.tsx` | Modelo, steps, aprovação, API |
-| AdminPanel | `AdminPanel.tsx` | Usuários, créditos, histórico, stats |
+| AdminPanel | `AdminPanel.tsx` | Usuários, créditos, histórico, stats (apenas admins) |
+| UserPanel | `UserPanel.tsx` | Conta, segurança (trocar senha), créditos (não-admins) |
 | PublishProjectDialog | `PublishProjectDialog.tsx` | Dialog para publicar pasta como projeto |
 | ApprovalDialog | `ApprovalDialog.tsx` | Modal de aprovação de ferramentas |
 
@@ -480,7 +487,7 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 
 | Context | Arquivo | Funcionalidade |
 |---------|---------|---------------|
-| AuthContext | `contexts/AuthContext.tsx` | Auth state, login/register/logout, auto-refresh 14min, Socket.IO credits listener, fetch 401 interceptor |
+| AuthContext | `contexts/AuthContext.tsx` | Auth state, login/register/logout, auto-refresh 14min, Socket.IO credits listener + re-join on reconnect, fetch 401 interceptor, `updateUser()` para sync de perfil |
 
 ### Hooks
 
@@ -489,7 +496,7 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 | `useSocket` | `hooks/useSocket.ts` | Conexão Socket.IO singleton |
 | `useChat` | `hooks/useChat.ts` | SSE fetch + messages state + cancel + 402 friendly message |
 | `useTasks` | `hooks/useTasks.ts` | CRUD de tarefas + Socket.IO updates |
-| `useFiles` | `hooks/useFiles.ts` | Tree + content + refresh |
+| `useFiles` | `hooks/useFiles.ts` | Tree + content + refresh (aceita basePath dinâmico) |
 | `useSessions` | `hooks/useSessions.ts` | CRUD de sessões |
 | `useProjects` | `hooks/useProjects.ts` | CRUD de projetos (list, create, delete) |
 
@@ -497,8 +504,8 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 
 | Lib | Arquivo | Uso |
 |-----|---------|-----|
-| `api.ts` | `lib/api.ts` | Cliente REST com auth headers (Bearer token) |
-| `auth-api.ts` | `lib/auth-api.ts` | Cliente de auth (login, register, refresh, me, logout) |
+| `api.ts` | `lib/api.ts` | Cliente REST com auth headers (Bearer token) + zip download/extract + listFolders |
+| `auth-api.ts` | `lib/auth-api.ts` | Cliente de auth (login, register, refresh, me, logout, changePassword, creditHistory, updateProfile) |
 | `utils.ts` | `lib/utils.ts` | `cn()` helper (Tailwind) |
 
 ---
@@ -555,12 +562,12 @@ Cada projeto tem:
 ### Criação de Projeto
 
 1. Usuário clica "+" na sidebar → "Novo Projeto" dialog
-2. Informa nome e tipo (static/php/node)
+2. Informa nome, tipo (static/php/node), e opcionalmente seleciona pasta existente no workspace
 3. Backend: `POST /api/projects`
    - Cria sessão vinculada ao usuário
-   - Cria pasta no workspace (`workspaceBaseDir/<username>/<slug>`)
+   - Cria pasta no workspace (`workspaceBaseDir/<username>/<slug>`) — ou usa pasta existente se selecionada
    - Cria registro no DB com `session_id` vinculado
-   - Monta o projeto no ProjectRouter (static=express.static, php=proxy Apache, node=spawn+proxy)
+   - Monta o projeto no ProjectRouter (static=express.static, php=symlink+proxy Apache, node=spawn+proxy)
 4. Frontend: abre ChatPanel com `sessionId` do projeto
 
 ### Publicação de Pasta Existente
@@ -574,9 +581,10 @@ O botão "Publish" no FileManager abre `PublishProjectDialog`:
 Middleware Express em `/p` que:
 1. Extrai UUID da URL: `/p/<uuid>/<path>`
 2. Procura no `activeProjects` Map (em memória)
-3. Delega ao middleware do projeto:
-   - **static**: `express.static(fullFolderPath)`
-   - **php**: `createProxyMiddleware({ target: http://localhost:8080/<uuid>/ })`
+3. Reescreve `req.url` removendo o prefixo UUID, preservando query strings
+4. Delega ao middleware do projeto:
+   - **static**: `express.static(fullFolderPath)` — 404 se arquivo não encontrado
+   - **php**: Cria symlink `<workspaceBaseDir>/<uuid>` → `<username>/<folderPath>/` no mount; proxy para `http://localhost:8080/<uuid>/` (Apache resolve symlink sob DocumentRoot); symlink removido no unmount
    - **node**: spawn child process na porta 9000+, proxy para `http://localhost:<port>`
 
 ### Re-mount no Startup
@@ -762,3 +770,8 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 | AI SDK v6 `inputSchema` ao invés de `parameters` | API mudou na v6 |
 | Sidebar mostra projetos, não sessões | Cada projeto = chat + workspace + URL pública; sessão vinculada automaticamente |
 | CSS `hidden` para persistência de layout | React conditional render destroy state; `hidden` mantém mounted |
+| Symlink para projetos PHP no Apache | `DocumentRoot /app/workspace` não mapeia UUID → caminho real; symlink `<workspace>/<uuid>` → `<workspace>/<user>/<folder>/` resolve o mapeamento sem reconfigurar Apache |
+| `archiver` (ZipArchive) para download de pastas como ZIP | Streaming ZIP via Node.js sem criar arquivo temporário; `adm-zip` para extração (memória → disco) |
+| `user:join` re-emito no `socket.on('connect')` | Socket.IO perde room membership ao reconectar; re-join garante que `credits:deducted` chega ao cliente |
+| Tab condicional admin/account no Sidebar | Admins veem Shield+Admin (AdminPanel), não-admins veem User+Account (UserPanel); mesma posição, diferente componente |
+| `updateUser()` no AuthContext | Permite que `UserPanel` sincronize mudanças de perfil (email) no state React + localStorage sem re-login |

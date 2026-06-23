@@ -130,7 +130,7 @@ if (existsSync(publicDir)) {
   log.warn('No static directory found for frontend');
 }
 
-setupWebSocket(io, approvalManager, taskManager);
+setupWebSocket(io, approvalManager, taskManager, creditManager);
 log.info('WebSocket setup complete');
 
 fileWatcher.start(config.workspaceBaseDir, io);

@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import FileManager from './FileManager';
 import ConfigPanel from './ConfigPanel';
 import AdminPanel from './AdminPanel';
+import UserPanel from './UserPanel';
 import Header from './Header';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
@@ -15,7 +16,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import type { Project } from '../types';
 
-type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin';
+type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
@@ -25,12 +26,23 @@ export default function Layout() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectType, setNewProjectType] = useState<'static' | 'php' | 'node'>('static');
+  const [newProjectFolder, setNewProjectFolder] = useState('');
+  const [existingFolders, setExistingFolders] = useState<{ name: string; path: string }[]>([]);
+  const [useExistingFolder, setUseExistingFolder] = useState(false);
   const { projects, createProject, deleteProject, refresh: refreshProjects } = useProjects();
   const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
   const { user } = useAuth();
 
   const isAdmin = user?.role === 'admin';
+
+  useEffect(() => {
+    if (showCreateDialog) {
+      api.files.listFolders('.').then(data => {
+        setExistingFolders(data.folders);
+      }).catch(() => {});
+    }
+  }, [showCreateDialog]);
 
   const handleTabChange = useCallback((tab: Tab) => {
     if (tab === 'admin' && !isAdmin) return;
@@ -40,7 +52,12 @@ export default function Layout() {
 
   const handleProjectCreate = useCallback(async () => {
     const name = newProjectName.trim() || `Project ${projects.length + 1}`;
-    const folderPath = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    let folderPath: string;
+    if (useExistingFolder && newProjectFolder) {
+      folderPath = newProjectFolder;
+    } else {
+      folderPath = newProjectFolder.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
     try {
       const project = await createProject(name, folderPath, newProjectType);
       setActiveProjectId(project.id);
@@ -49,12 +66,14 @@ export default function Layout() {
       }
       setNewProjectName('');
       setNewProjectType('static');
+      setNewProjectFolder('');
+      setUseExistingFolder(false);
       setShowCreateDialog(false);
       setActiveTab('chat');
     } catch (err: any) {
       alert(`Failed to create project: ${err.message}`);
     }
-  }, [newProjectName, newProjectType, projects.length, createProject]);
+  }, [newProjectName, newProjectType, newProjectFolder, useExistingFolder, projects.length, createProject]);
 
   const handleProjectDelete = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
@@ -152,6 +171,11 @@ export default function Layout() {
               <AdminPanel />
             </div>
           )}
+          {!isAdmin && (
+            <div className={activeTab === 'account' ? 'h-full' : 'h-full hidden'}>
+              <UserPanel />
+            </div>
+          )}
         </main>
       </div>
 
@@ -181,8 +205,44 @@ export default function Layout() {
                 <option value="node">Node.js (Express, etc.)</option>
               </select>
             </div>
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  type="checkbox"
+                  id="use-existing"
+                  checked={useExistingFolder}
+                  onChange={e => setUseExistingFolder(e.target.checked)}
+                  className="rounded border-zinc-700 bg-zinc-900"
+                />
+                <label htmlFor="use-existing" className="text-xs text-zinc-400 cursor-pointer">Use existing folder in workspace</label>
+              </div>
+              {useExistingFolder ? (
+                <select
+                  value={newProjectFolder}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewProjectFolder(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
+                >
+                  <option value="">Select a folder...</option>
+                  {existingFolders.map(f => (
+                    <option key={f.path} value={f.path}>{f.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  placeholder="Folder name (auto-generated from project name)"
+                  value={newProjectFolder}
+                  onChange={e => setNewProjectFolder(e.target.value)}
+                  className="text-xs"
+                />
+              )}
+            </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => {
+                setShowCreateDialog(false);
+                setNewProjectName('');
+                setNewProjectFolder('');
+                setUseExistingFolder(false);
+              }}>Cancel</Button>
               <Button onClick={handleProjectCreate}>Create</Button>
             </div>
           </div>

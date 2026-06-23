@@ -8,6 +8,17 @@ export interface UserPublic {
   updatedAt: string;
 }
 
+export interface CreditTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  balanceAfter: number;
+  type: 'purchase' | 'consumption' | 'refund' | 'bonus';
+  description: string | null;
+  taskId: string | null;
+  createdAt: string;
+}
+
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
@@ -56,5 +67,24 @@ export const authApi = {
     fetchJSON<{ success: boolean }>(`${BASE}/logout`, {
       method: 'POST',
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    }),
+
+  changePassword: (currentPassword: string, newPassword: string, accessToken: string) =>
+    fetchJSON<{ success: boolean }>(`${BASE}/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
+  creditHistory: (accessToken: string, limit?: number, offset?: number) =>
+    fetchJSON<{ history: CreditTransaction[]; balance: number }>(`${BASE}/credits/history?limit=${limit || 50}&offset=${offset || 0}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+
+  updateProfile: (data: { email?: string | null }, accessToken: string) =>
+    fetchJSON<{ user: UserPublic }>(`${BASE}/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(data),
     }),
 };

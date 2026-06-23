@@ -1,7 +1,9 @@
 import { Router } from 'express';
-import { resolve } from 'node:path';
+import { resolve, basename } from 'node:path';
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, createReadStream, existsSync, renameSync } from 'node:fs';
 import multer from 'multer';
+import { ZipArchive as ArchiverZip } from 'archiver';
+import AdmZip from 'adm-zip';
 import type { ConfigRepository } from '../db/repositories/config.js';
 import type { FileEntry } from '../types/index.js';
 import { UsersRepository } from '../db/repositories/users.js';
@@ -237,6 +239,83 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       mkdirSync(resolve(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, '', 'utf-8');
       res.json({ success: true, path });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/download-zip', (req, res) => {
+    const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const path = req.query.path as string;
+    if (!path) {
+      res.status(400).json({ error: 'path query parameter is required' });
+      return;
+    }
+    try {
+      const fullPath = safePath(workspaceDir, path);
+      if (!existsSync(fullPath)) {
+        res.status(404).json({ error: 'Path not found' });
+        return;
+      }
+      const stat = statSync(fullPath);
+      if (!stat.isDirectory()) {
+        res.status(400).json({ error: 'path must be a directory' });
+        return;
+      }
+      const folderName = basename(fullPath);
+      res.setHeader('Content-Disposition', `attachment; filename="${folderName}.zip"`);
+      res.setHeader('Content-Type', 'application/zip');
+      const archive = new ArchiverZip({ zlib: { level: 6 } });
+      archive.pipe(res);
+      archive.directory(fullPath, folderName);
+      archive.finalize();
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/extract-zip', upload.single('zipfile'), (req, res) => {
+    const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const file = req.file;
+    const dest = (req.body.destination as string) || '';
+    if (!file) {
+      res.status(400).json({ error: 'No zip file uploaded' });
+      return;
+    }
+    try {
+      const safeDest = dest ? safePath(workspaceDir, dest) : workspaceDir;
+      mkdirSync(safeDest, { recursive: true });
+      const zip = new AdmZip(file.buffer);
+      zip.extractAllTo(safeDest, true);
+      const extractedEntries = zip.getEntries().map(e => e.entryName);
+      res.json({ success: true, destination: dest, extracted: extractedEntries });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/list-folders', (req, res) => {
+    const workspaceDir = getWorkspaceDir(req);
+    if (!workspaceDir) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const path = (req.query.path as string) ?? '.';
+    try {
+      const fullPath = safePath(workspaceDir, path);
+      const entries = readdirSync(fullPath, { withFileTypes: true });
+      const folders = entries
+        .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .map(e => ({ name: e.name, path: path === '.' ? e.name : `${path}/${e.name}` }));
+      res.json({ folders });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -115,6 +115,51 @@
 
 ---
 
+### BUG-9: Créditos não atualizam em tempo real — `creditManager.setIo()` nunca chamado
+
+**Sintoma:** O saldo de créditos do usuário só atualizava ao relogar (login) ou a cada 14 minutos (refresh token). Eventos Socket.IO `credits:deducted` e `credits:exhausted` nunca chegavam ao frontend.
+
+**Causa-raiz:** Em `src/websocket/index.ts`, a função `setupWebSocket()` injetava a instância do Socket.IO (`io`) no `approvalManager.setIo(io)` e `taskManager.setIo(io)`, mas **esquecia** de chamar `creditManager.setIo(io)`. Como resultado, `this.io` no `CreditManager` era sempre `null` e os eventos `io.to('user:${userId}').emit('credits:deducted', ...)` nunca eram emitidos.
+
+**Correção:**
+- `src/websocket/index.ts`: Adicionado parâmetro `creditManager: CreditManager` e chamada `creditManager.setIo(io)`
+- `src/server.ts`: Passa `creditManager` para `setupWebSocket(io, approvalManager, taskManager, creditManager)`
+- `frontend/src/contexts/AuthContext.tsx`: Re-emite `user:join` no evento `socket.on('connect')` para garantir room membership após reconexões
+
+**Arquivos alterados:**
+- `src/websocket/index.ts`
+- `src/server.ts`
+- `frontend/src/contexts/AuthContext.tsx`
+
+---
+
+### BUG-10: Links externos de projetos publicados não funcionam (PHP, Node.js e Static)
+
+**Sintoma:** Ao acessar `/p/<uuid>/`, projetos PHP retornavam 404, projetos Node.js perdiam o prefixo UUID no proxy, e projetos estáticos perdiam query strings.
+
+**Causa-raiz (múltiplas):**
+
+1. **PHP: target do proxy inacessível** — O proxy PHP apontava para `http://localhost:8080/<uuid>/`, mas o Apache tem `DocumentRoot /app/workspace`. Não existe diretório `/app/workspace/<uuid>/` — os arquivos estão em `/app/workspace/<username>/<folderPath>/`. Sem `Alias` ou `ProxyPass` no Apache que mapeasse UUID → caminho real, todo request PHP resultava em 404.
+
+2. **pathRewrite era código morto** — A linha 41 do `project-router.ts` reescrevia `req.url` removendo o UUID ANTES do proxy executar. Os `pathRewrite` nos proxies PHP e Node.js tentavam match em `^/<uuid>` em URLs que já não continham UUID, logo nunca disparavam.
+
+3. **Query strings eram descartadas** — O regex `(?:\?.*)?$` descartava query strings, e a reescrita de `req.url` na linha 41 não as preservava. Requests como `/p/<uuid>/page.php?foo=bar` perdiam `?foo=bar`.
+
+**Correção:**
+
+- **Symlink para PHP**: Ao montar projeto PHP, cria symlink `<workspaceBaseDir>/<uuid>` → `<username>/<folderPath>/`. O Apache resolve o symlink sob `DocumentRoot /app/workspace`. Ao desmontar, o symlink é removido. O target do proxy permanece `http://localhost:8080/<uuid>/` — agora funcional pois o symlink existe no filesystem.
+
+- **pathRewrite removido**: Os `pathRewrite` mortos foram removidos dos proxies PHP e Node.js. O middleware do ProjectRouter continua removendo o prefixo UUID de `req.url` antes de delegar ao proxy (necessário para que `express.static` e os proxys recebam apenas o sub-path).
+
+- **Query strings preservadas**: `req.url` agora inclui a query string após a reescrita: `req.url = subPath + queryString`.
+
+- **Limpeza de symlinks**: `unmountProject()` e `shutdownAll()` removem symlinks automaticamente. No startup, `mountProject()` recria symlinks para projetos PHP com status `active`.
+
+**Arquivos alterados:**
+- `src/services/project-router.ts`
+
+---
+
 ## Funcionalidades Adicionadas (corrigem problemas de design)
 
 ### FEAT-1: Agente trabalha dentro da pasta do projeto (não na raiz do workspace)
@@ -168,3 +213,99 @@
 - `frontend/src/lib/api.ts`
 - `frontend/src/components/AdminPanel.tsx`
 - `frontend/src/components/ChatPanel.tsx`
+
+---
+
+### FEAT-4: FileManager com navegação estilo explorer, download ZIP e extração de ZIP
+
+**Problema anterior:** O FileManager era uma árvore plana com expand/collapse, sem navegação entre pastas, sem breadcrumbs, sem botão voltar. Download era apenas de arquivos individuais. Upload só funcionava para texto (binary corrompia). Não existia extração de ZIP.
+
+**Correção:**
+
+**Backend (`src/api/files.ts`):**
+- `GET /files/download-zip?path=X` — Compacta pasta como ZIP via `archiver` (streaming com zlib level 6)
+- `POST /files/extract-zip` — Recebe ZIP via multer memória e extrai com `adm-zip` no destino
+- `GET /files/list-folders?path=X` — Lista apenas subpastas (para o dropdown de "Novo Projeto")
+
+**Frontend (`FileManager.tsx`):**
+- **Breadcrumbs** clicáveis no topo (root > folder > subfolder) — navegação direta para qualquer nível
+- **Botão voltar** (ArrowLeft) — navega ao diretório acima
+- **Duplo-clique em pasta** — navega dentro dela (muda `currentPath`, atualiza tree)
+- **Download ZIP** (ícone Archive) — botão hover em cada pasta no tree
+- **Extrair ZIP** (ícone PackageOpen) — botão no header + input file oculto
+- **Upload binário corrigido** — Usa multipart/form-data via `POST /files/upload` em vez de `readAsText` + PUT
+- **Drag & drop aprimorado** — Aceita arquivos e .zip simultaneamente; .zip é extraído, outros são uploaded
+
+**Novas dependências backend:** `archiver`, `adm-zip`, `@types/archiver`, `@types/adm-zip`
+
+**Arquivos alterados/criados:**
+- `src/api/files.ts` (3 novos endpoints + imports)
+- `frontend/src/components/FileManager.tsx` (reescrito)
+- `frontend/src/hooks/useFiles.ts` (error handling)
+- `frontend/src/lib/api.ts` (3 novos métodos: `downloadZipUrl`, `extractZip`, `listFolders`)
+- `package.json` (4 novas dependências)
+
+---
+
+### FEAT-5: Novo Projeto — escolher pasta existente no workspace
+
+**Problema anterior:** Ao criar um novo projeto, o `folderPath` era gerado automaticamente via slug do nome (ex: "My App" → "my-app"). Não era possível usar uma pasta já existente no workspace, impossibilitando importar projetos existentes.
+
+**Correção:**
+
+**Backend:** Novo endpoint `GET /files/list-folders?path=X` (já documentado em FEAT-4) que lista subpastas do workspace.
+
+**Frontend (`Layout.tsx`):** O dialog "Novo Projeto" agora inclui:
+- Checkbox "Usar pasta existente no workspace"
+- Dropdown de pastas existentes (populado via `api.files.listFolders('.')`)
+- Campo de nome da pasta editável (auto-gerado do nome do projeto se não usar existente)
+- Se marcar "usar existente", seleciona do dropdown; se não, o backend cria a pasta automaticamente
+
+**Arquivos alterados:**
+- `frontend/src/components/Layout.tsx`
+- `frontend/src/lib/api.ts` (`listFolders`)
+
+---
+
+### FEAT-6: Painel de usuário para não-admins (conta, segurança, créditos)
+
+**Problema anterior:** Usuários não-admin não tinham nenhum painel de conta. Não podiam trocar senha, ver histórico de créditos ou atualizar email. O histórico de créditos só era acessível via rota admin (`/api/admin/users/:id/credits/history`).
+
+**Correção:**
+
+**Backend:**
+- `UsersRepository.updatePassword(id, newPassword)` — Hash bcrypt da nova senha e update no DB
+- `UsersRepository.updateEmail(id, email)` — Atualiza email do usuário
+- `POST /api/auth/change-password` — Verifica senha atual (bcrypt compare), atualiza se correta. Requer auth.
+- `GET /api/auth/credits/history` — Retorna histórico de créditos do próprio usuário (não precisa ser admin). Requer auth.
+- `PATCH /api/auth/profile` — Atualiza email do próprio usuário. Requer auth.
+
+**Frontend:**
+- **`UserPanel.tsx`** — Novo componente com 3 tabs:
+  - **Conta**: username (read-only), email (editável com Save), role (read-only), data de criação
+  - **Segurança**: form trocar senha (senha atual + nova + confirmação), validação client-side
+  - **Créditos**: saldo atual com card destacado, histórico de transações (amount, type, description, date, balanceAfter)
+- **Layout.tsx**: Admins veem tab "Admin" (AdminPanel), não-admins veem tab "Account" (UserPanel). Mesma posição no layout.
+- **Sidebar.tsx**: Tab condicional — `Shield` icon + "Admin" para admins, `User` icon + "Account" para não-admins
+- **AuthContext.tsx**: Nova função `updateUser(updates)` para sincronizar mudanças de perfil no state e localStorage
+- **auth-api.ts**: 3 novos métodos: `changePassword()`, `creditHistory()`, `updateProfile()`
+
+**Arquivos alterados/criados:**
+- `src/db/repositories/users.ts` (2 novos métodos)
+- `src/api/auth.ts` (3 novos endpoints)
+- `frontend/src/components/UserPanel.tsx` (novo)
+- `frontend/src/components/Layout.tsx` (tab condicional admin/account)
+- `frontend/src/components/Sidebar.tsx` (tab condicional + ícone User)
+- `frontend/src/contexts/AuthContext.tsx` (novo `updateUser()`)
+- `frontend/src/lib/auth-api.ts` (3 novos métodos + tipo `CreditTransaction`)
+
+---
+
+### FEAT-7: Re-join de room Socket.IO após reconexão
+
+**Problema anterior:** Se a conexão Socket.IO caísse e reconectasse, o cliente não re-enviava o evento `user:join`, ficando fora da room `user:${userId}`. Eventos de créditos emitidos após a reconexão não chegavam ao cliente.
+
+**Correção:** Em `AuthContext.tsx`, o listener `socket.on('connect', joinRoom)` re-emite `user:join` a cada reconexão. Se o socket já estaba conectado no momento do setup, `joinRoom()` é chamado imediatamente.
+
+**Arquivos alterados:**
+- `frontend/src/contexts/AuthContext.tsx`

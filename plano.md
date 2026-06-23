@@ -287,3 +287,24 @@ Ver detalhes completos em [`documentation.md`](documentation.md#8-banco-de-dados
 8. Testar Docker build end-to-end
 9. Adicionar validação de input (Zod) nas rotas REST
 10. Considerar `@ai-sdk/openai-compatible@1.0+` quando estável
+
+---
+
+## Iteração 2 — Correções e Funcionalidades (Implementado)
+
+### Bugs Corrigidos
+
+| Bug | Severidade | Correção |
+|-----|-----------|----------|
+| Créditos não atualizam em tempo real | Crítico | `creditManager.setIo(io)` adicionado ao `setupWebSocket()`; re-join de room Socket.IO no `connect` |
+| Links de projetos não funcionam (PHP, Node, Static) | Crítico | Symlink `<workspace>/<uuid>` → `<username>/<folderPath>/` para PHP; query strings preservadas; pathRewrite morto removido |
+
+### Funcionalidades Adicionadas
+
+| Feature | Descrição |
+|---------|-----------|
+| FileManager Explorer | Breadcrumbs clicáveis, botão voltar, duplo-clique para navegar, download de pasta como ZIP, extração de ZIP, upload binário corrigido |
+| Novo Projeto com pasta existente | Checkbox + dropdown de pastas existentes no dialog "Novo Projeto" |
+| Painel de Usuário (UserPanel) | 3 tabs: Conta (email editável), Segurança (trocar senha), Créditos (saldo + histórico). Substitui tab Admin para não-admins |
+| Re-join Socket.IO | `user:join` re-enviado no `socket.on('connect')` para manter room membership após reconexões |
+| `updateUser()` no AuthContext | Sincroniza mudanças de perfil (email) no state + localStorage sem re-login |
