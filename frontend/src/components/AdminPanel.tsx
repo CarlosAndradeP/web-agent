@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import type { UserPublic, CreditTransaction, AdminModelInfo } from '../types';
+import type { UserPublic, CreditTransaction, AdminModelInfo, NodeProcessInfo } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
-import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight, Server, Square, RotateCw, RefreshCw, CheckSquare, Square as SquareBox } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-type AdminTab = 'users' | 'models' | 'stats';
+type AdminTab = 'users' | 'models' | 'processes' | 'stats';
 
 export default function AdminPanel() {
   const [tab, setTab] = useState<AdminTab>('users');
@@ -24,6 +24,17 @@ export default function AdminPanel() {
   const [editingModel, setEditingModel] = useState<string | null>(null);
   const [editCost, setEditCost] = useState('');
   const [editDisplayName, setEditDisplayName] = useState('');
+
+  const [nodeProcesses, setNodeProcesses] = useState<NodeProcessInfo[]>([]);
+  const [processesLoading, setProcessesLoading] = useState(false);
+
+  const [editEmail, setEditEmail] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [emailSaved, setEmailSaved] = useState(false);
+  const [passwordSaved, setPasswordSaved] = useState(false);
+
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
 
   const loadUsers = useCallback(async () => {
     try {
@@ -55,10 +66,37 @@ export default function AdminPanel() {
     }
   }, []);
 
+  const loadNodeProcesses = useCallback(async () => {
+    setProcessesLoading(true);
+    try {
+      const data = await api.admin.nodeProcesses();
+      setNodeProcesses(data.processes);
+    } catch (err) {
+      console.error('Failed to load node processes:', err);
+    } finally {
+      setProcessesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     setLoading(true);
-    Promise.all([loadUsers(), loadStats(), loadModels()]).finally(() => setLoading(false));
-  }, [loadUsers, loadStats, loadModels]);
+    Promise.all([loadUsers(), loadStats(), loadModels(), loadNodeProcesses()]).finally(() => setLoading(false));
+  }, [loadUsers, loadStats, loadModels, loadNodeProcesses]);
+
+  useEffect(() => {
+    if (tab !== 'processes') return;
+    const interval = setInterval(loadNodeProcesses, 5000);
+    return () => clearInterval(interval);
+  }, [tab, loadNodeProcesses]);
+
+  useEffect(() => {
+    if (selectedUser) {
+      setEditEmail(selectedUser.email || '');
+      setEmailSaved(false);
+      setPasswordSaved(false);
+      setShowResetPassword(false);
+    }
+  }, [selectedUser?.id]);
 
   const handleAddCredits = async () => {
     if (!selectedUser || !creditAmount) return;
@@ -109,6 +147,33 @@ export default function AdminPanel() {
     }
   };
 
+  const handleSaveEmail = async () => {
+    if (!selectedUser) return;
+    try {
+      await api.admin.updateUser(selectedUser.id, { email: editEmail || undefined });
+      setEmailSaved(true);
+      await loadUsers();
+      const refreshedUser = (await api.admin.users()).users.find((u: UserPublic) => u.id === selectedUser.id);
+      if (refreshedUser) setSelectedUser(refreshedUser);
+      setTimeout(() => setEmailSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to update email:', err);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedUser || !resetPassword || resetPassword.length < 4) return;
+    try {
+      await api.admin.resetPassword(selectedUser.id, resetPassword);
+      setPasswordSaved(true);
+      setResetPassword('');
+      setShowResetPassword(false);
+      setTimeout(() => setPasswordSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to reset password:', err);
+    }
+  };
+
   const handleToggleModel = async (modelId: string, currentEnabled: boolean) => {
     try {
       await api.admin.updateModel(modelId, { enabled: !currentEnabled });
@@ -141,6 +206,52 @@ export default function AdminPanel() {
     setEditDisplayName(model.displayName || '');
   };
 
+  const toggleModelSelection = (modelId: string) => {
+    setSelectedModels(prev => {
+      const next = new Set(prev);
+      if (next.has(modelId)) next.delete(modelId);
+      else next.add(modelId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllModels = () => {
+    if (selectedModels.size === models.length) {
+      setSelectedModels(new Set());
+    } else {
+      setSelectedModels(new Set(models.map(m => m.id)));
+    }
+  };
+
+  const handleBatchUpdateModels = async (enabled: boolean) => {
+    if (selectedModels.size === 0) return;
+    try {
+      await api.admin.batchUpdateModels(Array.from(selectedModels), enabled);
+      setSelectedModels(new Set());
+      await loadModels();
+    } catch (err) {
+      console.error('Failed to batch update models:', err);
+    }
+  };
+
+  const handleStopProcess = async (uuid: string) => {
+    try {
+      await api.admin.stopNodeProcess(uuid);
+      await loadNodeProcesses();
+    } catch (err) {
+      console.error('Failed to stop node process:', err);
+    }
+  };
+
+  const handleRestartProcess = async (uuid: string) => {
+    try {
+      await api.admin.restartNodeProcess(uuid);
+      await loadNodeProcesses();
+    } catch (err) {
+      console.error('Failed to restart node process:', err);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-full text-zinc-500 text-sm">Loading admin panel...</div>;
   }
@@ -148,6 +259,7 @@ export default function AdminPanel() {
   const tabs: { id: AdminTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'users', label: 'Users', icon: Users },
     { id: 'models', label: 'Models', icon: Cpu },
+    { id: 'processes', label: 'Processes', icon: Server },
     { id: 'stats', label: 'Dashboard', icon: BarChart3 },
   ];
 
@@ -228,6 +340,53 @@ export default function AdminPanel() {
                   <Separator />
 
                   <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Email</label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="email"
+                        placeholder="user@example.com"
+                        value={editEmail}
+                        onChange={e => setEditEmail(e.target.value)}
+                        className="text-xs h-8 flex-1"
+                      />
+                      <Button size="sm" onClick={handleSaveEmail} className="h-8 text-xs">
+                        {emailSaved ? 'Saved' : 'Save'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Reset Password</label>
+                    {showResetPassword ? (
+                      <div className="space-y-2">
+                        <Input
+                          type="password"
+                          placeholder="New password (min 4 chars)"
+                          value={resetPassword}
+                          onChange={e => setResetPassword(e.target.value)}
+                          className="text-xs h-8"
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={handleResetPassword} className="h-8 text-xs text-[11px]" disabled={resetPassword.length < 4}>
+                            {passwordSaved ? 'Saved' : 'Apply'}
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => { setShowResetPassword(false); setResetPassword(''); }} className="h-8 text-xs">
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={() => setShowResetPassword(true)} className="w-full text-xs h-8">
+                        Reset Password
+                      </Button>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
                     <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Add Credits</label>
                     <div className="flex gap-2">
                       <Input
@@ -283,11 +442,29 @@ export default function AdminPanel() {
               <span className="text-[10px] text-zinc-500">{models.length} models available</span>
             </div>
 
+            {selectedModels.size > 0 && (
+              <div className="flex items-center gap-2 mb-3 p-2 bg-zinc-800/50 rounded-md">
+                <span className="text-[11px] text-zinc-400">{selectedModels.size} selected</span>
+                <Button size="sm" className="h-6 text-[10px] text-emerald-400" onClick={() => handleBatchUpdateModels(true)}>
+                  Enable
+                </Button>
+                <Button size="sm" variant="outline" className="h-6 text-[10px] text-red-400" onClick={() => handleBatchUpdateModels(false)}>
+                  Disable
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setSelectedModels(new Set())}>
+                  Clear
+                </Button>
+              </div>
+            )}
+
             {modelsLoading ? (
               <div className="text-zinc-500 text-xs">Loading models...</div>
             ) : (
               <div className="space-y-2">
-                <div className="grid grid-cols-[1fr_80px_80px_80px_60px] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                <div className="grid grid-cols-[28px_1fr_80px_80px_80px_60px] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                  <button onClick={toggleSelectAllModels} className="flex items-center justify-center cursor-pointer" title={selectedModels.size === models.length ? 'Deselect all' : 'Select all'}>
+                    {selectedModels.size === models.length ? <CheckSquare className="h-3.5 w-3.5" /> : <SquareBox className="h-3.5 w-3.5" />}
+                  </button>
                   <span>Model</span>
                   <span>Cost/Step</span>
                   <span>Status</span>
@@ -299,11 +476,16 @@ export default function AdminPanel() {
                   <div
                     key={model.id}
                     className={cn(
-                      'grid grid-cols-[1fr_80px_80px_80px_60px] gap-2 px-3 py-2.5 rounded-md items-center text-xs',
+                      'grid grid-cols-[28px_1fr_80px_80px_80px_60px] gap-2 px-3 py-2.5 rounded-md items-center text-xs',
                       model.enabled ? 'bg-zinc-900/50' : 'bg-zinc-900/30 opacity-60',
-                      model.offline && 'border border-yellow-500/30'
+                      model.offline && 'border border-yellow-500/30',
+                      selectedModels.has(model.id) && 'ring-1 ring-blue-500/40'
                     )}
                   >
+                    <button onClick={() => toggleModelSelection(model.id)} className="flex items-center justify-center cursor-pointer">
+                      {selectedModels.has(model.id) ? <CheckSquare className="h-3.5 w-3.5 text-blue-400" /> : <SquareBox className="h-3.5 w-3.5 text-zinc-600" />}
+                    </button>
+
                     <div className="min-w-0">
                       <div className="font-mono text-zinc-200 truncate text-[11px]">{model.id}</div>
                       <div className="text-[10px] text-zinc-500 truncate">{model.name !== model.id ? model.name : ''}</div>
@@ -385,6 +567,75 @@ export default function AdminPanel() {
                           Edit
                         </Button>
                       )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        )}
+
+        {tab === 'processes' && (
+          <ScrollArea className="h-full p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold">Node.js Processes</h2>
+              <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={loadNodeProcesses} disabled={processesLoading}>
+                <RefreshCw className={cn('h-3 w-3 mr-1', processesLoading && 'animate-spin')} />
+                Refresh
+              </Button>
+            </div>
+
+            {nodeProcesses.length === 0 ? (
+              <div className="text-zinc-500 text-xs text-center py-8">
+                <Server className="h-8 w-8 mx-auto mb-2 text-zinc-700" />
+                <p>No Node.js processes running</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_80px_60px_80px_80px] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                  <span>Project</span>
+                  <span>User</span>
+                  <span>Port</span>
+                  <span>Status</span>
+                  <span>Actions</span>
+                </div>
+
+                {nodeProcesses.map(proc => (
+                  <div
+                    key={proc.uuid}
+                    className="grid grid-cols-[1fr_80px_60px_80px_80px] gap-2 px-3 py-2.5 rounded-md items-center text-xs bg-zinc-900/50"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-zinc-200 truncate text-[11px] font-medium">{proc.name}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{proc.uuid.slice(0, 8)}</div>
+                    </div>
+                    <span className="text-zinc-400 text-[11px] truncate">{proc.username || '—'}</span>
+                    <span className="text-zinc-300 text-[11px] font-mono">{proc.port}</span>
+                    <div>
+                      <span className={cn(
+                        'text-[11px] px-1.5 py-0.5 rounded-full',
+                        proc.status === 'running' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'
+                      )}>
+                        {proc.status}
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      {proc.status === 'running' && (
+                        <button
+                          onClick={() => handleStopProcess(proc.uuid)}
+                          className="h-6 w-6 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
+                          title="Stop process"
+                        >
+                          <Square className="h-3 w-3 text-red-400" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleRestartProcess(proc.uuid)}
+                        className="h-6 w-6 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
+                        title="Restart process"
+                      >
+                        <RotateCw className="h-3 w-3 text-blue-400" />
+                      </button>
                     </div>
                   </div>
                 ))}

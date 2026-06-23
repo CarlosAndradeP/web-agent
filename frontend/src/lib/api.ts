@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo } from '../types';
 
 const BASE = '/api';
 
@@ -158,6 +158,10 @@ export const api = {
     get: (id: string) => fetchJSON<{ project: Project }>(`${BASE}/projects/${id}`),
     delete: (id: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}`, { method: 'DELETE' }),
+    start: (id: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}/start`, { method: 'POST' }),
+    stop: (id: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}/stop`, { method: 'POST' }),
   },
   admin: {
     users: () => fetchJSON<{ users: UserPublic[] }>(`${BASE}/admin/users`),
@@ -184,5 +188,26 @@ export const api = {
       }),
     deleteModelConfig: (modelId: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/admin/models/${encodeURIComponent(modelId)}`, { method: 'DELETE' }),
+    batchUpdateModels: (modelIds: string[], enabled: boolean) =>
+      fetchJSON<{ success: boolean; updated: number }>(`${BASE}/admin/models/batch`, {
+        method: 'PATCH',
+        body: JSON.stringify({ modelIds, enabled }),
+      }),
+    updateUser: (userId: string, data: { email?: string }) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    resetPassword: (userId: string, newPassword: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ newPassword }),
+      }),
+    nodeProcesses: () =>
+      fetchJSON<{ processes: NodeProcessInfo[] }>(`${BASE}/admin/node-processes`),
+    stopNodeProcess: (uuid: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/node-processes/${uuid}/stop`, { method: 'POST' }),
+    restartNodeProcess: (uuid: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/node-processes/${uuid}/restart`, { method: 'POST' }),
   },
 };

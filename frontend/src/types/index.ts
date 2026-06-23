@@ -127,3 +127,13 @@ export interface CreditTransaction {
   taskId: string | null;
   createdAt: string;
 }
+
+export interface NodeProcessInfo {
+  uuid: string;
+  name: string;
+  projectId: string;
+  port: number;
+  pid: number | undefined;
+  status: 'running' | 'stopped' | 'error';
+  username?: string;
+}

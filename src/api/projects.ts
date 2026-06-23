@@ -23,7 +23,7 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
     res.json({ projects });
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', async (req, res) => {
     const userId = req.user!.userId;
     const { name, folderPath, type } = req.body;
     if (!name || !folderPath || !type) {
@@ -59,7 +59,7 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
 
     try {
       const fullFolderPath = resolve(workspaceDir, folderPath);
-      projectRouter.mountProject(project, fullFolderPath);
+      await projectRouter.mountProject(project, fullFolderPath);
       log.info('Project published', { projectId: project.id, uuid: project.uuid, type });
     } catch (err: any) {
       projectsRepo.updateStatus(project.id, 'error');
@@ -79,6 +79,59 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
       return;
     }
     res.json({ project });
+  });
+
+  router.post('/:id/start', async (req, res) => {
+    const userId = req.user!.userId;
+    const project = projectsRepo.findById(req.params.id);
+    if (!project || project.userId !== userId) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+    if (project.type !== 'node') {
+      res.status(400).json({ error: 'Only Node.js projects can be started' });
+      return;
+    }
+
+    try {
+      const pUser = usersRepo.findById(userId);
+      if (!pUser) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, project.folderPath);
+      await projectRouter.startProject(project, fullFolderPath);
+      projectsRepo.updateStatus(project.id, 'active');
+      log.info('Node project started', { projectId: project.id, uuid: project.uuid });
+      res.json({ success: true });
+    } catch (err: any) {
+      log.error('Failed to start project', { projectId: project.id, error: err.message });
+      projectsRepo.updateStatus(project.id, 'error');
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/:id/stop', (req, res) => {
+    const userId = req.user!.userId;
+    const project = projectsRepo.findById(req.params.id);
+    if (!project || project.userId !== userId) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+    if (project.type !== 'node') {
+      res.status(400).json({ error: 'Only Node.js projects can be stopped' });
+      return;
+    }
+
+    try {
+      projectRouter.stopProject(project.uuid);
+      projectsRepo.updateStatus(project.id, 'stopped');
+      log.info('Node project stopped', { projectId: project.id, uuid: project.uuid });
+      res.json({ success: true });
+    } catch (err: any) {
+      log.error('Failed to stop project', { projectId: project.id, error: err.message });
+      res.status(500).json({ error: err.message });
+    }
   });
 
   router.delete('/:id', (req, res) => {

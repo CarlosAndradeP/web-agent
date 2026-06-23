@@ -57,6 +57,21 @@ export class ModelConfigRepository {
     this.db.prepare('UPDATE model_config SET enabled = ?, updated_at = ? WHERE model_id = ?').run(enabled ? 1 : 0, now, modelId);
   }
 
+  batchSetEnabled(modelIds: string[], enabled: boolean): number {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare('UPDATE model_config SET enabled = ?, updated_at = ? WHERE model_id = ?');
+    let count = 0;
+    const transaction = this.db.transaction(() => {
+      for (const id of modelIds) {
+        const result = stmt.run(enabled ? 1 : 0, now, id);
+        count += result.changes;
+      }
+    });
+    transaction();
+    log.info('Batch model enabled update', { count, enabled, modelCount: modelIds.length });
+    return count;
+  }
+
   setCostPerStep(modelId: string, costPerStep: number): void {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE model_config SET cost_per_step = ?, updated_at = ? WHERE model_id = ?').run(costPerStep, now, modelId);

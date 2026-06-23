@@ -29,7 +29,7 @@ export default function Layout() {
   const [newProjectFolder, setNewProjectFolder] = useState('');
   const [existingFolders, setExistingFolders] = useState<{ name: string; path: string }[]>([]);
   const [useExistingFolder, setUseExistingFolder] = useState(false);
-  const { projects, createProject, deleteProject, refresh: refreshProjects } = useProjects();
+  const { projects, createProject, deleteProject, startProject, stopProject, refresh: refreshProjects } = useProjects();
   const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
   const { user } = useAuth();
@@ -113,6 +113,8 @@ export default function Layout() {
           onProjectSelect={handleProjectSelect}
           onProjectCreate={() => setShowCreateDialog(true)}
           onProjectDelete={handleProjectDelete}
+          onProjectStart={startProject}
+          onProjectStop={stopProject}
           isRunning={false}
         />
       </div>
@@ -129,6 +131,8 @@ export default function Layout() {
               onProjectSelect={handleProjectSelect}
               onProjectCreate={() => setShowCreateDialog(true)}
               onProjectDelete={handleProjectDelete}
+              onProjectStart={startProject}
+              onProjectStop={stopProject}
               isRunning={false}
             />
           </div>

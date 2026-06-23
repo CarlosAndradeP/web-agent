@@ -105,7 +105,7 @@ for (const u of allUsers) {
 
 app.use('/api/auth', createAuthRouter(db));
 
-app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo));
+app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo, projectRouter));
 
 app.use('/api/chat', authMiddleware, createChatRouter(db, taskManager, creditManager));
 app.use('/api/models', authMiddleware, createModelsRouter(db, configRepo));
@@ -138,21 +138,24 @@ log.info('File watcher started', { dir: config.workspaceBaseDir });
 
 const projectsRepo = new ProjectsRepository(db);
 const allProjects = projectsRepo.listAll();
-for (const p of allProjects) {
-  try {
-    const pUser = usersRepo.findById(p.userId);
-    if (pUser && p.status === 'active') {
-      const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, p.folderPath);
-      projectRouter.mountProject(p, fullFolderPath);
-      log.info('Remounted project on startup', { uuid: p.uuid, name: p.name });
-    }
-  } catch (err: any) {
-    log.warn('Failed to remount project on startup', { uuid: p.uuid, error: err.message });
+
+(async () => {
+  for (const p of allProjects) {
     try {
-      projectsRepo.updateStatus(p.id, 'error');
-    } catch {}
+      const pUser = usersRepo.findById(p.userId);
+      if (pUser && p.status === 'active') {
+        const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, p.folderPath);
+        await projectRouter.mountProject(p, fullFolderPath);
+        log.info('Remounted project on startup', { uuid: p.uuid, name: p.name });
+      }
+    } catch (err: any) {
+      log.warn('Failed to remount project on startup', { uuid: p.uuid, error: err.message });
+      try {
+        projectsRepo.updateStatus(p.id, 'error');
+      } catch {}
+    }
   }
-}
+})();
 
 httpServer.listen(config.port, () => {
   log.info(`Web Agent running on http://localhost:${config.port}`);

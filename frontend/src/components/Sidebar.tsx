@@ -1,4 +1,4 @@
-import { ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut, Globe, Folder, ExternalLink, User } from 'lucide-react';
+import { ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut, Globe, Folder, ExternalLink, User, Play, Square } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Separator } from './ui/separator';
@@ -16,10 +16,12 @@ interface Props {
   onProjectSelect: (projectId: string, sessionId: string | null) => void;
   onProjectCreate: () => void;
   onProjectDelete: (id: string) => void;
+  onProjectStart: (id: string) => void;
+  onProjectStop: (id: string) => void;
   isRunning: boolean;
 }
 
-export default function Sidebar({ activeTab, onTabChange, projects, activeProjectId, onProjectSelect, onProjectCreate, onProjectDelete, isRunning }: Props) {
+export default function Sidebar({ activeTab, onTabChange, projects, activeProjectId, onProjectSelect, onProjectCreate, onProjectDelete, onProjectStart, onProjectStop, isRunning }: Props) {
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -101,8 +103,32 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
                 <span className={cn('h-4 w-4 rounded text-[9px] font-bold flex items-center justify-center shrink-0', badge.color)}>
                   {badge.label}
                 </span>
+                {project.type === 'node' && (
+                  <div className={cn(
+                    'h-1.5 w-1.5 rounded-full shrink-0',
+                    project.status === 'active' ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'
+                  )} />
+                )}
                 <span className="text-xs truncate flex-1">{project.name}</span>
                 <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                  {project.type === 'node' && project.status === 'active' && (
+                    <button
+                      onClick={e => { e.stopPropagation(); onProjectStop(project.id); }}
+                      className="h-4 w-4 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
+                      title="Stop project"
+                    >
+                      <Square className="h-3 w-3 text-red-400 hover:text-red-300" />
+                    </button>
+                  )}
+                  {project.type === 'node' && project.status !== 'active' && (
+                    <button
+                      onClick={e => { e.stopPropagation(); onProjectStart(project.id); }}
+                      className="h-4 w-4 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
+                      title="Start project"
+                    >
+                      <Play className="h-3 w-3 text-emerald-400 hover:text-emerald-300" />
+                    </button>
+                  )}
                   <a
                     href={`/p/${project.uuid}/`}
                     target="_blank"

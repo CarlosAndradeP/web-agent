@@ -30,5 +30,15 @@ export function useProjects() {
     await refresh();
   }, [refresh]);
 
-  return { projects, loading, refresh, createProject, deleteProject };
+  const startProject = useCallback(async (id: string) => {
+    await api.projects.start(id);
+    await refresh();
+  }, [refresh]);
+
+  const stopProject = useCallback(async (id: string) => {
+    await api.projects.stop(id);
+    await refresh();
+  }, [refresh]);
+
+  return { projects, loading, refresh, createProject, deleteProject, startProject, stopProject };
 }
