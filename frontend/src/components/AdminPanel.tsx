@@ -5,10 +5,10 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
-import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight, Server, Square, RotateCw, RefreshCw, CheckSquare, Square as SquareBox } from 'lucide-react';
+import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight, Server, Square, RotateCw, RefreshCw, CheckSquare, Square as SquareBox, Settings } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-type AdminTab = 'users' | 'models' | 'processes' | 'stats';
+type AdminTab = 'users' | 'models' | 'processes' | 'settings' | 'stats';
 
 export default function AdminPanel() {
   const [tab, setTab] = useState<AdminTab>('users');
@@ -35,6 +35,20 @@ export default function AdminPanel() {
   const [passwordSaved, setPasswordSaved] = useState(false);
 
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  const [registrationEnabled, setRegistrationEnabled] = useState(true);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
+  const loadSettings = useCallback(async () => {
+    setSettingsLoading(true);
+    try {
+      const data = await api.admin.settings();
+      setRegistrationEnabled(data.registrationEnabled);
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, []);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -80,7 +94,7 @@ export default function AdminPanel() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([loadUsers(), loadStats(), loadModels(), loadNodeProcesses()]).finally(() => setLoading(false));
+    Promise.all([loadUsers(), loadStats(), loadModels(), loadNodeProcesses(), loadSettings()]).finally(() => setLoading(false));
   }, [loadUsers, loadStats, loadModels, loadNodeProcesses]);
 
   useEffect(() => {
@@ -252,6 +266,15 @@ export default function AdminPanel() {
     }
   };
 
+  const handleToggleRegistration = async () => {
+    try {
+      const data = await api.admin.updateSettings({ registrationEnabled: !registrationEnabled });
+      setRegistrationEnabled(data.registrationEnabled);
+    } catch (err) {
+      console.error('Failed to toggle registration:', err);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-full text-zinc-500 text-sm">Loading admin panel...</div>;
   }
@@ -260,6 +283,7 @@ export default function AdminPanel() {
     { id: 'users', label: 'Users', icon: Users },
     { id: 'models', label: 'Models', icon: Cpu },
     { id: 'processes', label: 'Processes', icon: Server },
+    { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'stats', label: 'Dashboard', icon: BarChart3 },
   ];
 
@@ -641,6 +665,37 @@ export default function AdminPanel() {
                 ))}
               </div>
             )}
+          </ScrollArea>
+        )}
+
+        {tab === 'settings' && (
+          <ScrollArea className="h-full p-4">
+            <h2 className="text-sm font-semibold mb-4">Settings</h2>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 bg-zinc-900 border border-zinc-800 rounded-lg">
+                <div>
+                  <div className="text-xs font-medium text-zinc-200">User Registration</div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">
+                    {registrationEnabled
+                      ? 'New users can create accounts'
+                      : 'Registration is disabled — new users cannot sign up'}
+                  </div>
+                </div>
+                <button
+                  onClick={handleToggleRegistration}
+                  disabled={settingsLoading}
+                  className={cn(
+                    'flex items-center gap-1.5 text-xs font-medium transition-colors',
+                    registrationEnabled ? 'text-emerald-400' : 'text-red-400'
+                  )}
+                  title={registrationEnabled ? 'Click to disable registration' : 'Click to enable registration'}
+                >
+                  {registrationEnabled ? <ToggleRight className="h-5 w-5" /> : <ToggleLeft className="h-5 w-5" />}
+                  {registrationEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+              </div>
+            </div>
           </ScrollArea>
         )}
 

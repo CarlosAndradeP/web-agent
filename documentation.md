@@ -33,7 +33,7 @@ O **Web Agent** é uma plataforma multi-usuário de desenvolvimento web com agen
 - **Autonomia**: O agente trabalha sozinho até concluir a tarefa
 - **Autocorreção**: Analisa erros, corrige e tenta novamente
 - **Streaming em tempo real**: Progresso visualizado via SSE
-- **9 ferramentas**: Execução de código, manipulação de arquivos, comandos shell, etc.
+- **9+1 ferramentas**: Execução de código, manipulação de arquivos, comandos shell, sub-agente, etc.
 - **Tipos de projeto**: Static (HTML/CSS/JS), PHP (Apache), Node.js (Express)
 - **Docker**: Base `php:8.3-apache-bookworm` com Apache (PHP) + Node.js (API) no mesmo container
 
@@ -174,14 +174,25 @@ No primeiro startup, o servidor:
 O agente é criado via `createAgent()` em `src/agent/index.ts`:
 
 ```typescript
+const systemPrompt = buildSystemPrompt(options.projectInfo ?? null);
+
 const agent = new ToolLoopAgent({
   model: provider.chatModel(options.model) as any,
-  instructions: AUTOCORRECTIVE_SYSTEM_PROMPT,
+  instructions: systemPrompt,
   tools,
   stopWhen: stepCountIs(options.maxSteps),
   maxOutputTokens: 4096,
 });
 ```
+
+### Contexto do Projeto
+
+Quando o chat está vinculado a um projeto, `buildSystemPrompt()` injeta informações do projeto no system prompt:
+- Project name, type (static/php/node), UUID
+- Project public URL (montada via `PUBLIC_BASE_URL/<uuid>`)
+- Dicas específicas por tipo (ex: "Node.js projects start stopped")
+
+A variável `PUBLIC_BASE_URL` (env) define a URL base pública do servidor.
 
 ### Provider
 
@@ -218,8 +229,17 @@ Todas as tools usam `inputSchema` (AI SDK v6) com Zod. O workspace é por usuár
 | 7 | searchFiles | `search-files.ts` | Buscar padrões (grep) |
 | 8 | webFetch | `web-fetch.ts` | HTTP GET com timeout 15s |
 | 9 | installPackage | `install-package.ts` | npm install ou pip install |
+| 10 | invokeSubAgent | `sub-agent.ts` | Delegar sub-tarefa a agente filho (writeFile, readFile, listFiles, searchFiles, runCommand; maxSteps 30) |
 
-Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de aprovação.
+Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de aprovação. O tool `invokeSubAgent` é registrado condicionalmente (requer `apiBaseUrl` + `apiKey`).
+
+#### Sub-agente
+
+O tool `invokeSubAgent` cria um `ToolLoopAgent` filho com:
+- 5 ferramentas (writeFile, readFile, listFiles, searchFiles, runCommand)
+- System prompt dedicado (`SUB_AGENT_SYSTEM_PROMPT`) — focado em eficiência e_TASK ONLY_
+- maxSteps parametrizável (default 15, cap 30)
+- Retorna `{ success, result, stepsUsed }` ou `{ success: false, error }`
 
 > **NOTA**: O `needsApproval` é spread no tool object mas o `ToolLoopAgent` não reconhece nativamente. Tools com `needsApproval: true` executam sem pausar para aprovação.
 
@@ -275,6 +295,11 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 | `DELETE` | `/api/admin/users/:id` | Deletar usuário |
 | `GET` | `/api/admin/users/:id/credits/history` | Histórico de créditos |
 | `GET` | `/api/admin/stats` | Estatísticas globais |
+| `GET` | `/api/admin/settings` | Configurações do sistema (registrationEnabled) |
+| `PATCH` | `/api/admin/settings` | Atualizar configurações (registrationEnabled) |
+| `GET` | `/api/admin/node-processes` | Listar processos Node.js ativos |
+| `POST` | `/api/admin/node-processes/:uuid/stop` | Parar processo Node.js |
+| `POST` | `/api/admin/node-processes/:uuid/restart` | Reiniciar processo Node.js |
 
 ### Rotas de Projeto (públicas, sem auth — UUID-based)
 
@@ -433,6 +458,8 @@ Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de
 | value | TEXT | Valor (string/JSON) |
 | updated_at | DATETIME | |
 
+Chaves usadas: `default_model`, `max_steps`, `approval_mode`, `approval_tools`, `api_base_url`, `api_key`, `workspace_dir`, `agent_type`, `registration_enabled`
+
 ### Migração
 
 `src/db/migrate.ts` executa ALTER TABLEs idempotentes (try/catch com "duplicate column name") para adicionar colunas novas em bancos existentes:
@@ -567,7 +594,8 @@ Cada projeto tem:
    - Cria sessão vinculada ao usuário
    - Cria pasta no workspace (`workspaceBaseDir/<username>/<slug>`) — ou usa pasta existente se selecionada
    - Cria registro no DB com `session_id` vinculado
-   - Monta o projeto no ProjectRouter (static=express.static, php=symlink+proxy Apache, node=spawn+proxy)
+   - **Projetos Node.js**: criados com `status='stopped'`, sem `mountProject()` — usuário deve iniciar manualmente
+   - **Projetos static/php**: montados automaticamente no ProjectRouter
 4. Frontend: abre ChatPanel com `sessionId` do projeto
 
 ### Publicação de Pasta Existente
@@ -617,6 +645,7 @@ for (const p of allProjects) {
 | `JWT_SECRET` | `web-agent-jwt-secret-...` | Secret para assinar JWTs |
 | `ADMIN_PASSWORD` | `admin123` | Senha do admin bootstrap |
 | `INITIAL_CREDITS` | `100` | Créditos para novos usuários |
+| `PUBLIC_BASE_URL` | — | URL base pública (ex: `http://myserver.com`) — usada para gerar URLs de projetos no prompt do agente |
 | `DOCKER_CONTAINER` | — | Flag para URL rewriting em Docker |
 
 ---
@@ -635,8 +664,11 @@ Base: `php:8.3-apache-bookworm` (Debian bookworm). Inclui Apache + PHP + Node.js
 
 `docker-start.sh`:
 ```bash
-apache2ctl start     # Apache na porta 8080 (interna)
-exec node dist/server.js  # Node.js na porta 89 (externa)
+# 1. Backup do DB (se existir) com rotação de 5 backups
+# 2. Apache na porta 8080 (interna)
+apache2ctl start
+# 3. Node.js na porta 89 (externa)
+exec node dist/server.js
 ```
 
 ### Apache
@@ -657,6 +689,7 @@ services:
     volumes:
       - ./workspace:/app/workspace
       - ./data:/app/data
+      - ./.env:/app/.env:ro
     env_file: .env
     environment:
       - NODE_ENV=production
@@ -665,6 +698,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-web-agent-jwt-secret-change-me}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
       - INITIAL_CREDITS=100
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -675,7 +709,8 @@ services:
 | Volume | Container Path | Propósito |
 |--------|---------------|-----------|
 | `./workspace` | `/app/workspace` | Workspaces per-user (subdirs por username) |
-| `./data` | `/app/data` | Banco SQLite + dados persistentes |
+| `./data` | `/app/data` | Banco SQLite + dados persistentes + backups |
+| `./.env` | `/app/.env` | Configuração de ambiente (read-only) |
 
 ---
 
@@ -745,7 +780,7 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 | 8 | `lib/socket.ts` (frontend) não é usado | Conexão órfã | `frontend/src/lib/socket.ts` |
 | 9 | `runTask()` (non-streaming) nunca chamado | Método morto | `src/services/task-manager.ts` |
 | 10 | `listDir()` duplicado | DRY violation | `list-files.ts` + `files.ts` |
-| 11 | Node.js projects sem restart-on-crash | Se o processo Node morre, o proxy retorna erro | `src/services/project-router.ts` |
+| 11 | ~~Node.js projects sem restart-on-crash~~ | ✅ Corrigido — Node projects start stopped + entrypoint check + error propagation | `src/services/project-router.ts` |
 | 12 | No PM2/process management para Node projects | Subprocessos criados via raw `child_process.spawn` | `src/services/project-router.ts` |
 
 ---
@@ -775,3 +810,14 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 | `user:join` re-emito no `socket.on('connect')` | Socket.IO perde room membership ao reconectar; re-join garante que `credits:deducted` chega ao cliente |
 | Tab condicional admin/account no Sidebar | Admins veem Shield+Admin (AdminPanel), não-admins veem User+Account (UserPanel); mesma posição, diferente componente |
 | `updateUser()` no AuthContext | Permite que `UserPanel` sincronize mudanças de perfil (email) no state React + localStorage sem re-login |
+| Node.js projects start stopped | Evita crash loops em projetos sem entrypoint; usuário inicia manualmente quando pronto |
+| `spawnNodeProject()` entrypoint check | Verifica `index.js`/`package.json.main`/`npm start` antes de spawnar — lança erro claro em vez de 5 retries silenciosos |
+| `registration_enabled` no config table | Toggle de registro usa tabela `config` existente (key=value) — sem nova tabela ou migration |
+| `taskProjectInfo` Map no TaskManager | Project info armazenado em memória por taskId (não no DB) — limpo ao finalizar tarefa |
+| `PUBLIC_BASE_URL` env var | Desacoplada do `PORT`/`API_BASE_URL` — pode ser diferente (ex: reverse proxy com domínio) |
+| `PRAGMA integrity_check` no startup | Detecta DB corrompido antes de abrir; backup automático + recriação limpa evita crash no server |
+| DB backup rotation no docker-start.sh | Mantém 5 backups mais recentes em `/app/data/backups/` — previne acúmulo infinito |
+| `.env` como read-only volume | Persiste configuração entre rebuilds do container sem risco de sobrescrita pelo app |
+| `invokeSubAgent` com subset de tools | Sub-agente não tem deleteFile, executeCode, webFetch, installPackage — menos risco, mais foco |
+| `currentToolName` no useChat | Rastreado via SSE tool-call events; permite UI contextual sem polling ou estado adicional no backend |
+| Ícones lucide-react por ferramenta no ToolCallDisplay | Cada ferramenta tem ícone dedicado (Pencil, Terminal, Search...) + cor — UX mais clara que genérico Wrench |

@@ -41,6 +41,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'web-agent-jwt-secret-change-me-in-production',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin123',
   initialCredits: parseInt(process.env.INITIAL_CREDITS || '100', 10),
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || '',
 };
 
 export { rewriteUrlForDocker, IS_DOCKER };

@@ -4,7 +4,7 @@
 
 Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cada usuário tem workspace isolado, créditos, e pode criar projetos com chatvinculado e URL pública.
 
-## Status: IMPLEMENTADO (M1–M12 + F0–F8 + Issues 1–5)
+## Status: IMPLEMENTADO (M1–M12 + F0–F8 + Issues 1–5 + Iteração 3)
 
 ### Milestones Completados
 
@@ -33,6 +33,74 @@ Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cad
 | 3 | Créditos não são consumidos (visualmente) | Socket.IO `credits:deducted`/`credits:exhausted` → `updateCredits()` no AuthContext, mensagem amigável 402 |
 | 4 | FileManager sem opções (rename, delete pastas) | Novos endpoints: `/files/rename`, `/files/create-file`; UI: botão rename (lapis), delete pasta com confirmação |
 | 5 | Projetos na lateral em vez de chats | Sidebar mostra projetos com badges; cada projeto tem sessão vinculada; dialog "Novo Projeto"; sessões órfãs convertidas |
+
+---
+
+## Iteração 3 — Novas Funcionalidades (Implementado)
+
+### Req 1: Node.js projects start stopped
+
+Projetos Node.js são criados com `status='stopped'` e NÃO são automaticamente montados. O usuário ou agente precisa iniciar manualmente. Verificação de entrypoint antes do spawn.
+
+**Mudanças:**
+- `src/db/repositories/projects.ts` — `create()` aceita parâmetro `status` (default `'active'`)
+- `src/api/projects.ts` — Node projects criados com `status='stopped'`, skip `mountProject()` na criação
+- `src/services/project-router.ts` — `spawnNodeProject()` verifica se entrypoint (`index.js`/`package.json.main`) existe antes de spawnar; `spawnAndWatch()` propaga erros ao invés de crash silencioso; `mountProject()` e `startProject()` tratam erros de spawn
+
+### Req 5: Pause registration toggle
+
+Admin pode pausar novos registros. Quando desabilitado, `POST /api/auth/register` retorna 403 e o botão Register é oculto no login.
+
+**Mudanças:**
+- `src/db/repositories/config.ts` — Default `registration_enabled: 'true'`
+- `src/api/auth.ts` — Guarda verifica `configRepo.get('registration_enabled')` antes de permitir registro
+- `src/api/admin.ts` — Novos endpoints `GET /admin/settings` e `PATCH /admin/settings`
+- `frontend/src/lib/api.ts` — Novos métodos `admin.settings()` e `admin.updateSettings()`
+- `frontend/src/components/AdminPanel.tsx` — Nova aba Settings com toggle de registro
+- `frontend/src/components/LoginPage.tsx` — Oculta botão Register + exibe erro 403 amigável
+
+### Req 2: Agent knows project URL
+
+O agente recebe contexto do projeto (nome, tipo, UUID, URL pública) no system prompt via `PUBLIC_BASE_URL`.
+
+**Mudanças:**
+- `src/config.ts` — Novo campo `publicBaseUrl` (env `PUBLIC_BASE_URL`)
+- `src/agent/index.ts` — Interface `ProjectInfo`, `createAgent()` aceita `projectInfo`
+- `src/agent/instructions.ts` — `buildSystemPrompt()` injeta PROJECT CONTEXT no prompt; `SUB_AGENT_SYSTEM_PROMPT` para sub-agent
+- `src/api/chat.ts` — Resolve project info (uuid, name, type, publicUrl) e passa ao taskManager
+- `src/services/task-manager.ts` — Map `taskProjectInfo` armazena info por taskId, passa a `createAgent()`
+- `docker-compose.yml` — `PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}`
+
+### Req 6: Persistence hardening
+
+Integridade do SQLite verificada no startup; backup automático antes de iniciar; `.env` persistido como volume.
+
+**Mudanças:**
+- `src/db/index.ts` — `initDatabase()` faz `PRAGMA integrity_check` antes de abrir DB; se corrompido, faz backup e recria
+- `docker-compose.yml` — Volume `./.env:/app/.env:ro` para persistir configuração
+- `docker-start.sh` — Backup do DB antes de iniciar (rotaciona 5 backups mais recentes)
+
+### Req 3: Better agent display
+
+UI do chat mostra atividade contextual do agente: nome da ferramenta, ícones específicos, cores por tipo.
+
+**Mudanças:**
+- `frontend/src/hooks/useChat.ts` — Novo state `currentToolName`, setado em `tool-call` events
+- `frontend/src/components/StepProgressBar.tsx` — Descrição contextual (ex: "Running command..."), estado "Done"
+- `frontend/src/components/TypingIndicator.tsx` — Mensagens por ferramenta + cores (amber=command, blue=write, purple=install, indigo=sub-agent)
+- `frontend/src/components/ToolCallDisplay.tsx` — Ícones lucide-react por ferramenta (Pencil, Terminal, Search, Globe, etc.) + cores específicas
+- `frontend/src/components/ChatPanel.tsx` — Passa `currentToolName` aos componentes
+
+### Req 4: Sub-agents
+
+Nova ferramenta `invokeSubAgent` permite ao agente principal delegar sub-tarefas a um agente filho com 5 ferramentas e maxSteps limitado.
+
+**Mudanças:**
+- `src/agent/tools/sub-agent.ts` — Novo tool `invokeSubAgent` (filho: writeFile, readFile, listFiles, searchFiles, runCommand; maxSteps cap 30)
+- `src/agent/tools/index.ts` — Registra `invokeSubAgent` quando apiBaseUrl+apiKey disponíveis; `buildToolSet()` aceita `apiBaseUrl`, `apiKey`, `agentType`
+- `src/agent/index.ts` — Passa apiBaseUrl/apiKey/agentType a `buildToolSet()`
+- `src/agent/instructions.ts` — `SUB_AGENT_SYSTEM_PROMPT`; prompt principal lista `invokeSubAgent`
+- Frontend: ToolCallDisplay, TypingIndicator, StepProgressBar — suporte ao ícone `invokeSubAgent` (Users, indigo)
 
 ---
 
@@ -283,7 +351,7 @@ Ver detalhes completos em [`documentation.md`](documentation.md#8-banco-de-dados
 4. Adicionar path traversal protection nas agent tools
 5. Remover código morto (`execution-sandbox.ts`, `lib/socket.ts`, `runTask()`)
 6. Consolidar `listDir()` em módulo compartilhado
-7. Implementar restart-on-crash para Node.js subprocess projetos
+7. ~~Implementar restart-on-crash para Node.js subprocess projetos~~ ✅ (Implementado na Iteração 3 — Node projects start stopped)
 8. Testar Docker build end-to-end
 9. Adicionar validação de input (Zod) nas rotas REST
 10. Considerar `@ai-sdk/openai-compatible@1.0+` quando estável

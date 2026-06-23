@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -10,6 +10,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  const [registrationEnabled, setRegistrationEnabled] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/auth/registration-status')
+      .then(r => r.json())
+      .then(data => setRegistrationEnabled(data.registrationEnabled))
+      .catch(() => setRegistrationEnabled(true));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +29,12 @@ export default function LoginPage() {
         await register(username, password, email || undefined);
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      const msg = err.message || 'Authentication failed';
+      if (msg.includes('403') || msg.includes('Registration is currently disabled')) {
+        setError('Registration is currently disabled by an administrator.');
+      } else {
+        setError(msg);
+      }
     }
   };
 
@@ -39,6 +52,7 @@ export default function LoginPage() {
           >
             Login
           </button>
+        {registrationEnabled && (
           <button
             onClick={() => { setMode('register'); setError(''); }}
             className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
@@ -47,6 +61,7 @@ export default function LoginPage() {
           >
             Register
           </button>
+        )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -87,9 +102,7 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <p className="text-[10px] text-zinc-600 text-center mt-4">
-          Default: admin / admin123
-        </p>
+
       </div>
     </div>
   );

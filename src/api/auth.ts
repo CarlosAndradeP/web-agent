@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 import { UsersRepository, toPublic } from '../db/repositories/users.js';
 import { CreditsRepository } from '../db/repositories/credits.js';
+import { ConfigRepository } from '../db/repositories/config.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { createLogger } from '../services/logger.js';
 import { v4 as uuid } from 'uuid';
@@ -16,6 +17,7 @@ export function createAuthRouter(db: Database.Database) {
   const router = Router();
   const usersRepo = new UsersRepository(db);
   const creditsRepo = new CreditsRepository(db);
+  const configRepo = new ConfigRepository(db);
 
   router.post('/login', async (req, res) => {
     const { username, password } = req.body;
@@ -43,7 +45,18 @@ export function createAuthRouter(db: Database.Database) {
     res.json({ accessToken, refreshToken, user: toPublic(user) });
   });
 
+  router.get('/registration-status', (_req, res) => {
+    const enabled = configRepo.get('registration_enabled') !== 'false';
+    res.json({ registrationEnabled: enabled });
+  });
+
   router.post('/register', async (req, res) => {
+    const registrationEnabled = configRepo.get('registration_enabled');
+    if (registrationEnabled === 'false') {
+      res.status(403).json({ error: 'Registration is currently disabled' });
+      return;
+    }
+
     const { username, password, email } = req.body;
     if (!username || !password) {
       res.status(400).json({ error: 'username and password are required' });

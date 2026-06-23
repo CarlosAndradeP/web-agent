@@ -1,4 +1,4 @@
-import { Loader2, Wrench, CheckCircle2, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, ChevronDown, ChevronRight, Pencil, Eye, FolderOpen, Trash2, Terminal, Code, Search, Globe, Package, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
@@ -13,16 +13,30 @@ interface Props {
   compact?: boolean;
 }
 
-const toolIcons: Record<string, string> = {
-  writeFile: 'pencil',
-  readFile: 'eye',
-  listFiles: 'folder-open',
-  deleteFile: 'trash-2',
-  runCommand: 'terminal',
-  executeCode: 'code',
-  searchFiles: 'search',
-  webFetch: 'globe',
-  installPackage: 'package',
+const toolIconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+  writeFile: Pencil,
+  readFile: Eye,
+  listFiles: FolderOpen,
+  deleteFile: Trash2,
+  runCommand: Terminal,
+  executeCode: Code,
+  searchFiles: Search,
+  webFetch: Globe,
+  installPackage: Package,
+  invokeSubAgent: Users,
+};
+
+const toolColorMap: Record<string, string> = {
+  writeFile: 'text-blue-400',
+  readFile: 'text-cyan-400',
+  listFiles: 'text-amber-400',
+  deleteFile: 'text-red-400',
+  runCommand: 'text-amber-400',
+  executeCode: 'text-purple-400',
+  searchFiles: 'text-green-400',
+  webFetch: 'text-sky-400',
+  installPackage: 'text-pink-400',
+  invokeSubAgent: 'text-indigo-400',
 };
 
 function formatOutput(output: unknown): string {
@@ -49,6 +63,8 @@ export default function ToolCallDisplay({ toolName, input, output, status = 'com
     : 'border-red-500/20 bg-red-500/5';
 
   const hasOutput = output !== undefined && output !== null && formatOutput(output).length > 0;
+  const ToolIcon = toolIconMap[toolName];
+  const toolColor = toolColorMap[toolName] || 'text-zinc-400';
 
   return (
     <div className={cn('rounded-md border px-3 py-2 text-sm transition-all duration-200', statusBorder)}>
@@ -61,7 +77,11 @@ export default function ToolCallDisplay({ toolName, input, output, status = 'com
         ) : (
           <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
         )}
-        <Wrench className="h-3 w-3 text-zinc-500 shrink-0" />
+        {ToolIcon ? (
+          <ToolIcon className={cn('h-3 w-3 shrink-0', toolColor)} />
+        ) : (
+          <Terminal className="h-3 w-3 text-zinc-400 shrink-0" />
+        )}
         <span className="font-mono text-xs text-blue-400 truncate">{toolName}</span>
         {statusIcon}
         {stepNumber != null && (

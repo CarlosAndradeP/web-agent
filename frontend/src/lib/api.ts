@@ -209,5 +209,12 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/admin/node-processes/${uuid}/stop`, { method: 'POST' }),
     restartNodeProcess: (uuid: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/admin/node-processes/${uuid}/restart`, { method: 'POST' }),
+    settings: () =>
+      fetchJSON<{ registrationEnabled: boolean }>(`${BASE}/admin/settings`),
+    updateSettings: (data: { registrationEnabled?: boolean }) =>
+      fetchJSON<{ registrationEnabled: boolean }>(`${BASE}/admin/settings`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
 };

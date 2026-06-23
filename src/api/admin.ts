@@ -225,6 +225,25 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
     }
   });
 
+  router.get('/settings', (_req, res) => {
+    const registrationEnabled = configRepo.get('registration_enabled') !== 'false';
+    res.json({ registrationEnabled });
+  });
+
+  router.patch('/settings', (req, res) => {
+    const { registrationEnabled } = req.body;
+    if (registrationEnabled !== undefined && typeof registrationEnabled !== 'boolean') {
+      res.status(400).json({ error: 'registrationEnabled must be a boolean' });
+      return;
+    }
+    if (registrationEnabled !== undefined) {
+      configRepo.set('registration_enabled', String(registrationEnabled));
+      log.info('Registration toggle updated', { registrationEnabled });
+    }
+    const current = configRepo.get('registration_enabled') !== 'false';
+    res.json({ registrationEnabled: current });
+  });
+
   router.get('/node-processes', (_req, res) => {
     try {
       const processes = projectRouter.getActiveNodeProjects();

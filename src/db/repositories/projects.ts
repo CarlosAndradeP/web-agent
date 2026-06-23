@@ -22,14 +22,14 @@ export interface Project {
 export class ProjectsRepository {
   constructor(private db: Database.Database) {}
 
-  create(userId: string, name: string, folderPath: string, type: Project['type'], sessionId?: string): Project {
+  create(userId: string, name: string, folderPath: string, type: Project['type'], sessionId?: string, status: Project['status'] = 'active'): Project {
     const id = uuid();
     const projectUuid = uuid();
     const now = new Date().toISOString();
     this.db.prepare(
       'INSERT INTO projects (id, uuid, user_id, name, folder_path, type, status, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, projectUuid, userId, name, folderPath, type, 'active', sessionId ?? null, now, now);
-    log.info('Project created', { id, uuid: projectUuid, userId, name, type, sessionId });
+    ).run(id, projectUuid, userId, name, folderPath, type, status, sessionId ?? null, now, now);
+    log.info('Project created', { id, uuid: projectUuid, userId, name, type, status, sessionId });
     return this.findById(id)!;
   }
 

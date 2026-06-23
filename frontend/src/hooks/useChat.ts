@@ -25,6 +25,7 @@ export function useChat(sessionId: string) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
+  const [currentToolName, setCurrentToolName] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -107,6 +108,7 @@ export function useChat(sessionId: string) {
                   status: 'running',
                 };
                 pendingToolCalls = [...pendingToolCalls, tc];
+                setCurrentToolName(data.toolName);
                 setMessages(prev => {
                   const updated = [...prev];
                   updated[updated.length - 1] = { ...updated[updated.length - 1], toolCalls: [...pendingToolCalls] };
@@ -179,6 +181,7 @@ export function useChat(sessionId: string) {
       }
     } finally {
       setIsStreaming(false);
+      setCurrentToolName(null);
       abortRef.current = null;
     }
   }, [sessionId, messages]);
@@ -188,5 +191,5 @@ export function useChat(sessionId: string) {
     setIsStreaming(false);
   }, []);
 
-  return { messages, send, cancel, isStreaming, currentStep, totalSteps };
+  return { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName };
 }

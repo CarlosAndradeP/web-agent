@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
 import http from 'node:http';
+import { Transform, type TransformCallback } from 'node:stream';
 import type { Project } from '../db/repositories/projects.js';
 import { createLogger } from '../services/logger.js';
 
@@ -78,9 +79,55 @@ export class ProjectRouter {
         return;
       }
 
+      const subPath = match[2];
       const queryString = urlPath.includes('?') ? urlPath.slice(urlPath.indexOf('?')) : '';
-      const subPath = match[2] !== undefined && match[2] !== '' ? `/${match[2]}` : '/';
-      req.url = subPath + queryString;
+
+      if (subPath === undefined || subPath === '') {
+        res.redirect(301, `/p/${projectUuid}/${queryString}`);
+        return;
+      }
+
+      const rewrittenSubPath = `/${subPath}`;
+      req.url = rewrittenSubPath + queryString;
+
+      if (active.project.type === 'node') {
+        const originalWriteHead = res.writeHead.bind(res);
+        const originalEnd = res.end.bind(res);
+        const chunks: Buffer[] = [];
+        let headersSent = false;
+        let isHtml = false;
+
+        const originalWrite = res.write.bind(res);
+        res.write = (chunk: any, ...args: any[]): boolean => {
+          if (!headersSent) {
+            const contentType = res.getHeader('content-type') as string | undefined;
+            isHtml = !!contentType && contentType.includes('text/html');
+            headersSent = true;
+          }
+          if (isHtml) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            return true;
+          }
+          return originalWrite(chunk, ...args);
+        };
+
+        res.end = (chunk?: any, ...args: any[]): any => {
+          if (!headersSent) {
+            const contentType = res.getHeader('content-type') as string | undefined;
+            isHtml = !!contentType && contentType.includes('text/html');
+          }
+          if (isHtml) {
+            if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            const fullBody = Buffer.concat(chunks).toString('utf8');
+            const baseTag = `<base href="/p/${projectUuid}/">`;
+            const injected = fullBody.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+            res.removeHeader('content-length');
+            originalEnd(injected, ...args);
+            return;
+          }
+          return originalEnd(chunk, ...args);
+        };
+      }
 
       active.middleware(req, res, (err?: any) => {
         if (active.project.type === 'static') {
@@ -137,7 +184,12 @@ export class ProjectRouter {
       };
 
       this.activeProjects.set(project.uuid, active);
-      this.spawnAndWatch(project, fullFolderPath, port);
+      try {
+        this.spawnAndWatch(project, fullFolderPath, port);
+      } catch (err: any) {
+        this.activeProjects.delete(project.uuid);
+        throw err;
+      }
 
       const ready = await waitForPort(port);
       if (!ready) {
@@ -212,7 +264,12 @@ export class ProjectRouter {
     };
 
     this.activeProjects.set(project.uuid, active);
-    this.spawnAndWatch(project, fullFolderPath, port);
+    try {
+      this.spawnAndWatch(project, fullFolderPath, port);
+    } catch (err: any) {
+      this.activeProjects.delete(project.uuid);
+      throw err;
+    }
 
     const ready = await waitForPort(port);
     if (!ready) {
@@ -299,7 +356,14 @@ export class ProjectRouter {
     const active = this.activeProjects.get(project.uuid);
     if (!active) return;
 
-    const childProcess = this.spawnNodeProject(fullFolderPath, port, project.uuid);
+    let childProcess: ChildProcess;
+    try {
+      childProcess = this.spawnNodeProject(fullFolderPath, port, project.uuid);
+    } catch (err: any) {
+      log.error('Failed to spawn Node.js project', { uuid: project.uuid, error: err.message });
+      active.stopped = true;
+      throw err;
+    }
     active.process = childProcess;
 
     childProcess.on('exit', (code) => {
@@ -327,6 +391,7 @@ export class ProjectRouter {
     const pkgJsonPath = resolve(folderPath, 'package.json');
     let startCmd = 'node';
     let startArgs = ['index.js'];
+    let entryFile = 'index.js';
 
     if (existsSync(pkgJsonPath)) {
       try {
@@ -334,10 +399,16 @@ export class ProjectRouter {
         if (pkgJson.scripts?.start) {
           startCmd = 'npm';
           startArgs = ['start'];
+          entryFile = '';
         } else if (pkgJson.main) {
           startArgs = [pkgJson.main];
+          entryFile = pkgJson.main;
         }
       } catch {}
+    }
+
+    if (startCmd === 'node' && entryFile && !existsSync(resolve(folderPath, entryFile))) {
+      throw new Error(`Node.js entry point not found: ${entryFile}. Create the file first, then start the project.`);
     }
 
     const env = { ...process.env, PORT: String(port) };

@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function ChatPanel({ sessionId }: Props) {
-  const { messages, send, cancel, isStreaming, currentStep, totalSteps } = useChat(sessionId);
+  const { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName } = useChat(sessionId);
   const { socket } = useSocket();
   const [input, setInput] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -108,7 +108,7 @@ export default function ChatPanel({ sessionId }: Props) {
 
   return (
     <div className="flex flex-col h-full relative">
-      <StepProgressBar currentStep={currentStep} totalSteps={totalSteps} isStreaming={isStreaming} />
+      <StepProgressBar currentStep={currentStep} totalSteps={totalSteps} isStreaming={isStreaming} currentToolName={currentToolName} />
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
@@ -133,7 +133,7 @@ export default function ChatPanel({ sessionId }: Props) {
             />
           ))}
           {isStreaming && messages.length > 0 && !messages[messages.length - 1].content && (!messages[messages.length - 1].toolCalls || messages[messages.length - 1].toolCalls!.length === 0) && (
-            <TypingIndicator />
+            <TypingIndicator toolName={currentToolName} />
           )}
           <div ref={messagesEndRef} />
         </div>

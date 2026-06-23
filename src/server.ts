@@ -122,7 +122,11 @@ const publicDir = existsSync(join(process.cwd(), 'public'))
   : join(process.cwd(), 'frontend', 'dist');
 if (existsSync(publicDir)) {
   app.use(express.static(publicDir));
-  app.get('{*path}', (_req, res) => {
+  app.get('{*path}', (req, res) => {
+    if (/\.\w{1,5}$/.test(req.path)) {
+      res.status(404).send('Not Found');
+      return;
+    }
     res.sendFile(join(publicDir, 'index.html'));
   });
   log.info('Serving static files', { publicDir });

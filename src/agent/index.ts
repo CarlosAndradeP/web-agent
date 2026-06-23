@@ -1,11 +1,18 @@
 import { ToolLoopAgent, stepCountIs } from 'ai';
 import { createProvider } from './provider.js';
-import { AUTOCORRECTIVE_SYSTEM_PROMPT } from './instructions.js';
+import { AUTOCORRECTIVE_SYSTEM_PROMPT, buildSystemPrompt } from './instructions.js';
 import { buildToolSet } from './tools/index.js';
 import { createLogger } from '../services/logger.js';
 import type { ApprovalMode, AgentStep } from '../types/index.js';
 
 const log = createLogger('Agent');
+
+export interface ProjectInfo {
+  uuid: string;
+  name: string;
+  type: 'static' | 'php' | 'node';
+  publicUrl: string;
+}
 
 export interface CreateAgentOptions {
   model: string;
@@ -19,6 +26,7 @@ export interface CreateAgentOptions {
   agentType?: string;
   abortSignal?: AbortSignal;
   onStep?: (step: AgentStep) => void;
+  projectInfo?: ProjectInfo;
 }
 
 export function createAgent(options: CreateAgentOptions) {
@@ -29,6 +37,9 @@ export function createAgent(options: CreateAgentOptions) {
     workspaceDir: options.workspaceDir,
     approvalMode: options.approvalMode,
     approvalTools: options.approvalTools,
+    apiBaseUrl: options.apiBaseUrl,
+    apiKey: options.apiKey,
+    agentType: options.agentType,
   });
 
   log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });
@@ -36,15 +47,17 @@ export function createAgent(options: CreateAgentOptions) {
   const isGlmModel = options.model.toLowerCase().includes('glm');
   const maxOutputTokens = isGlmModel ? 16384 : 8192;
 
+  const systemPrompt = buildSystemPrompt(options.projectInfo ?? null);
+
   const agent = new ToolLoopAgent({
     model: provider.chatModel(options.model) as any,
-    instructions: AUTOCORRECTIVE_SYSTEM_PROMPT,
+    instructions: systemPrompt,
     tools,
     stopWhen: stepCountIs(options.maxSteps),
     maxOutputTokens,
   });
 
-  log.info('ToolLoopAgent instance created', { maxOutputTokens, maxSteps: options.maxSteps });
+  log.info('ToolLoopAgent instance created', { maxOutputTokens, maxSteps: options.maxSteps, hasProjectInfo: !!options.projectInfo });
 
   return { agent, abortSignal: options.abortSignal };
 }

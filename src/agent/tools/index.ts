@@ -7,6 +7,7 @@ import { createExecuteCodeTool } from './execute-code.js';
 import { createSearchFilesTool } from './search-files.js';
 import { createWebFetchTool } from './web-fetch.js';
 import { createInstallPackageTool } from './install-package.js';
+import { createInvokeSubAgentTool } from './sub-agent.js';
 import type { ApprovalMode } from '../../types/index.js';
 import { createLogger } from '../../services/logger.js';
 
@@ -16,6 +17,9 @@ export function buildToolSet(options: {
   workspaceDir: string;
   approvalMode: ApprovalMode;
   approvalTools: string[];
+  apiBaseUrl?: string;
+  apiKey?: string;
+  agentType?: string;
 }) {
   log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode });
 
@@ -30,6 +34,17 @@ export function buildToolSet(options: {
     webFetch: createWebFetchTool(),
     installPackage: createInstallPackageTool(options.workspaceDir),
   };
+
+  if (options.apiBaseUrl && options.apiKey) {
+    allTools.invokeSubAgent = createInvokeSubAgentTool({
+      workspaceDir: options.workspaceDir,
+      apiBaseUrl: options.apiBaseUrl,
+      apiKey: options.apiKey,
+      agentType: options.agentType,
+      approvalMode: options.approvalMode,
+      approvalTools: options.approvalTools,
+    });
+  }
 
   if (options.approvalMode === 'none') {
     log.info('Approval mode: none — all tools execute immediately');

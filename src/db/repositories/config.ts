@@ -11,6 +11,7 @@ const DEFAULTS: Record<string, string> = {
   api_key: envConfig.apiKey,
   workspace_dir: envConfig.workspaceDir,
   agent_type: envConfig.agentType,
+  registration_enabled: 'true',
 };
 
 const LEGACY_MODEL_MAP: Record<string, string> = {

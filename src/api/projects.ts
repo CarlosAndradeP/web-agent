@@ -51,21 +51,25 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
     const projectDir = resolve(workspaceDir, folderPath);
     mkdirSync(projectDir, { recursive: true });
 
-    const project = projectsRepo.create(userId, name, folderPath, type, session.id);
+    const project = projectsRepo.create(userId, name, folderPath, type, session.id, type === 'node' ? 'stopped' : 'active');
 
     try {
       db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
     } catch {}
 
-    try {
-      const fullFolderPath = resolve(workspaceDir, folderPath);
-      await projectRouter.mountProject(project, fullFolderPath);
-      log.info('Project published', { projectId: project.id, uuid: project.uuid, type });
-    } catch (err: any) {
-      projectsRepo.updateStatus(project.id, 'error');
-      log.error('Failed to mount project', { projectId: project.id, error: err.message });
-      res.status(500).json({ error: `Failed to publish project: ${err.message}` });
-      return;
+    if (project.type === 'node') {
+      log.info('Node project created in stopped state', { projectId: project.id, uuid: project.uuid });
+    } else {
+      try {
+        const fullFolderPath = resolve(workspaceDir, folderPath);
+        await projectRouter.mountProject(project, fullFolderPath);
+        log.info('Project published', { projectId: project.id, uuid: project.uuid, type });
+      } catch (err: any) {
+        projectsRepo.updateStatus(project.id, 'error');
+        log.error('Failed to mount project', { projectId: project.id, error: err.message });
+        res.status(500).json({ error: `Failed to publish project: ${err.message}` });
+        return;
+      }
     }
 
     res.status(201).json({ project });

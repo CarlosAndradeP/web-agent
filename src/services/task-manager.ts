@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { Task, AgentStep } from '../types/index.js';
 import { TasksRepository } from '../db/repositories/tasks.js';
-import { createAgent } from '../agent/index.js';
+import { createAgent, type ProjectInfo } from '../agent/index.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { CreditManager } from '../services/credit-manager.js';
 import { createLogger } from '../services/logger.js';
@@ -22,6 +22,7 @@ export class TaskManager {
   private creditManager: CreditManager;
   private io: Server | null = null;
   private activeControllers = new Map<string, AbortController>();
+  private taskProjectInfo = new Map<string, ProjectInfo>();
 
   constructor(private db: Database.Database, creditManager: CreditManager) {
     this.tasksRepo = new TasksRepository(db);
@@ -46,7 +47,7 @@ export class TaskManager {
     log.info('Socket.IO instance set');
   }
 
-  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string): Task {
+  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo): Task {
     log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps, userId });
     const task = this.tasksRepo.create(sessionId, description, model, maxSteps);
     if (userId) {
@@ -55,6 +56,9 @@ export class TaskManager {
       } catch (err: any) {
         log.warn('Failed to set task user_id', { taskId: task.id, error: err.message });
       }
+    }
+    if (projectInfo) {
+      this.taskProjectInfo.set(task.id, projectInfo);
     }
     if (this.io) {
       this.io.emit('task:created', { task });
@@ -75,6 +79,7 @@ export class TaskManager {
     const model = task.model ?? appConfig.defaultModel;
     const workspaceDir = task.workspaceDir ?? appConfig.workspaceDir;
     const userId = task.userId;
+    const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -93,6 +98,7 @@ export class TaskManager {
         apiKey: appConfig.apiKey,
         agentType: appConfig.agentType,
         abortSignal: abortController.signal,
+        projectInfo,
       });
 
       const self = this;
@@ -132,6 +138,7 @@ export class TaskManager {
       log.error('Task failed', { taskId, error: err.message, stack: err.stack });
     } finally {
       this.activeControllers.delete(taskId);
+      this.taskProjectInfo.delete(taskId);
     }
   }
 
@@ -147,6 +154,7 @@ export class TaskManager {
     const model = task.model ?? appConfig.defaultModel;
     const workspaceDir = task.workspaceDir ?? appConfig.workspaceDir;
     const userId = task.userId;
+    const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -164,6 +172,7 @@ export class TaskManager {
       apiKey: appConfig.apiKey,
       agentType: appConfig.agentType,
       abortSignal: abortController.signal,
+      projectInfo,
     });
 
     log.info('Agent created, calling stream()...', { taskId, model });
@@ -195,6 +204,7 @@ export class TaskManager {
       const tasksRepo = this.tasksRepo;
       const io = this.io;
       const activeControllers = this.activeControllers;
+      const taskProjectInfo = this.taskProjectInfo;
       const insertStep = this.insertStep.bind(this);
 
       const fullStream = streamResult.fullStream;
@@ -274,12 +284,14 @@ export class TaskManager {
           throw err;
         } finally {
           activeControllers.delete(taskId);
+          taskProjectInfo.delete(taskId);
         }
       }
 
       return eventStream();
     } catch (err: any) {
       this.activeControllers.delete(taskId);
+      this.taskProjectInfo.delete(taskId);
       this.tasksRepo.updateStatus(taskId, 'failed', null, err.message);
       if (this.io) {
         this.io.emit('task:failed', { taskId, error: err.message });

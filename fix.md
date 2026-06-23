@@ -305,7 +305,126 @@
 
 **Problema anterior:** Se a conexão Socket.IO caísse e reconectasse, o cliente não re-enviava o evento `user:join`, ficando fora da room `user:${userId}`. Eventos de créditos emitidos após a reconexão não chegavam ao cliente.
 
-**Correção:** Em `AuthContext.tsx`, o listener `socket.on('connect', joinRoom)` re-emite `user:join` a cada reconexão. Se o socket já estaba conectado no momento do setup, `joinRoom()` é chamado imediatamente.
+**Correção:** Em `AuthContext.tsx`, o listener `socket.on('connect', joinRoom)` re-emite `user:join` a cada reconexão. Se o socket já estava conectado no momento do setup, `joinRoom()` é chamado imediatamente.
 
 **Arquivos alterados:**
 - `frontend/src/contexts/AuthContext.tsx`
+
+---
+
+## Iteração 3 — Novas Funcionalidades
+
+### FEAT-8: Node.js projects start stopped
+
+**Problema anterior:** Projetos Node.js eram automaticamente montados e spawnados na criação. Se o `index.js` não existisse, o `spawnAndWatch()` fazia 5 retries silenciosos (1s cada) antes de falhar. O projeto ficava com status inconsistente.
+
+**Correção:**
+- Projetos Node.js são criados com `status='stopped'` e não chamam `mountProject()` na criação
+- `spawnNodeProject()` verifica se o entrypoint (`index.js`, `package.json.main`, ou `npm start`) existe antes de spawnar o processo
+- `spawnAndWatch()` propaga erros de spawn ao invés de crash silencioso
+- `mountProject()` e `startProject()` fazem cleanup (removem do `activeProjects` Map) se o spawn falhar
+- Mensagem de erro clara: `"Node.js entry point not found: index.js. Create the file first, then start the project."`
+
+**Arquivos alterados:**
+- `src/db/repositories/projects.ts` — `create()` aceita `status` param
+- `src/api/projects.ts` — Node projects criados com `status='stopped'`, skip `mountProject()`
+- `src/services/project-router.ts` — entrypoint check, error propagation, cleanup on spawn failure
+
+---
+
+### FEAT-9: Pause registration toggle
+
+**Problema anterior:** Não existia forma de impedir novos registros. Qualquer pessoa podia criar contas sem controle.
+
+**Correção:**
+- Chave `registration_enabled` na tabela `config` (default: `'true'`)
+- `POST /api/auth/register` verifica config antes de permitir registro; retorna 403 se desabilitado
+- Novos endpoints admin: `GET /admin/settings` e `PATCH /admin/settings`
+- AdminPanel: nova aba Settings com toggle visual (verde=enabled, vermelho=disabled)
+- LoginPage: oculta botão Register quando desabilitado; exibe erro amigável se tentar registrar via API
+
+**Arquivos alterados:**
+- `src/db/repositories/config.ts`
+- `src/api/auth.ts`
+- `src/api/admin.ts`
+- `frontend/src/lib/api.ts`
+- `frontend/src/components/AdminPanel.tsx`
+- `frontend/src/components/LoginPage.tsx`
+
+---
+
+### FEAT-10: Agent knows project URL
+
+**Problema anterior:** O agente não tinha conhecimento do projeto em que trabalhava. Não sabia a URL pública, o tipo do projeto, nem que projetos Node.js precisam ser iniciados manualmente.
+
+**Correção:**
+- `buildSystemPrompt()` injeta dinamicamente PROJECT CONTEXT no system prompt
+- `ProjectInfo` (uuid, name, type, publicUrl) passado de chat.ts → taskManager → createAgent
+- `PUBLIC_BASE_URL` env var definida no docker-compose.yml para construir URLs públicas
+- Dicas por tipo de projeto (Node: "start stopped", PHP: "immediate reflection", Static: "served directly")
+
+**Arquivos alterados:**
+- `src/config.ts` — `publicBaseUrl`
+- `src/agent/index.ts` — `ProjectInfo` interface, `projectInfo` param
+- `src/agent/instructions.ts` — `buildSystemPrompt()`, `SUB_AGENT_SYSTEM_PROMPT`
+- `src/api/chat.ts` — resolve project info, passa ao taskManager
+- `src/services/task-manager.ts` — `taskProjectInfo` Map, passa a `createAgent()`
+- `docker-compose.yml` — `PUBLIC_BASE_URL`
+
+---
+
+### FEAT-11: Persistence hardening
+
+**Problema anterior:** Ao reconstruir o container Docker, o `.env` era perdido (não estava em volume). Se o SQLite corrompesse, o servidor crashava sem recuperação. Não havia backup automático do banco.
+
+**Correção:**
+- `initDatabase()` executa `PRAGMA integrity_check` antes de abrir o DB; se falhar, faz backup do corrompido e recria
+- `docker-compose.yml` monta `.env` como volume read-only
+- `docker-start.sh` faz backup do DB antes de iniciar (rotação de 5 backups em `/app/data/backups/`)
+
+**Arquivos alterados:**
+- `src/db/index.ts`
+- `docker-compose.yml`
+- `docker-start.sh`
+
+---
+
+### FEAT-12: Better agent display
+
+**Problema anterior:** A UI do chat mostrava apenas "Agent thinking..." e ícones genéricos (Wrench) para todas as ferramentas. Não havia indicação visual do que o agente estava fazendo em cada momento.
+
+**Correção:**
+- `useChat` rastreia `currentToolName` via SSE events
+- `StepProgressBar` mostra descrição contextual (ex: "Running command...", "Writing file...") + estado "Done" quando completo
+- `TypingIndicator` mostra mensagem por ferramenta com cores (amber=command, blue=write, purple=install, indigo=sub-agent)
+- `ToolCallDisplay` usa ícones lucide-react específicos por ferramenta (Pencil, Terminal, Search, Globe, etc.) + cores dedicadas
+
+**Arquivos alterados:**
+- `frontend/src/hooks/useChat.ts`
+- `frontend/src/components/StepProgressBar.tsx`
+- `frontend/src/components/TypingIndicator.tsx`
+- `frontend/src/components/ToolCallDisplay.tsx`
+- `frontend/src/components/ChatPanel.tsx`
+
+---
+
+### FEAT-13: Sub-agents
+
+**Problema anterior:** O agente não podia delegar sub-tarefas. Toda tarefa, mesmo paralelizável ou decomponível, era executada sequencialmente pelo agente principal.
+
+**Correção:**
+- Nova ferramenta `invokeSubAgent` (`src/agent/tools/sub-agent.ts`)
+- Sub-agente usa `ToolLoopAgent` com 5 ferramentas (writeFile, readFile, listFiles, searchFiles, runCommand)
+- System prompt dedicado (`SUB_AGENT_SYSTEM_PROMPT`) — focado em eficiência
+- maxSteps configurável (default 15, cap 30)
+- Registrado condicionalmente (requer apiBaseUrl + apiKey)
+- Frontend: ícone Users + cor indigo para sub-agent em ToolCallDisplay, TypingIndicator, StepProgressBar
+
+**Arquivos alterados/criados:**
+- `src/agent/tools/sub-agent.ts` (novo)
+- `src/agent/tools/index.ts`
+- `src/agent/index.ts`
+- `src/agent/instructions.ts`
+- `frontend/src/components/ToolCallDisplay.tsx`
+- `frontend/src/components/TypingIndicator.tsx`
+- `frontend/src/components/StepProgressBar.tsx`

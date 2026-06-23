@@ -76,6 +76,8 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       return;
     }
 
+    let projectInfo: { uuid: string; name: string; type: 'static' | 'php' | 'node'; publicUrl: string } | undefined;
+
     if (effectiveSessionId) {
       try {
         const projectRow = db.prepare('SELECT * FROM projects WHERE session_id = ?').get(effectiveSessionId) as any;
@@ -84,6 +86,17 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
           mkdirSync(projectDir, { recursive: true });
           workspaceDir = projectDir;
           log.info('Using project workspace directory', { sessionId: effectiveSessionId, workspaceDir });
+
+          const publicBaseUrl = config.publicBaseUrl;
+          if (publicBaseUrl && projectRow.uuid) {
+            const base = publicBaseUrl.replace(/\/+$/, '');
+            projectInfo = {
+              uuid: projectRow.uuid,
+              name: projectRow.name,
+              type: projectRow.type,
+              publicUrl: `${base}/${projectRow.uuid}`,
+            };
+          }
         }
       } catch (err: any) {
         log.warn('Failed to resolve project workspace', { error: err.message });
@@ -113,7 +126,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
 
     log.info('Creating task for chat', { selectedModel, descriptionLength: description.length });
 
-    const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir);
+    const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo);
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
