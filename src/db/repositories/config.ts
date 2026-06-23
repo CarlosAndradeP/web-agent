@@ -5,7 +5,7 @@ import { config as envConfig, rewriteUrlForDocker } from '../../config.js';
 const DEFAULTS: Record<string, string> = {
   default_model: envConfig.defaultModel,
   max_steps: String(envConfig.maxSteps),
-  approval_mode: 'custom',
+  approval_mode: 'none',
   approval_tools: JSON.stringify(['runCommand', 'deleteFile', 'installPackage', 'executeCode']),
   api_base_url: envConfig.apiBaseUrl,
   api_key: envConfig.apiKey,

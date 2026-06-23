@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && node -e \"const fs=require('fs');const p=require('path');const s=p.join('src','preload','port-force.cjs');const d=p.join('dist','preload','port-force.cjs');fs.mkdirSync(p.dirname(d),{recursive:true});fs.copyFileSync(s,d)\"",
     "start": "node dist/server.js",
     "build:frontend": "cd frontend && npm run build",
     "dev:frontend": "cd frontend && npm run dev"

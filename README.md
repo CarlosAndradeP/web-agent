@@ -89,7 +89,7 @@ npm run dev:frontend
 - Conhece a URL pública do projeto (via `PUBLIC_BASE_URL`)
 - Autocorreção: analisa erros, corrige e tenta novamente
 - Streaming em tempo real via SSE com indicadores contextuais por ferramenta
-- Aprovação customizável (nenhuma/todas/custom) — UI pronta, fluxo de pausa pendente
+- Aprovação customizável (none/todas/custom) — padrão: `none` (execução imediata); usuário pode ativar na ConfigPanel
 - Opera no escopo do projeto ativo (workspace do projeto, não raiz do usuário)
 
 ## Configuração
@@ -162,7 +162,7 @@ npm run dev:frontend
 
 ## Ferramentas do Agente
 
-| Ferramenta | Descrição | Aprovação default |
+| Ferramenta | Descrição | Aprovação se custom |
 |-----------|-----------|-------------------|
 | `writeFile` | Criar/editar arquivos | — |
 | `readFile` | Ler arquivos | — |
@@ -174,6 +174,8 @@ npm run dev:frontend
 | `webFetch` | HTTP GET | — |
 | `installPackage` | npm/pip install | Sim |
 | `invokeSubAgent` | Delegar sub-tarefa a agente filho (5 tools, max 30 steps) | — |
+
+> **Nota:** Approval mode padrão é `none` — todas as ferramentas executam imediatamente. Mude para `all` ou `custom` na ConfigPanel para ativar aprovação.
 
 ## Estrutura
 
@@ -234,11 +236,14 @@ Veja detalhes completos em [`fix.md`](fix.md).
 | Crítico | Rotas admin sem proteção de role | `adminMiddleware` não aplicado |
 | Crítico | Créditos não atualizam em tempo real | `creditManager.setIo()` nunca era chamado |
 | Crítico | Links de projetos não funcionam (PHP/Node/Static) | Proxy PHP sem mapeamento UUID→caminho; pathRewrite morto; query strings perdidas |
+| Crítico | ERR_TOO_MANY_REDIRECTS em `/p/<uuid>/` | `subPath === ''` causava redirect loop infinito |
 | Médio | Projetos sem `index.html` carregavam SPA | `next()` no project-router caía no catch-all |
 | Médio | Projetos com falha de mount ficavam "active" | Status não atualizado no `catch` do startup |
 | Médio | Steps duplicados em `agent_steps` | Inserção no `onStepFinish` + `eventStream` |
 | Médio | Créditos broadcastados para todos os usuários | `io.emit()` → `io.to(user:ID).emit()` |
 | Baixo | Cache de créditos stale no localStorage | `updateCredits()` não sincronizava |
+| Médio | Popup de aprovação exibia JSON completo | Resumido: ícone + ação + resumo; detalhes em accordion |
+| Config | Approval mode padrão era `custom` | Mudado para `none`; migration atualiza DBs existentes |
 
 ## Schema — Tabela model_config
 

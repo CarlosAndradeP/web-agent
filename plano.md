@@ -4,7 +4,7 @@
 
 Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cada usuário tem workspace isolado, créditos, e pode criar projetos com chatvinculado e URL pública.
 
-## Status: IMPLEMENTADO (M1–M12 + F0–F8 + Issues 1–5 + Iteração 3)
+## Status: IMPLEMENTADO (M1–M12 + F0–F8 + Issues 1–5 + Iteração 3 + Iteração 4)
 
 ### Milestones Completados
 
@@ -337,7 +337,7 @@ typescript@6.0.3
 
 ## Schema SQLite
 
-8 tabelas: `sessions`, `messages`, `tasks`, `agent_steps`, `config`, `users`, `auth_sessions`, `credit_transactions`, `projects`
+8 tabelas: `sessions`, `messages`, `tasks`, `agent_steps`, `config`, `users`, `auth_sessions`, `credit_transactions`, `projects`, `model_config`
 
 Ver detalhes completos em [`documentation.md`](documentation.md#8-banco-de-dados-sqlite).
 
@@ -345,13 +345,13 @@ Ver detalhes completos em [`documentation.md`](documentation.md#8-banco-de-dados
 
 ## Próximos Passos
 
-1. Implementar fluxo de aprovação completo (pausar agent antes de tool execution)
+1. Implementar fluxo de aprovação completo (pausar agent antes de tool execution) — agora menos urgente com padrão `none`
 2. Conectar AbortController ao agent stream para cancelamento real
 3. Substituir `grep` shell por busca em Node.js puro (cross-platform)
 4. Adicionar path traversal protection nas agent tools
 5. Remover código morto (`execution-sandbox.ts`, `lib/socket.ts`, `runTask()`)
 6. Consolidar `listDir()` em módulo compartilhado
-7. ~~Implementar restart-on-crash para Node.js subprocess projetos~~ ✅ (Implementado na Iteração 3 — Node projects start stopped)
+7. ~~Implementar restart-on-crash para Node.js subprocess projetos~~ ✅ (Iteração 3)
 8. Testar Docker build end-to-end
 9. Adicionar validação de input (Zod) nas rotas REST
 10. Considerar `@ai-sdk/openai-compatible@1.0+` quando estável
@@ -376,3 +376,24 @@ Ver detalhes completos em [`documentation.md`](documentation.md#8-banco-de-dados
 | Painel de Usuário (UserPanel) | 3 tabs: Conta (email editável), Segurança (trocar senha), Créditos (saldo + histórico). Substitui tab Admin para não-admins |
 | Re-join Socket.IO | `user:join` re-enviado no `socket.on('connect')` para manter room membership após reconexões |
 | `updateUser()` no AuthContext | Sincroniza mudanças de perfil (email) no state + localStorage sem re-login |
+
+---
+
+## Iteração 4 — Correções de UX e Proxy (Implementado)
+
+### Correções
+
+| Correção | Descrição |
+|----------|-----------|
+| ERR_TOO_MANY_REDIRECTS em `/p/<uuid>/` | `subPath === ''` agora serve `index.html` em vez de redirect loop; distingue `undefined` (redirect) de `''` (serve arquivo) |
+| Popup de aprovação resumido | Mostra ícone + nome da ação + resumo contextual; JSON completo em accordion colapsável; botões em português |
+| Approval mode padrão `none` | Default mudado de `custom` para `none`; migration atualiza DBs existentes; usuários podem ativar `all`/`custom` na ConfigPanel |
+
+### Arquivos Alterados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `src/services/project-router.ts` | Condição `subPath === undefined \|\| subPath === ''` → separate: `undefined` = redirect, `''` = serve `/` |
+| `frontend/src/components/ApprovalDialog.tsx` | Reescrito com `toolActionMap`, `getSummary()`, accordion de detalhes |
+| `src/db/repositories/config.ts` | `approval_mode` default: `'custom'` → `'none'` |
+| `src/db/migrate.ts` | Migration: `UPDATE config SET value = 'none' WHERE key = 'approval_mode' AND value = 'custom'` |

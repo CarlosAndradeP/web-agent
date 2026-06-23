@@ -1,0 +1,1 @@
+{"version":3,"file":"execution-sandbox.d.ts","sourceRoot":"","sources":["../../src/services/execution-sandbox.ts"],"names":[],"mappings":"AAEA,MAAM,WAAW,UAAU;IACzB,MAAM,EAAE,MAAM,CAAC;IACf,MAAM,EAAE,MAAM,CAAC;IACf,QAAQ,EAAE,MAAM,CAAC;CAClB;AAED,wBAAgB,WAAW,CAAC,OAAO,EAAE,MAAM,EAAE,OAAO,GAAE;IAAE,GAAG,CAAC,EAAE,MAAM,CAAC;IAAC,OAAO,CAAC,EAAE,MAAM,CAAA;CAAO,GAAG,UAAU,CAiBzG"}

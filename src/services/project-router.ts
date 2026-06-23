@@ -1,8 +1,9 @@
 import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { Transform, type TransformCallback } from 'node:stream';
 import type { Project } from '../db/repositories/projects.js';
@@ -82,12 +83,12 @@ export class ProjectRouter {
       const subPath = match[2];
       const queryString = urlPath.includes('?') ? urlPath.slice(urlPath.indexOf('?')) : '';
 
-      if (subPath === undefined || subPath === '') {
+      if (subPath === undefined) {
         res.redirect(301, `/p/${projectUuid}/${queryString}`);
         return;
       }
 
-      const rewrittenSubPath = `/${subPath}`;
+      const rewrittenSubPath = subPath === '' ? '/' : `/${subPath}`;
       req.url = rewrittenSubPath + queryString;
 
       if (active.project.type === 'node') {
@@ -96,6 +97,7 @@ export class ProjectRouter {
         const chunks: Buffer[] = [];
         let headersSent = false;
         let isHtml = false;
+        const basePath = `/p/${projectUuid}/`;
 
         const originalWrite = res.write.bind(res);
         res.write = (chunk: any, ...args: any[]): boolean => {
@@ -119,8 +121,11 @@ export class ProjectRouter {
           if (isHtml) {
             if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
             const fullBody = Buffer.concat(chunks).toString('utf8');
-            const baseTag = `<base href="/p/${projectUuid}/">`;
-            const injected = fullBody.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+            const headInjection = `<base href="${basePath}"><script>window.__BASE_PATH__="${basePath}";</script>`;
+            let injected = fullBody.replace(/<head([^>]*)>/i, `<head$1>${headInjection}`);
+            if (!injected.includes(headInjection)) {
+              injected = headInjection + injected;
+            }
             res.removeHeader('content-length');
             originalEnd(injected, ...args);
             return;
@@ -411,8 +416,27 @@ export class ProjectRouter {
       throw new Error(`Node.js entry point not found: ${entryFile}. Create the file first, then start the project.`);
     }
 
-    const env = { ...process.env, PORT: String(port) };
-    const child = spawn(startCmd, startArgs, {
+    const preloadPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'preload', 'port-force.cjs');
+
+    const env: Record<string, string> = {
+      ...process.env as Record<string, string>,
+      PORT: String(port),
+      BASE_PATH: `/p/${uuid}/`,
+    };
+
+    if (startCmd === 'npm') {
+      const existingNodeOptions = env.NODE_OPTIONS || '';
+      const preloadOpt = `--require "${preloadPath}"`;
+      env.NODE_OPTIONS = existingNodeOptions
+        ? `${existingNodeOptions} ${preloadOpt}`
+        : preloadOpt;
+    }
+
+    const spawnArgs = startCmd === 'node'
+      ? ['-r', preloadPath, ...startArgs]
+      : startArgs;
+
+    const child = spawn(startCmd, spawnArgs, {
       cwd: folderPath,
       env,
       stdio: 'pipe',

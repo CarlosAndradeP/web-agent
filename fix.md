@@ -428,3 +428,124 @@
 - `frontend/src/components/ToolCallDisplay.tsx`
 - `frontend/src/components/TypingIndicator.tsx`
 - `frontend/src/components/StepProgressBar.tsx`
+
+---
+
+## Iteração 4 — Correções de UX e Proxy
+
+### BUG-11: ERR_TOO_MANY_REDIRECTS ao acessar `/p/<uuid>/`
+
+**Sintoma:** Ao acessar qualquer projeto publicado via `/p/<uuid>/`, o navegador retornava `ERR_TOO_MANY_REDIRECTS`. Projetos estavam inacessíveis.
+
+**Causa-raiz:** Em `src/services/project-router.ts:85`, a condição `if (subPath === undefined || subPath === '')` tratava ambos os casos da mesma forma: redirecionando para `/p/<uuid>/`. Quando a URL já continha trailing slash (`/p/<uuid>/`), a regex capturava `subPath = ""` (string vazia), o que acionava o redirect para a mesma URL, criando um loop infinito de 301.
+
+**Correção:**
+- `subPath === undefined` (sem trailing slash) → redirect para `/p/<uuid>/` (adiciona trailing slash)
+- `subPath === ''` (com trailing slash) → reescreve `req.url` para `/` e deixa o middleware servir `index.html`
+- A lógica de reescrita: `const rewrittenSubPath = subPath === '' ? '/' : '/' + subPath;`
+
+**Arquivos alterados:**
+- `src/services/project-router.ts`
+
+---
+
+### BUG-12: Popup de aprovação mostra JSON completo, quebra layout
+
+**Sintoma:** Quando o approval mode era `all` ou `custom`, o dialog de aprovação exibia `JSON.stringify(toolInput, null, 2)` dentro de um `<pre>`, mostrando comandos inteiros, paths longos, código completo etc. Isso transbordava o dialog, quebrava o layout e era visualmente ruído.
+
+**Causa-raiz:** `ApprovalDialog.tsx` não tinha nenhuma lógica de resumo — exibia o `toolInput` cru sem processamento.
+
+**Correção:**
+- Novo mapping `toolActionMap` de `toolName` → `{ label, icon }` (ex: `runCommand` → "Executar comando" + ícone Terminal, `deleteFile` → "Apagar arquivo" + ícone Trash2)
+- Nova função `getSummary(toolName, input)` que extrai o resumo contextual (path do arquivo, comando, nome do pacote, URL etc.)
+- O popup agora mostra: ícone da ferramenta + nome da ação + resumo (ex: "Executar comando: npm install express")
+- Detalhes completos do JSON ficam em accordion colapsável ("Ver detalhes") — só aparece se o usuário clicar
+- Botões traduzidos para português: "Aprovar" / "Rejeitar"
+
+**Arquivos alterados:**
+- `frontend/src/components/ApprovalDialog.tsx`
+
+---
+
+### FIX-1: Approval mode padrão alterado de `custom` para `none`
+
+**Sintoma:** Novos usuários e instalações limpas tinham `approval_mode='custom'` por default, exigindo aprovação para deletar arquivos, executar comandos, instalar pacotes e executar código. Isso atrasava o workflow e confundia usuários que não configuraram aprovação manualmente.
+
+**Causa-raiz:** Em `src/db/repositories/config.ts`, o default de `approval_mode` era `'custom'` com `approval_tools` = `['runCommand', 'deleteFile', 'installPackage', 'executeCode']`.
+
+**Correção:**
+- Default de `approval_mode` mudou de `'custom'` para `'none'` — todas as ferramentas executam imediatamente sem pedir aprovação
+- Migration automática em `src/db/migrate.ts`: `UPDATE config SET value = 'none' WHERE key = 'approval_mode' AND value = 'custom'` — atualiza bancos existentes
+- Os `approval_tools` defaults são mantidos para o caso do usuário mudar para `custom` na ConfigPanel
+- O usuário pode alterar o modo para `all` ou `custom` a qualquer momento na aba Config
+
+**Arquivos alterados:**
+- `src/db/repositories/config.ts`
+- `src/db/migrate.ts`
+
+---
+
+## Iteração 5 — Porta Forçada e Correção de Proxy Node.js
+
+### BUG-13: Agente insiste em usar porta 3000 em projetos Node.js
+
+**Sintoma:** Projetos Node.js criados pelo agente quase sempre hardcoded a porta 3000 (ou outras portas comuns como 8080) no `app.listen()`, ignorando o `process.env.PORT` injetado pelo sistema. Como a porta 3000 frequentemente já está em uso por outros serviços, o processo filho falha ao iniciar ou entra em conflito com processos existentes. O projeto fica inacessível via URL pública `/p/<uuid>/`.
+
+**Causa-raiz:** O system prompt em `src/agent/instructions.ts` instruía o agente a usar `process.env.PORT`, mas modelos LLM frequentemente ignoram essa instrução, especialmente quando geram código a partir de templates populares (Express starter, Create React App, etc.) que usam porta fixa por padrão. O `spawnNodeProject()` em `src/services/project-router.ts:414` passava `PORT` no environment do processo filho, mas não impedia que o código fizesse `app.listen(3000)` diretamente, ignorando a variável de ambiente.
+
+**Correção:**
+- Criado script de preload `src/preload/port-force.cjs` que faz monkey-patch de `net.Server.prototype.listen`. O patch intercepta TODAS as chamadas `.listen(port, ...)` e substitui o argumento de porta pelo valor de `process.env.PORT`. Funciona independente do que o LLM escreve no código.
+- O monkey-patch cobre 4 formas de chamar `.listen()`:
+  1. `app.listen(3000)` — porta como número no 1º argumento → substituído
+  2. `app.listen({ port: 3000 })` — porta em objeto de opções → substituída
+  3. `app.listen(':3000')` — porta como string `:port` → substituída
+  4. `server.listen(3000, '0.0.0.0')` — porta como 2º argumento (raro) → substituída
+- Modificado `spawnNodeProject()` para carregar o preload:
+  - Quando o entrypoint é `node index.js`: usa `node -r port-force.cjs index.js`
+  - Quando o entrypoint é `npm start`: adiciona `--require "port-force.cjs"` ao `NODE_OPTIONS`
+- Script de build (`package.json`) atualizado para copiar `port-force.cjs` de `src/preload/` para `dist/preload/` após compilação TypeScript
+
+**Arquivos criados:**
+- `src/preload/port-force.cjs`
+
+**Arquivos alterados:**
+- `src/services/project-router.ts`
+- `package.json`
+
+---
+
+### BUG-14: Proxy de projetos Node.js quebra caminhos de arquivos (CSS, JS, imagens, rotas)
+
+**Sintoma:** Projetos Node.js publicados em `/p/<uuid>/` exibiam páginas sem estilo, sem imagens, e com rotas quebradas. Assets referenciados com paths absolutos (`/style.css`, `/app.js`) resultavam em 404 porque o navegador os resolvia para a raiz do servidor (`http://host:89/style.css`) ao invés do sub-path do projeto (`http://host:89/p/<uuid>/style.css`). SPAs com client-side routing (React Router, Vue Router) também navegavam para URLs fora do escopo do projeto. Fetch API calls com URLs absolutas (`/api/data`) falhavam silenciosamente.
+
+**Causa-raiz (múltiplas):**
+
+1. **Sem injeção de `<base href>`** — O proxy Node.js injetava `<base href="/p/<uuid>/">` no HTML, mas a injeção não fornecia nenhuma forma de o JavaScript do projeto descobrir o path base do projeto. SPAs não tinham como configurar dinamicamente o `basename` do router.
+
+2. **Prompt insuficiente** — O system prompt em `instructions.ts:32-34` mencionava brevemente usar caminhos relativos e a tag `<base>`, mas sem exemplos concretos, sem menção a `BASE_PATH`, e sem instruções para frameworks SPA (React Router, Vue Router) ou para `fetch()` do lado do servidor.
+
+3. **Sem `BASE_PATH` no environment** — O processo Node.js spawnado não recebia nenhuma variável de ambiente informando qual era o sub-path do projeto. Aplicações Express que usavam `app.use('/', express.static('public'))` serviam arquivos na raiz `/`, mas o proxy esperava que estivessem em `/p/<uuid>/`.
+
+**Correção:**
+
+- **Injeção HTML melhorada** (`src/services/project-router.ts`): O interceptor de resposta HTML agora injeta tanto `<base href="/p/<uuid>/">` quanto `<script>window.__BASE_PATH__="/p/<uuid>/";</script>` no `<head>`. Isso permite:
+  - `<base href>` resolve URLs relativas no HTML (links, imagens, CSS, JS)
+  - `window.__BASE_PATH__` permite que SPAs acessem o path base via JavaScript para configurar routers e fetch calls
+  - Fallback: se a regex `<head>` não casar, a injeção é prependida no início do HTML
+
+- **Variável `BASE_PATH` no environment** (`src/services/project-router.ts`): O processo Node.js spawnado recebe `BASE_PATH=/p/<uuid>/` no environment. Aplicações Express podem usar:
+  ```js
+  app.use(process.env.BASE_PATH || '/', express.static('public'))
+  ```
+
+- **Prompt reforçado** (`src/agent/instructions.ts`): O system prompt para projetos Node.js agora inclui:
+  - Instrução explícita para NUNCA usar paths absolutos começando com `/`
+  - Exemplos WRONG/RIGHT para `href`, `src`, `fetch()`
+  - Instrução para usar `process.env.BASE_PATH` no Express (`express.static`)
+  - Instruções específicas para React Router (`<BrowserRouter basename={...}>`) e Vue Router (`createWebHistory(...)`)
+  - Instrução para usar URLs relativas em `fetch()` do browser
+  - Menção ao `window.__BASE_PATH__` disponível no lado do cliente
+
+**Arquivos alterados:**
+- `src/services/project-router.ts`
+- `src/agent/instructions.ts`

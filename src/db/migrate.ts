@@ -41,5 +41,12 @@ export function migrate(db: Database.Database): void {
     log.warn('Data migration skipped', { error: err.message });
   }
 
+  try {
+    db.prepare("UPDATE config SET value = 'none' WHERE key = 'approval_mode' AND value = 'custom'").run();
+    log.info('Migrated approval_mode from custom to none (default changed)');
+  } catch (err: any) {
+    log.warn('approval_mode migration skipped', { error: err.message });
+  }
+
   log.info('Migration complete');
 }

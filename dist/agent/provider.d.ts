@@ -1,0 +1,2 @@
+export declare function createProvider(apiBaseUrl: string, apiKey: string, agentType?: string): import("@ai-sdk/openai-compatible").OpenAICompatibleProvider<string, string, string, string>;
+//# sourceMappingURL=provider.d.ts.map

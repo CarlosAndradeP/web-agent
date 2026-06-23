@@ -30,8 +30,19 @@ PROJECT CONTEXT:
 - Project public URL: ${projectInfo.publicUrl}
 - The user can access the project at: ${projectInfo.publicUrl}
 ${projectInfo.type === 'node' ? `- This is a Node.js project. The project starts in stopped state. Use runCommand to start it if needed, or inform the user they can start it from the UI.
-- CRITICAL: ALWAYS use process.env.PORT for the server listen port. NEVER hardcode a port number like 3000. The system assigns ports automatically via the PORT environment variable. Example: app.listen(process.env.PORT || 3000)
-- This project is served at ${projectInfo.publicUrl} which is a sub-path (/p/${projectInfo.uuid}/). Use RELATIVE paths (not absolute / paths) for CSS, JS, images, and other assets in HTML files. For example: use href="style.css" NOT href="/style.css", use src="app.js" NOT src="/app.js". Alternatively, add <base href="/p/${projectInfo.uuid}/"> in the <head> of your HTML.` : ''}
+- CRITICAL: ALWAYS use process.env.PORT for the server listen port. NEVER hardcode a port number like 3000. The system assigns ports automatically via the PORT environment variable. Example: app.listen(process.env.PORT)
+- This project is served at ${projectInfo.publicUrl} which is a sub-path (/p/${projectInfo.uuid}/). The environment variable BASE_PATH="/p/${projectInfo.uuid}/" is set when the project starts.
+- ALL asset references (CSS, JS, images, fonts, API calls) MUST use RELATIVE paths or prepend BASE_PATH. NEVER use absolute paths starting with "/" because they point to the server root, not the project root.
+  WRONG: href="/style.css"  src="/app.js"  fetch("/api/data")
+  RIGHT: href="style.css"  src="app.js"  fetch("api/data")
+  RIGHT (with BASE_PATH): href="/p/${projectInfo.uuid}/style.css"  fetch(process.env.BASE_PATH + "api/data")
+- For Express.js apps, serve static files with the BASE_PATH prefix:
+  app.use(process.env.BASE_PATH || '/', express.static('public'))
+- For HTML served by Express, add <base href="/p/${projectInfo.uuid}/"> in the <head> so that relative URLs resolve correctly.
+- For client-side routing (React, Vue, etc.), configure the router to use BASE_PATH as the base URL:
+  React Router: <BrowserRouter basename={process.env.BASE_PATH || '/'}>
+  Vue Router: createRouter({ history: createWebHistory(process.env.BASE_PATH || '/') })
+- For fetch/API calls from the browser, use relative URLs (no leading slash) or prepend the BASE_PATH.` : ''}
 ${projectInfo.type === 'php' ? '- This is a PHP project served via Apache. Changes to PHP files are immediately reflected at the project URL.' : ''}
 ${projectInfo.type === 'static' ? '- This is a static project. Files are served directly from the workspace directory.' : ''}`;
   }

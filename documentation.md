@@ -233,6 +233,14 @@ Todas as tools usam `inputSchema` (AI SDK v6) com Zod. O workspace é por usuár
 
 Registro central: `src/agent/tools/index.ts` — `buildToolSet()` com lógica de aprovação. O tool `invokeSubAgent` é registrado condicionalmente (requer `apiBaseUrl` + `apiKey`).
 
+#### Sistema de Aprovação
+
+- **Approval mode padrão: `none`** — todas as ferramentas executam imediatamente sem pedir aprovação
+- Configurável na ConfigPanel: `none` (sem aprovação), `all` (todas requerem), `custom` (apenas as marcadas)
+- Tools que requerem aprovação quando modo = `custom`: `deleteFile`, `runCommand`, `executeCode`, `installPackage`
+- **Popup de aprovação** (`ApprovalDialog.tsx`): mostra ícone + nome da ação + resumo contextual (ex: "Executar comando: npm install express"); JSON completo em accordion colapsável
+- Migration automática: bancos existentes com `approval_mode='custom'` são atualizados para `'none'`
+
 #### Sub-agente
 
 O tool `invokeSubAgent` cria um `ToolLoopAgent` filho com:
@@ -241,7 +249,7 @@ O tool `invokeSubAgent` cria um `ToolLoopAgent` filho com:
 - maxSteps parametrizável (default 15, cap 30)
 - Retorna `{ success, result, stepsUsed }` ou `{ success: false, error }`
 
-> **NOTA**: O `needsApproval` é spread no tool object mas o `ToolLoopAgent` não reconhece nativamente. Tools com `needsApproval: true` executam sem pausar para aprovação.
+> **NOTA**: O `needsApproval` é spread no tool object mas o `ToolLoopAgent` não reconhece nativamente. Tools com `needsApproval: true` executam sem pausar para aprovação. O approval mode padrão é `none`, requerendo configuração ativa do usuário para habilitar.
 
 ---
 
@@ -465,6 +473,7 @@ Chaves usadas: `default_model`, `max_steps`, `approval_mode`, `approval_tools`, 
 `src/db/migrate.ts` executa ALTER TABLEs idempotentes (try/catch com "duplicate column name") para adicionar colunas novas em bancos existentes:
 - `sessions.user_id`, `messages.user_id`, `tasks.user_id`, `tasks.workspace_dir`
 - `sessions.project_id`, `projects.session_id`
+- `approval_mode` value `custom` → `none` (atualização de default de configuração)
 
 ---
 
@@ -508,7 +517,7 @@ Chaves usadas: `default_model`, `max_steps`, `approval_mode`, `approval_tools`, 
 | AdminPanel | `AdminPanel.tsx` | Usuários, créditos, histórico, stats (apenas admins) |
 | UserPanel | `UserPanel.tsx` | Conta, segurança (trocar senha), créditos (não-admins) |
 | PublishProjectDialog | `PublishProjectDialog.tsx` | Dialog para publicar pasta como projeto |
-| ApprovalDialog | `ApprovalDialog.tsx` | Modal de aprovação de ferramentas |
+| ApprovalDialog | `ApprovalDialog.tsx` | Modal de aprovação: ícone + ação + resumo contextual; detalhes em accordion |
 
 ### Contextos
 
@@ -609,8 +618,10 @@ O botão "Publish" no FileManager abre `PublishProjectDialog`:
 Middleware Express em `/p` que:
 1. Extrai UUID da URL: `/p/<uuid>/<path>`
 2. Procura no `activeProjects` Map (em memória)
-3. Reescreve `req.url` removendo o prefixo UUID, preservando query strings
-4. Delega ao middleware do projeto:
+3. Se `subPath === undefined` (sem trailing slash): redirect 301 para `/p/<uuid>/`
+4. Se `subPath === ''` (com trailing slash): reescreve `req.url` para `/` (serve `index.html`)
+5. Se `subPath` tem conteúdo: reescreve `req.url` para `/<subPath>` preservando query strings
+6. Delega ao middleware do projeto:
    - **static**: `express.static(fullFolderPath)` — 404 se arquivo não encontrado
    - **php**: Cria symlink `<workspaceBaseDir>/<uuid>` → `<username>/<folderPath>/` no mount; proxy para `http://localhost:8080/<uuid>/` (Apache resolve symlink sob DocumentRoot); symlink removido no unmount
    - **node**: spawn child process na porta 9000+, proxy para `http://localhost:<port>`
@@ -760,8 +771,10 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 
 | # | Bug | Impacto | Local |
 |---|-----|---------|-------|
-| 1 | Fluxo de aprovação não pausa execução | Tools com `needsApproval` executam sem aprovação | `src/agent/tools/index.ts` |
+| 1 | Fluxo de aprovação não pausa execução | Tools com `needsApproval` executam sem aprovação (irrelevante com padrão `none`) | `src/agent/tools/index.ts` |
 | 2 | AbortController não aborta LLM em stream | Cancelar tarefa não interrompe a chamada LLM ativa | `src/services/task-manager.ts` |
+
+> **NOTA**: O approval mode padrão é `none` (execução imediata de todas as tools). O bug #1 só é relevante quando o usuário ativa manualmente `all` ou `custom` na ConfigPanel.
 
 ### Médios
 
@@ -782,6 +795,14 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 | 10 | `listDir()` duplicado | DRY violation | `list-files.ts` + `files.ts` |
 | 11 | ~~Node.js projects sem restart-on-crash~~ | ✅ Corrigido — Node projects start stopped + entrypoint check + error propagation | `src/services/project-router.ts` |
 | 12 | No PM2/process management para Node projects | Subprocessos criados via raw `child_process.spawn` | `src/services/project-router.ts` |
+
+### Corrigidos (Iteração 4)
+
+| # | Bug | Impacto | Correção |
+|---|-----|---------|----------|
+| 13 | ~~ERR_TOO_MANY_REDIRECTS em `/p/<uuid>/`~~ | ✅ Corrigido — `subPath === ''` agora serve `/` em vez de redirect | `src/services/project-router.ts` |
+| 14 | ~~Popup de aprovação mostrava JSON completo~~ | ✅ Corrigido — Mostra ícone + ação + resumo; detalhes em accordion | `frontend/src/components/ApprovalDialog.tsx` |
+| 15 | ~~Approval mode padrão era `custom`~~ | ✅ Corrigido — Default mudado para `none`; migration atualiza DBs existentes | `src/db/repositories/config.ts`, `src/db/migrate.ts` |
 
 ---
 
@@ -821,3 +842,7 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 | `invokeSubAgent` com subset de tools | Sub-agente não tem deleteFile, executeCode, webFetch, installPackage — menos risco, mais foco |
 | `currentToolName` no useChat | Rastreado via SSE tool-call events; permite UI contextual sem polling ou estado adicional no backend |
 | Ícones lucide-react por ferramenta no ToolCallDisplay | Cada ferramenta tem ícone dedicado (Pencil, Terminal, Search...) + cor — UX mais clara que genérico Wrench |
+| `subPath === undefined` vs `subPath === ''` no ProjectRouter | URL sem trailing slash (`/p/<uuid>`) → redirect 301; URL com trailing slash (`/p/<uuid>/`) → serve `index.html` via middleware; evita redirect loop |
+| Approval mode padrão `none` | Evita fricção para novos usuários; `none` = todas as tools executam imediatamente; migração automática de `custom` → `none` em DBs existentes |
+| ApprovalDialog com resumo contextual | `getSummary()` extrai info relevante por tool (path, command, package name); JSON completo em accordion colapsável — evita quebrar layout |
+| Migration de config values | `src/db/migrate.ts` agora também atualiza valores de config (não apenas schema) — permite migrar defaults sem intervenção manual |
