@@ -1,0 +1,20 @@
+[2026-06-22T11:53:02.609Z] [INFO] [Provider] Creating OpenAI-compatible provider {"apiBaseUrl":"http://192.168.3.5:11431/v1","hasApiKey":false,"agentType":"none"}
+[2026-06-22T11:53:02.617Z] [INFO] [Provider] Provider created successfully
+[2026-06-22T11:53:50.883Z] [INFO] [Provider] Creating OpenAI-compatible provider {"apiBaseUrl":"http://192.168.3.5:11431/v1","hasApiKey":false,"agentType":"none"}
+[2026-06-22T11:53:50.895Z] [INFO] [Provider] Provider created successfully
+[2026-06-22T11:56:58.436Z] [INFO] [Provider] Creating OpenAI-compatible provider {"apiBaseUrl":"http://192.168.3.5:11431/v1","hasApiKey":false,"agentType":"none"}
+[2026-06-22T11:56:58.510Z] [INFO] [Provider] Provider created successfully
+[2026-06-22T11:59:17.881Z] [INFO] [Server] Starting Web Agent server... {"port":89,"apiBaseUrl":"http://192.168.3.5:11431/v1","defaultModel":"z-ai/glm-5.1","agentType":"none","workspaceDir":"./workspace"}
+[2026-06-22T11:59:17.897Z] [INFO] [Server] Initializing database {"dbPath":"C:\\Users\\carlos\\Documents\\web-agent\\data\\web-agent.db"}
+[2026-06-22T11:59:17.899Z] [INFO] [Database] Initializing database {"dbPath":"C:\\Users\\carlos\\Documents\\web-agent\\data\\web-agent.db"}
+[2026-06-22T11:59:17.932Z] [INFO] [Database] Database initialized, schema applied
+[2026-06-22T11:59:17.939Z] [INFO] [Server] Serving static files {"publicDir":"C:\\Users\\carlos\\Documents\\web-agent\\frontend\\dist"}
+[2026-06-22T11:59:17.940Z] [INFO] [ApprovalManager] Socket.IO instance set
+[2026-06-22T11:59:17.941Z] [INFO] [TaskManager] Socket.IO instance set
+[2026-06-22T11:59:17.941Z] [INFO] [WebSocket] WebSocket setup complete
+[2026-06-22T11:59:17.942Z] [INFO] [Server] WebSocket setup complete
+[2026-06-22T11:59:17.942Z] [INFO] [FileWatcher] Starting file watcher {"workspaceDir":"./workspace"}
+[2026-06-22T11:59:17.945Z] [INFO] [Server] File watcher started {"dir":"./workspace"}
+[2026-06-22T11:59:17.957Z] [INFO] [Server] Web Agent running on http://localhost:89
+[2026-06-22T11:59:17.958Z] [INFO] [Server] Available routes: /api/chat, /api/models, /api/tasks, /api/files, /api/config, /api/sessions
+[2026-06-22T11:59:18.328Z] [DEBUG] [Server] GET /api/config
