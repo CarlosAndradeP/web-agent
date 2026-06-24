@@ -549,3 +549,30 @@
 **Arquivos alterados:**
 - `src/services/project-router.ts`
 - `src/agent/instructions.ts`
+
+---
+
+## Iteração 6 — Reforço do Prompt de Porta em Projetos Node.js
+
+### BUG-15: Agente ignora instrução "NEVER hardcode port 3000" e gera código com porta fixa
+
+**Sintoma:** Projetos Node.js criados pelo agente frequentemente continham `app.listen(3000)`, `app.listen(process.env.PORT || 3000)` ou portas fixas similares (8080, 5000), apesar do prompt já dizer "NEVER hardcode a port number like 3000". O `port-force.cjs` (monkey-patch de `net.Server.prototype.listen`) corrigia a porta em runtime, mas o código-fonte gerado ficava com porte hardcoded, criando confusão visual e não funcionando para frameworks que não usam `net.Server.prototype.listen` diretamente (Next.js, etc.).
+
+**Causa-raiz (múltiplas):**
+
+1. **Prompt fraco e com baixa saliência** — A instrução original em `instructions.ts:33` dizia apenas "CRITICAL: ALWAYS use process.env.PORT... NEVER hardcode a port number like 3000", mas sem consequência explícita, sem exemplos WRONG/RIGHT e sem proibir o padrão `|| 3000` como fallback. LLMs reproduziam `process.env.PORT || 3000` por ser o padrão de todo tutorial Express.
+
+2. **Sub-agente sem instrução de porta** — O `SUB_AGENT_SYSTEM_PROMPT` em `instructions.ts:3-18` não mencionava `process.env.PORT` em nenhuma das 5 regras. Se o agente principal delegasse "create an Express app" ao sub-agente, este gerava `app.listen(3000)` sem nenhuma instrução em contrário.
+
+3. **Regra ausente no prompt base** — O `AUTOCORRECTIVE_SYSTEM_PROMPT` (prompt principal, sem PROJECT CONTEXT) não continha nenhuma regra sobre portas. Se o agente criava código Node.js em chat sem projeto vinculado, não havia instrução alguma sobre `process.env.PORT`.
+
+**Correção:**
+
+- **PROJECT CONTEXT Node.js reforçado** (`instructions.ts`): Instrução substituída de "CRITICAL: ALWAYS use..." para "PORT RULE: You MUST use process.env.PORT. NEVER write a hardcoded port like 3000, 8080, or 5000. Writing app.listen(3000) WILL CRASH the project..." — com consequência explícita ("WILL CRASH"), exemplos CORRECT/WRONG (incluindo proibição de `process.env.PORT || 3000`), e instrução para corrigir código existente via readFile + writeFile.
+
+- **Regra 9 no BEHAVIOR RULES** (`instructions.ts`): Adicionada regra genérica "For Node.js projects: ALWAYS use process.env.PORT for server listen ports. NEVER hardcode port numbers — they will conflict with the system's automatic port assignment." — válida mesmo sem projeto vinculado.
+
+- **Regra 6 no SUB_AGENT_SYSTEM_PROMPT** (`instructions.ts`): Adicionada regra "For Node.js projects: ALWAYS use process.env.PORT for server listen ports. NEVER hardcode port numbers like 3000 or 8080 — use app.listen(process.env.PORT) only. Do NOT include fallback numbers like process.env.PORT || 3000." — sub-agente agora também segue a restrição.
+
+**Arquivos alterados:**
+- `src/agent/instructions.ts`
