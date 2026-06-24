@@ -150,7 +150,7 @@ export default function Layout() {
         <main className="flex-1 overflow-hidden relative">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
             {effectiveSessionId ? (
-              <ChatPanel sessionId={effectiveSessionId} />
+              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} />
             ) : (
               <div className="flex items-center justify-center h-full text-zinc-600">
                 <div className="text-center">

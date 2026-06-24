@@ -576,3 +576,50 @@
 
 **Arquivos alterados:**
 - `src/agent/instructions.ts`
+
+---
+
+## Iteração 7 — Correção de Troca de Projeto e Porta String Numérica
+
+### BUG-16: Ao selecionar outro projeto na sidebar, o agente ainda trabalha no workspace do projeto anterior
+
+**Sintoma:** Ao trocar de projeto na sidebar, o chat exibia mensagens da sessão anterior misturadas com as do novo projeto. Mensagens enviadas após a troca eram gravadas na sessão do novo projeto, mas carregavam contexto da sessão anterior como histórico, causando confusão no agente e trabalho no workspace errado.
+
+**Causa-raiz (múltiplas):**
+
+1. **ChatPanel sem `key` prop** — Em `Layout.tsx:152`, o `<ChatPanel sessionId={effectiveSessionId} />` não possuía `key`. Sem `key`, o React reutiliza a mesma instância do componente quando `sessionId` muda, preservando todo o state interno (mensagens, streaming, step counters). O hook `useChat` atualizava o `sessionId` via prop, mas as mensagens do projeto anterior permaneciam no state até serem substituídas pelo fetch assíncrono.
+
+2. **Race condition no carregamento de mensagens** — O `useEffect` em `useChat.ts:31-44` que carrega as mensagens da nova sessão é assíncrono. Se o usuário enviasse uma mensagem antes de o fetch completar, o `send()` (linha 47) construía `allMessages` como `[...messages, userMsg]` — ou seja, enviava as mensagens do projeto anterior junto com a nova mensagem, todas gravadas na sessão do novo projeto via `messagesRepo.create(effectiveSessionId, ...)` em `chat.ts:106-108`.
+
+**Correção:**
+
+- **`key={effectiveSessionId}` no ChatPanel** (`Layout.tsx`): Adicionado `key={effectiveSessionId}` ao `<ChatPanel>`. Isso força o React a desmontar e remontar o componente quando o projeto muda, zerando todo o state (mensagens, streaming, steps, toolName). O novo `useChat` inicializa limpo e carrega apenas as mensagens da sessão correta.
+
+- **Limpeza de state no `useChat`** (`useChat.ts`): Antes do fetch de mensagens, o `useEffect` agora limpa explicitamente `messages`, `currentStep`, `isStreaming` e `currentToolName`. Isso garante que nenhuma informação da sessão anterior persista, mesmo que a remount via `key` não ocorra (defesa em profundidade).
+
+**Arquivos alterados:**
+- `frontend/src/components/Layout.tsx`
+- `frontend/src/hooks/useChat.ts`
+
+---
+
+### BUG-17: `port-force.cjs` não intercepta `app.listen(process.env.PORT || 3000)` quando PORT é string
+
+**Sintoma:** Projetos Node.js criados pelo agente que usam `app.listen(process.env.PORT || 3000)` continuavam escutando na porta 3000 ao invés da porta atribuída pelo sistema (ex: 9000). O `port-force.cjs` (monkey-patch de `net.Server.prototype.listen`) não interceptava a chamada, permitindo que o fallback `|| 3000` fosse usado.
+
+**Causa-raiz:** O `spawnNodeProject()` em `project-router.ts:423` seta `env.PORT = String(port)` — ou seja, `PORT` é uma string como `'9000'`. Quando o código gerado pelo agente faz `process.env.PORT || 3000`, a expressão `||` retorna a string `'9000'` (pois strings não-vazias são truthy), resultando em `app.listen('9000')`. O `port-force.cjs` interceptava 3 formatos no 1º argumento de `.listen()`:
+
+1. `app.listen(3000)` — `typeof args[0] === 'number'` ✅ interceptado
+2. `app.listen({ port: 3000 })` — objeto com `port` ✅ interceptado
+3. `app.listen(':3000')` — string `:port` ✅ interceptado
+
+Mas **não interceptava** `app.listen('9000')` — string numérica pura sem os dois-pontos. O caso 3 usava regex `/^:\d+$/` que exigia o prefixo `:`. String numérica pura como `'9000'` não casava em nenhum dos 3 patterns, escapando do monkey-patch. O Node.js aceita `server.listen('9000')` e tenta interpretar como IPC path ou ignora, caindo em comportamento inesperado.
+
+**Correção:**
+
+- **Novo caso no `port-force.cjs`**: Adicionada interceptação para `typeof args[0] === 'string'` que representa um número puro (ex: `'9000'`). A verificação confirma que a string é estritamente numérica (`parseInt` não retorna `NaN` e `trim() === String(parseInt(...))`) antes de substituir pela porta forçada. Isso cobre o padrão `app.listen(process.env.PORT || 3000)` quando `process.env.PORT` é string.
+
+- **Normalização de `process.env.PORT`**: Adicionado `process.env.PORT = String(forcedPort)` logo após o `parseInt` para garantir que o valor no env é sempre a string numérica canônica (sem espaços, zeros à esquerda, etc.).
+
+**Arquivos alterados:**
+- `src/preload/port-force.cjs`

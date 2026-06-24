@@ -29,6 +29,10 @@ export function useChat(sessionId: string) {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    setMessages([]);
+    setCurrentStep(0);
+    setIsStreaming(false);
+    setCurrentToolName(null);
     if (!sessionId) return;
     api.sessions.messages(sessionId).then(data => {
       const loaded: ChatMessage[] = data.messages
