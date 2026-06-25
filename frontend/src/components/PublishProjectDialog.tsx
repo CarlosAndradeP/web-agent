@@ -15,7 +15,6 @@ interface Props {
 export default function PublishProjectDialog({ open, onOpenChange, tree, onPublished }: Props) {
   const [name, setName] = useState('');
   const [folderPath, setFolderPath] = useState('');
-  const [type, setType] = useState<'static' | 'php' | 'node'>('static');
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState('');
   const [publishedProject, setPublishedProject] = useState<Project | null>(null);
@@ -28,7 +27,7 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
     setPublishing(true);
     setError('');
     try {
-      const data = await api.projects.create({ name, folderPath, type });
+      const data = await api.projects.create({ name, folderPath });
       setPublishedProject(data.project);
       onPublished?.(data.project);
     } catch (err: any) {
@@ -41,7 +40,6 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
   const handleClose = () => {
     setName('');
     setFolderPath('');
-    setType('static');
     setError('');
     setPublishedProject(null);
     onOpenChange(false);
@@ -100,19 +98,6 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
                 {folders.map(f => (
                   <option key={f} value={f}>{f}</option>
                 ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs text-zinc-500 mb-1 block">Type</label>
-              <select
-                value={type}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setType(e.target.value as any)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
-              >
-                <option value="static">Static (HTML/CSS/JS)</option>
-                <option value="php">PHP (via Apache)</option>
-                <option value="node">Node.js (Express, etc.)</option>
               </select>
             </div>
 

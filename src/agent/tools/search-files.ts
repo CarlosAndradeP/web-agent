@@ -1,7 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { resolve, relative } from 'node:path';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { safeWorkspacePath } from './sanitize.js';
 
 export function createSearchFilesTool(workspaceDir: string) {
   return tool({
@@ -13,7 +14,7 @@ export function createSearchFilesTool(workspaceDir: string) {
     }),
     execute: async ({ pattern, path = '.', include }) => {
       try {
-        const searchDir = resolve(workspaceDir, path);
+        const searchDir = safeWorkspacePath(workspaceDir, path);
         const regex = new RegExp(pattern, 'i');
         const includeRegex = include ? globToRegex(include) : null;
         const matches: string[] = [];
@@ -46,10 +47,12 @@ function searchDirRecursive(
   } catch {
     return;
   }
+  const normalizedWorkspace = resolve(workspaceDir);
   for (const entry of entries) {
     if (matches.length >= maxMatches) return;
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     const full = resolve(dir, entry.name);
+    if (!full.startsWith(normalizedWorkspace)) continue;
     if (entry.isDirectory()) {
       searchDirRecursive(full, pattern, includeRegex, matches, workspaceDir, maxMatches);
     } else if (entry.isFile()) {

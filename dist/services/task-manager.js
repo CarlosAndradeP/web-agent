@@ -9,14 +9,24 @@ export class TaskManager {
     tasksRepo;
     configRepo;
     creditManager;
+    approvalManager;
     io = null;
     activeControllers = new Map();
     taskProjectInfo = new Map();
-    constructor(db, creditManager) {
+    taskUserIds = new Map();
+    constructor(db, creditManager, approvalManager) {
         this.db = db;
         this.tasksRepo = new TasksRepository(db);
         this.configRepo = new ConfigRepository(db);
         this.creditManager = creditManager;
+        this.approvalManager = approvalManager ?? null;
+    }
+    emitToTaskUser(taskId, event, data) {
+        if (!this.io)
+            return;
+        const userId = this.taskUserIds.get(taskId);
+        const emitter = userId ? this.io.to(`user:${userId}`) : this.io;
+        emitter.emit(event, data);
     }
     insertStep(taskId, stepNumber, toolName, toolInput, toolOutput, durationMs) {
         const id = uuid();
@@ -36,6 +46,7 @@ export class TaskManager {
         log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps, userId });
         const task = this.tasksRepo.create(sessionId, description, model, maxSteps);
         if (userId) {
+            this.taskUserIds.set(task.id, userId);
             try {
                 this.db.prepare('UPDATE tasks SET user_id = ?, workspace_dir = ? WHERE id = ?').run(userId, workspaceDir ?? null, task.id);
             }
@@ -47,7 +58,9 @@ export class TaskManager {
             this.taskProjectInfo.set(task.id, projectInfo);
         }
         if (this.io) {
-            this.io.emit('task:created', { task });
+            const room = userId ? `user:${userId}` : undefined;
+            const emitter = room ? this.io.to(room) : this.io;
+            emitter.emit('task:created', { task });
         }
         log.info('Task created', { taskId: task.id, status: task.status });
         return task;
@@ -80,6 +93,8 @@ export class TaskManager {
                 agentType: appConfig.agentType,
                 abortSignal: abortController.signal,
                 projectInfo,
+                approvalManager: this.approvalManager ?? undefined,
+                userId,
             });
             const self = this;
             const creditManager = this.creditManager;
@@ -90,7 +105,7 @@ export class TaskManager {
                 onStepFinish: async ({ stepNumber, toolCalls, toolResults }) => {
                     self.tasksRepo.incrementStep(taskId);
                     if (this.io) {
-                        this.io.emit('task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc) => tc.toolName) });
+                        this.emitToTaskUser(taskId, 'task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc) => tc.toolName) });
                     }
                     if (userId && toolResults?.length) {
                         try {
@@ -105,21 +120,18 @@ export class TaskManager {
             });
             const text = result.text ?? 'Task completed';
             this.tasksRepo.updateStatus(taskId, 'completed', text);
-            if (this.io) {
-                this.io.emit('task:completed', { taskId, result: text });
-            }
+            this.emitToTaskUser(taskId, 'task:completed', { taskId, result: text });
             log.info('Task completed', { taskId, resultLength: text.length });
         }
         catch (err) {
             this.tasksRepo.updateStatus(taskId, 'failed', null, err.message);
-            if (this.io) {
-                this.io.emit('task:failed', { taskId, error: err.message });
-            }
+            this.emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
             log.error('Task failed', { taskId, error: err.message, stack: err.stack });
         }
         finally {
             this.activeControllers.delete(taskId);
             this.taskProjectInfo.delete(taskId);
+            this.taskUserIds.delete(taskId);
         }
     }
     async streamTask(taskId) {
@@ -149,6 +161,8 @@ export class TaskManager {
             agentType: appConfig.agentType,
             abortSignal: abortController.signal,
             projectInfo,
+            approvalManager: this.approvalManager ?? undefined,
+            userId,
         });
         log.info('Agent created, calling stream()...', { taskId, model });
         const costPerStep = this.creditManager.getCostPerStep(model);
@@ -158,9 +172,7 @@ export class TaskManager {
                 abortSignal,
                 onStepFinish: async ({ stepNumber, toolCalls, toolResults }) => {
                     this.tasksRepo.incrementStep(taskId);
-                    if (this.io) {
-                        this.io.emit('task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc) => tc.toolName) });
-                    }
+                    this.emitToTaskUser(taskId, 'task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc) => tc.toolName) });
                     if (userId && toolResults?.length) {
                         try {
                             this.creditManager.deductCredit(userId, taskId, costPerStep);
@@ -174,10 +186,11 @@ export class TaskManager {
             });
             log.info('Agent stream obtained, returning fullStream', { taskId });
             const tasksRepo = this.tasksRepo;
-            const io = this.io;
             const activeControllers = this.activeControllers;
             const taskProjectInfo = this.taskProjectInfo;
+            const taskUserIds = this.taskUserIds;
             const insertStep = this.insertStep.bind(this);
+            const emitToTaskUser = this.emitToTaskUser.bind(this);
             const fullStream = streamResult.fullStream;
             async function* eventStream() {
                 let stepNumber = 0;
@@ -242,16 +255,12 @@ export class TaskManager {
                         }
                     }
                     tasksRepo.updateStatus(taskId, 'completed');
-                    if (io) {
-                        io.emit('task:completed', { taskId });
-                    }
+                    emitToTaskUser(taskId, 'task:completed', { taskId });
                     log.info('Stream completed', { taskId, totalSteps: stepNumber });
                 }
                 catch (err) {
                     tasksRepo.updateStatus(taskId, 'failed', null, err.message);
-                    if (io) {
-                        io.emit('task:failed', { taskId, error: err.message });
-                    }
+                    emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
                     log.error('Stream error', { taskId, error: err.message, stack: err.stack });
                     yield { type: 'error', taskId, error: err.message };
                     throw err;
@@ -259,6 +268,7 @@ export class TaskManager {
                 finally {
                     activeControllers.delete(taskId);
                     taskProjectInfo.delete(taskId);
+                    taskUserIds.delete(taskId);
                 }
             }
             return eventStream();
@@ -266,10 +276,9 @@ export class TaskManager {
         catch (err) {
             this.activeControllers.delete(taskId);
             this.taskProjectInfo.delete(taskId);
+            this.taskUserIds.delete(taskId);
             this.tasksRepo.updateStatus(taskId, 'failed', null, err.message);
-            if (this.io) {
-                this.io.emit('task:failed', { taskId, error: err.message });
-            }
+            this.emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
             log.error('Failed to create agent stream', { taskId, error: err.message, stack: err.stack });
             throw err;
         }
@@ -281,9 +290,8 @@ export class TaskManager {
             controller.abort();
             this.tasksRepo.updateStatus(taskId, 'cancelled');
             this.activeControllers.delete(taskId);
-            if (this.io) {
-                this.io.emit('task:cancelled', { taskId });
-            }
+            this.taskUserIds.delete(taskId);
+            this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
             log.info('Task canceled', { taskId });
         }
         else {

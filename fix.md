@@ -623,3 +623,86 @@ Mas **não interceptava** `app.listen('9000')` — string numérica pura sem os 
 
 **Arquivos alterados:**
 - `src/preload/port-force.cjs`
+
+---
+
+## Iteração 8 — Redesign do Sistema de Criação de Projetos
+
+### FEAT-14: Projetos sem tipo inicial — default static com dual mount + detecção automática de Node.js
+
+**Problema anterior:** Ao criar um projeto, o usuário precisava escolher o tipo (Static, PHP ou Node.js) upfront, sem saber qual seria necessário. Projetos "static" só usavam `express.static()`, sem symlink para Apache — arquivos PHP criados pelo agente não funcionavam. Projetos Node.js precisavam ser criados manualmente com o tipo correto.
+
+**Correção — conceito:**
+- Todo projeto novo é `static` por padrão (sem escolha de tipo pelo usuário)
+- Projetos `static` recebem **dual mount**: `express.static()` + symlink Apache (PHP funciona automaticamente se houver `.php`)
+- Quando o FileWatcher detecta `package.json` num diretório de projeto, emite evento Socket.IO `project:node-detected`
+- O sidebar mostra botão "Iniciar Node.js" (ícone Zap, cor amber) para projetos static com `nodeReady=true`
+- O usuário clica para promover o projeto de `static` para `node` — a API desmonta o static, atualiza o tipo no DB, e spawna o processo Node.js
+
+**Mudanças por camada:**
+
+**Backend — `src/api/projects.ts`:**
+- `POST /` agora aceita `type` como campo opcional (default `'static'`). Validação `!type` removida — se ausente, assume `'static'`
+- Novo endpoint `POST /:id/promote-node`: verifica se `package.json` existe no folder, desmonta projeto atual (static/php), atualiza tipo no DB para `'node'`, spawna processo Node.js, retorna projeto atualizado
+
+**Backend — `src/services/project-router.ts`:**
+- `mountProject()` para tipo `static`: além de `express.static()`, agora cria symlink `<workspaceBaseDir>/<uuid>` → `<fullFolderPath>` (mesmo padrão de projetos PHP). Symlink é não-fatal se falhar
+- `remountSymlinks()`: agora cobre projetos `static` (antes só PHP)
+- Novo método `promoteToNode(project, fullFolderPath)`: desmonta projeto atual, cria entrada Node no activeProjects (com proxy + porta), spawna processo
+- Novo método `isNodeProjectDetected(folderPath)`: verifica se `package.json` existe
+
+**Backend — `src/services/file-watcher.ts`:**
+- Ao detectar criação ou modificação de `package.json`, chama `checkAndEmitNodeDetected()`
+- Extrai `username` e `folderPath` relativo do path absoluto via `relative(workspaceDir, folderPath)`
+- Emite evento Socket.IO `project:node-detected` com `{ folderPath, username, fullPath }`
+
+**Backend — `src/db/repositories/projects.ts`:**
+- Novo método `updateType(id, type)`: atualiza coluna `type` e `updated_at` no banco
+
+**Backend — `src/agent/instructions.ts`:**
+- Prompt para projetos `static` atualizado de "This is a static project. Files are served directly from the workspace directory." para "This project serves web content (HTML, CSS, JS) and also supports PHP files automatically. If you need to create a Node.js server (with package.json and a start script), inform the user they can start it from the UI by clicking the 'Iniciar Node.js' button that will appear in the sidebar."
+
+**Frontend — `frontend/src/types/index.ts`:**
+- Adicionado campo `nodeReady?: boolean` ao tipo `Project`
+
+**Frontend — `frontend/src/lib/api.ts`:**
+- `projects.create()`: `type` agora é opcional no tipo do parâmetro
+- Novo método `projects.promoteNode(id)`: chama `POST /projects/:id/promote-node`
+
+**Frontend — `frontend/src/hooks/useProjects.ts`:**
+- `createProject()`: `type` agora é parâmetro opcional (não obrigatório)
+- Novo método `promoteNode(id)`: chama API e faz refresh
+- Novo `useEffect` com socket Socket.IO que escuta evento `project:node-detected` e marca `nodeReady=true` no projeto correspondente via `setProjects()`
+
+**Frontend — `frontend/src/components/Layout.tsx`:**
+- Removido state `newProjectType` e o `<select>` de tipo no dialog "New Project"
+- `createProject()` chamado sem tipo (backend assume `'static'`)
+- Passa `promoteNode` como prop `onPromoteNode` ao Sidebar
+
+**Frontend — `frontend/src/components/PublishProjectDialog.tsx`:**
+- Removido state `type` e o `<select>` de tipo no formulário
+- `api.projects.create()` chamado sem `type`
+
+**Frontend — `frontend/src/components/Sidebar.tsx`:**
+- Badge para projetos `static`: de letra "S" (verde) para ícone Globe (cinza) — mais neutro
+- Nova prop `onPromoteNode`
+- Para projetos `static` com `nodeReady=true`: mostra botão Zap (amber) com title "Iniciar Node.js" no hover
+- Botões Play/Stop para Node.js mantidos como antes
+
+**Compatibilidade:**
+- Projetos `php` e `node` existentes no DB continuam funcionando normalmente
+- O tipo `php` permanece no código para projetos legados (nenhuma UI permite criar novos projetos PHP)
+- DB schema: coluna `type` com `DEFAULT 'static'` já estava correta — nenhuma migration necessária
+
+**Arquivos alterados:**
+- `src/api/projects.ts`
+- `src/services/project-router.ts`
+- `src/services/file-watcher.ts`
+- `src/db/repositories/projects.ts`
+- `src/agent/instructions.ts`
+- `frontend/src/types/index.ts`
+- `frontend/src/lib/api.ts`
+- `frontend/src/hooks/useProjects.ts`
+- `frontend/src/components/Layout.tsx`
+- `frontend/src/components/PublishProjectDialog.tsx`
+- `frontend/src/components/Sidebar.tsx`

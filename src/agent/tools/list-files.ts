@@ -1,7 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { resolve } from 'node:path';
 import { readdirSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { safeWorkspacePath } from './sanitize.js';
 
 export function createListFilesTool(workspaceDir: string) {
   return tool({
@@ -11,8 +12,8 @@ export function createListFilesTool(workspaceDir: string) {
       recursive: z.boolean().optional().describe('List recursively (default: false)'),
     }),
     execute: async ({ path = '.', recursive = false }) => {
-      const fullPath = resolve(workspaceDir, path);
       try {
+        const fullPath = safeWorkspacePath(workspaceDir, path);
         const entries = listDir(fullPath, recursive);
         return { entries, path };
       } catch (err: any) {

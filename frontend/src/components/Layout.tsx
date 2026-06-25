@@ -13,6 +13,7 @@ import { useProjects } from '../hooks/useProjects';
 import { useSessions } from '../hooks/useSessions';
 import { useSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
+import { useResizable } from '../hooks/useResizable';
 import { api } from '../lib/api';
 import type { Project } from '../types';
 
@@ -25,16 +26,22 @@ export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectType, setNewProjectType] = useState<'static' | 'php' | 'node'>('static');
   const [newProjectFolder, setNewProjectFolder] = useState('');
   const [existingFolders, setExistingFolders] = useState<{ name: string; path: string }[]>([]);
   const [useExistingFolder, setUseExistingFolder] = useState(false);
-  const { projects, createProject, deleteProject, startProject, stopProject, refresh: refreshProjects } = useProjects();
+  const { projects, createProject, deleteProject, startProject, stopProject, promoteNode, refresh: refreshProjects } = useProjects();
   const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
   const { user } = useAuth();
 
   const isAdmin = user?.role === 'admin';
+
+  const { width: sidebarWidth, handleMouseDown: sidebarResize, handleDoubleClick: sidebarReset } = useResizable({
+    storageKey: 'webagent_sidebar_width',
+    defaultWidth: 240,
+    minWidth: 200,
+    maxWidth: 400,
+  });
 
   useEffect(() => {
     if (showCreateDialog) {
@@ -59,13 +66,12 @@ export default function Layout() {
       folderPath = newProjectFolder.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     }
     try {
-      const project = await createProject(name, folderPath, newProjectType);
+      const project = await createProject(name, folderPath);
       setActiveProjectId(project.id);
       if (project.sessionId) {
         setSessionId(project.sessionId);
       }
       setNewProjectName('');
-      setNewProjectType('static');
       setNewProjectFolder('');
       setUseExistingFolder(false);
       setShowCreateDialog(false);
@@ -73,7 +79,7 @@ export default function Layout() {
     } catch (err: any) {
       alert(`Failed to create project: ${err.message}`);
     }
-  }, [newProjectName, newProjectType, newProjectFolder, useExistingFolder, projects.length, createProject]);
+  }, [newProjectName, newProjectFolder, useExistingFolder, projects.length, createProject]);
 
   const handleProjectDelete = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
@@ -102,43 +108,46 @@ export default function Layout() {
   const effectiveSessionId = sessionId || 'default';
   const activeProject = projects.find(p => p.id === activeProjectId);
 
+  const sidebarProps = {
+    activeTab,
+    onTabChange: handleTabChange,
+    projects,
+    activeProjectId,
+    onProjectSelect: handleProjectSelect,
+    onProjectCreate: () => setShowCreateDialog(true),
+    onProjectDelete: handleProjectDelete,
+    onProjectStart: startProject,
+    onProjectStop: stopProject,
+    onPromoteNode: promoteNode,
+    isRunning: false,
+  };
+
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-zinc-950 text-zinc-100">
-      <div className="hidden md:block">
-        <Sidebar
-          activeTab={activeTab}
-          onTabChange={handleTabChange}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onProjectSelect={handleProjectSelect}
-          onProjectCreate={() => setShowCreateDialog(true)}
-          onProjectDelete={handleProjectDelete}
-          onProjectStart={startProject}
-          onProjectStop={stopProject}
-          isRunning={false}
-        />
+    <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
+      {/* Desktop sidebar + resize handle */}
+      <div className="hidden md:flex shrink-0 border-r border-zinc-800/60" style={{ width: sidebarWidth }}>
+        <Sidebar {...sidebarProps} />
+      </div>
+      <div
+        className="hidden md:flex w-[3px] shrink-0 cursor-col-resize items-center justify-center group relative"
+        onMouseDown={sidebarResize}
+        onDoubleClick={sidebarReset}
+      >
+        <div className="absolute inset-y-0 -left-1 -right-1" />
+        <div className="h-8 w-[3px] rounded-full bg-zinc-700 group-hover:bg-blue-500 group-active:bg-blue-400 transition-colors" />
       </div>
 
+      {/* Mobile sidebar overlay */}
       {mobileMenuOpen && (
         <>
-          <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setMobileMenuOpen(false)} />
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden">
-            <Sidebar
-              activeTab={activeTab}
-              onTabChange={handleTabChange}
-              projects={projects}
-              activeProjectId={activeProjectId}
-              onProjectSelect={handleProjectSelect}
-              onProjectCreate={() => setShowCreateDialog(true)}
-              onProjectDelete={handleProjectDelete}
-              onProjectStart={startProject}
-              onProjectStop={stopProject}
-              isRunning={false}
-            />
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden animate-in" onClick={() => setMobileMenuOpen(false)} />
+          <div className="fixed inset-y-0 left-0 z-50 md:hidden w-72 animate-in shadow-2xl">
+            <Sidebar {...sidebarProps} />
           </div>
         </>
       )}
 
+      {/* Main content area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <Header
           onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -147,21 +156,24 @@ export default function Layout() {
           sessionName={activeProject?.name}
         />
 
-        <main className="flex-1 overflow-hidden relative">
+        <main className="flex-1 overflow-hidden">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
             {effectiveSessionId ? (
               <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} />
             ) : (
-              <div className="flex items-center justify-center h-full text-zinc-600">
-                <div className="text-center">
-                  <p className="text-sm">Select or create a project to start</p>
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center space-y-3">
+                  <div className="h-12 w-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center mx-auto">
+                    <span className="text-lg">+</span>
+                  </div>
+                  <p className="text-sm text-zinc-500">Select or create a project to start</p>
                 </div>
               </div>
             )}
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
-            <div className="flex items-center justify-center h-full text-zinc-600">
-              <p className="text-sm">Tasks are tracked per-project in the chat</p>
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm text-zinc-500">Tasks are tracked per-project in the chat</p>
             </div>
           </div>
           <div className={activeTab === 'files' ? 'h-full' : 'h-full hidden'}>
@@ -197,18 +209,6 @@ export default function Layout() {
               onKeyDown={e => e.key === 'Enter' && handleProjectCreate()}
               autoFocus
             />
-            <div>
-              <label className="text-xs text-zinc-500 mb-1 block">Project Type</label>
-              <select
-                value={newProjectType}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewProjectType(e.target.value as any)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
-              >
-                <option value="static">Static (HTML/CSS/JS)</option>
-                <option value="php">PHP (via Apache)</option>
-                <option value="node">Node.js (Express, etc.)</option>
-              </select>
-            </div>
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <input

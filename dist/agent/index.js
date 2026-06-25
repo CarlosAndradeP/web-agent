@@ -14,6 +14,8 @@ export function createAgent(options) {
         apiBaseUrl: options.apiBaseUrl,
         apiKey: options.apiKey,
         agentType: options.agentType,
+        approvalManager: options.approvalManager,
+        userId: options.userId,
     });
     log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });
     const isGlmModel = options.model.toLowerCase().includes('glm');

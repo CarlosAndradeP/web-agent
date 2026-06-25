@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { io } from 'socket.io-client';
 import { api } from '../lib/api';
 import type { Project } from '../types';
 
@@ -19,7 +20,24 @@ export function useProjects() {
     refresh();
   }, [refresh]);
 
-  const createProject = useCallback(async (name: string, folderPath: string, type: 'static' | 'php' | 'node' = 'static') => {
+  useEffect(() => {
+    const socket = io('/', { path: '/socket.io' });
+
+    socket.on('project:node-detected', (data: { folderPath: string; username: string }) => {
+      setProjects(prev => prev.map(p => {
+        if (p.type === 'static' && p.folderPath === data.folderPath) {
+          return { ...p, nodeReady: true };
+        }
+        return p;
+      }));
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  const createProject = useCallback(async (name: string, folderPath: string, type?: 'static' | 'php' | 'node') => {
     const data = await api.projects.create({ name, folderPath, type });
     await refresh();
     return data.project;
@@ -40,5 +58,11 @@ export function useProjects() {
     await refresh();
   }, [refresh]);
 
-  return { projects, loading, refresh, createProject, deleteProject, startProject, stopProject };
+  const promoteNode = useCallback(async (id: string) => {
+    const data = await api.projects.promoteNode(id);
+    await refresh();
+    return data.project;
+  }, [refresh]);
+
+  return { projects, loading, refresh, createProject, deleteProject, startProject, stopProject, promoteNode };
 }

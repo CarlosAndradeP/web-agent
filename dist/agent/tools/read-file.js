@@ -1,7 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { safeWorkspacePath } from './sanitize.js';
+import { sanitizeForPrompt } from './content-sanitize.js';
 export function createReadFileTool(workspaceDir) {
     return tool({
         description: 'Read the contents of a file from the workspace',
@@ -10,8 +11,9 @@ export function createReadFileTool(workspaceDir) {
         }),
         execute: async ({ path }) => {
             try {
-                const fullPath = resolve(workspaceDir, path);
-                const content = readFileSync(fullPath, 'utf-8');
+                const fullPath = safeWorkspacePath(workspaceDir, path);
+                let content = readFileSync(fullPath, 'utf-8');
+                content = sanitizeForPrompt(content);
                 return { content, path };
             }
             catch (err) {

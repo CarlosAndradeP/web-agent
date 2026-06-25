@@ -20,7 +20,7 @@ export default function MessageBubble({ role, content, toolCalls, isStreaming }:
     <div className={cn('flex gap-3 animate-in', isUser ? 'justify-end' : 'justify-start')}>
       {!isUser && (
         <div className="shrink-0 mt-1">
-          <div className="h-7 w-7 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+          <div className="h-7 w-7 rounded-lg bg-zinc-800/80 border border-zinc-700/40 flex items-center justify-center">
             <Bot className="h-4 w-4 text-blue-400" />
           </div>
         </div>
@@ -29,10 +29,10 @@ export default function MessageBubble({ role, content, toolCalls, isStreaming }:
         {hasContent && (
           <div
             className={cn(
-              'rounded-xl px-4 py-2.5 text-sm',
+              'rounded-xl px-4 py-2.5 text-sm leading-relaxed',
               isUser
                 ? 'bg-blue-600 text-white'
-                : 'bg-zinc-800 border border-zinc-700 text-zinc-100'
+                : 'bg-zinc-800/80 border border-zinc-700/40 text-zinc-100'
             )}
           >
             {isUser ? (
@@ -66,7 +66,7 @@ export default function MessageBubble({ role, content, toolCalls, isStreaming }:
       </div>
       {isUser && (
         <div className="shrink-0 mt-1">
-          <div className="h-7 w-7 rounded-full bg-blue-600 flex items-center justify-center">
+          <div className="h-7 w-7 rounded-lg bg-blue-600 flex items-center justify-center">
             <User className="h-4 w-4 text-white" />
           </div>
         </div>

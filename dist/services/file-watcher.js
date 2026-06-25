@@ -1,4 +1,5 @@
 import { watch } from 'chokidar';
+import { relative } from 'node:path';
 import { createLogger } from '../services/logger.js';
 const log = createLogger('FileWatcher');
 export class FileWatcher {
@@ -12,19 +13,33 @@ export class FileWatcher {
         });
         this.watcher.on('add', (path) => {
             log.debug('File added', { path });
-            io.emit('file:changed', { path, type: 'create' });
+            const room = this.pathToRoom(path, workspaceDir);
+            const emitter = room ? io.to(room) : io;
+            emitter.emit('file:changed', { path, type: 'create' });
         });
         this.watcher.on('change', (path) => {
             log.debug('File changed', { path });
-            io.emit('file:changed', { path, type: 'modify' });
+            const room = this.pathToRoom(path, workspaceDir);
+            const emitter = room ? io.to(room) : io;
+            emitter.emit('file:changed', { path, type: 'modify' });
         });
         this.watcher.on('unlink', (path) => {
             log.debug('File deleted', { path });
-            io.emit('file:changed', { path, type: 'delete' });
+            const room = this.pathToRoom(path, workspaceDir);
+            const emitter = room ? io.to(room) : io;
+            emitter.emit('file:changed', { path, type: 'delete' });
         });
         this.watcher.on('error', (err) => {
             log.error('File watcher error', { error: err instanceof Error ? err.message : String(err) });
         });
+    }
+    pathToRoom(filePath, workspaceDir) {
+        const rel = relative(workspaceDir, filePath);
+        const parts = rel.split(/[/\\]/);
+        if (parts.length > 0 && parts[0]) {
+            return `workspace:${parts[0]}`;
+        }
+        return null;
     }
     stop() {
         log.info('Stopping file watcher');

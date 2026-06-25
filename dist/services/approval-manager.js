@@ -7,7 +7,7 @@ export class ApprovalManager {
         this.io = io;
         log.info('Socket.IO instance set');
     }
-    requestApproval(request) {
+    requestApproval(request, userId) {
         log.info('Approval requested', { id: request.id, toolName: request.toolName });
         return new Promise((resolve) => {
             const timeout = setTimeout(() => {
@@ -17,8 +17,9 @@ export class ApprovalManager {
             }, 300000);
             this.pending.set(request.id, { resolve, timeout });
             if (this.io) {
-                this.io.emit('approval:request', request);
-                log.info('Approval request emitted via Socket.IO', { id: request.id });
+                const target = userId ? this.io.to(`user:${userId}`) : this.io;
+                target.emit('approval:request', request);
+                log.info('Approval request emitted via Socket.IO', { id: request.id, userId });
             }
             else {
                 log.warn('No Socket.IO instance, approval request not sent to client', { id: request.id });

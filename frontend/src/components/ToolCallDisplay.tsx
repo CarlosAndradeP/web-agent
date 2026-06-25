@@ -57,9 +57,9 @@ export default function ToolCallDisplay({ toolName, input, output, status = 'com
   );
 
   const statusBorder = status === 'running'
-    ? 'border-blue-500/30 bg-blue-500/5'
+    ? 'border-blue-500/20 bg-blue-500/5'
     : status === 'completed'
-    ? 'border-emerald-500/20 bg-emerald-500/5'
+    ? 'border-zinc-700/40 bg-zinc-800/30'
     : 'border-red-500/20 bg-red-500/5';
 
   const hasOutput = output !== undefined && output !== null && formatOutput(output).length > 0;
@@ -67,45 +67,45 @@ export default function ToolCallDisplay({ toolName, input, output, status = 'com
   const toolColor = toolColorMap[toolName] || 'text-zinc-400';
 
   return (
-    <div className={cn('rounded-md border px-3 py-2 text-sm transition-all duration-200', statusBorder)}>
+    <div className={cn('rounded-lg border px-3 py-2 text-sm transition-all duration-200', statusBorder)}>
       <div
         className="flex items-center gap-2 cursor-pointer"
         onClick={() => setExpanded(!expanded)}
       >
         {expanded ? (
-          <ChevronDown className="h-3 w-3 text-zinc-500 shrink-0" />
+          <ChevronDown className="h-3 w-3 text-zinc-600 shrink-0" />
         ) : (
-          <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
+          <ChevronRight className="h-3 w-3 text-zinc-600 shrink-0" />
         )}
         {ToolIcon ? (
           <ToolIcon className={cn('h-3 w-3 shrink-0', toolColor)} />
         ) : (
           <Terminal className="h-3 w-3 text-zinc-400 shrink-0" />
         )}
-        <span className="font-mono text-xs text-blue-400 truncate">{toolName}</span>
-        {statusIcon}
-        {stepNumber != null && (
-          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-auto mr-1">
-            Step {stepNumber}
-          </Badge>
-        )}
-        {durationMs != null && (
-          <span className="text-[10px] text-zinc-500 ml-auto">{durationMs}ms</span>
-        )}
+        <span className="font-mono text-[11px] text-zinc-400 truncate">{toolName}</span>
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          {statusIcon}
+          {stepNumber != null && (
+            <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4">{stepNumber}</Badge>
+          )}
+          {durationMs != null && (
+            <span className="text-[10px] text-zinc-600 tabular-nums">{durationMs}ms</span>
+          )}
+        </div>
       </div>
 
       {expanded && (
         <div className="mt-2 space-y-1.5 animate-in">
           <div>
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Input</span>
-            <pre className="mt-1 rounded bg-zinc-800/80 p-2 text-xs text-zinc-300 overflow-x-auto max-h-40 overflow-y-auto font-mono">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold">Input</span>
+            <pre className="mt-1 rounded-lg bg-zinc-900/80 border border-zinc-800/40 p-2 text-xs text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto font-mono">
               {JSON.stringify(input, null, 2)}
             </pre>
           </div>
           {hasOutput && (
             <div>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Output</span>
-              <pre className="mt-1 rounded bg-zinc-800/80 p-2 text-xs text-zinc-300 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold">Output</span>
+              <pre className="mt-1 rounded-lg bg-zinc-900/80 border border-zinc-800/40 p-2 text-xs text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
                 {formatOutput(output)}
               </pre>
             </div>

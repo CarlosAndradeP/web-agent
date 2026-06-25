@@ -1,7 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { resolve } from 'node:path';
 import { rmSync } from 'node:fs';
+import { safeWorkspacePath } from './sanitize.js';
 export function createDeleteFileTool(workspaceDir) {
     return tool({
         description: 'Delete a file or directory from the workspace',
@@ -10,7 +10,7 @@ export function createDeleteFileTool(workspaceDir) {
         }),
         execute: async ({ path }) => {
             try {
-                const fullPath = resolve(workspaceDir, path);
+                const fullPath = safeWorkspacePath(workspaceDir, path);
                 rmSync(fullPath, { recursive: true, force: true });
                 return { success: true, path };
             }

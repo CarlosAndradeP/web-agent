@@ -4,7 +4,7 @@ export declare class ApprovalManager {
     private pending;
     private io;
     setIo(io: Server): void;
-    requestApproval(request: ApprovalRequest): Promise<boolean>;
+    requestApproval(request: ApprovalRequest, userId?: string): Promise<boolean>;
     respond(id: string, approved: boolean): void;
     hasPending(id: string): boolean;
 }

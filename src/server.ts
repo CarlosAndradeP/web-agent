@@ -88,8 +88,8 @@ if (existingSessions.length === 0) {
 
 const creditManager = new CreditManager(db, creditsRepo, usersRepo);
 const projectRouter = new ProjectRouter(app);
-const taskManager = new TaskManager(db, creditManager);
 const approvalManager = new ApprovalManager();
+const taskManager = new TaskManager(db, creditManager, approvalManager);
 const fileWatcher = new FileWatcher();
 
 mkdirSync(config.workspaceBaseDir, { recursive: true });

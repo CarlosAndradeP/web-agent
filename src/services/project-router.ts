@@ -1,13 +1,14 @@
 import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve, join, dirname } from 'node:path';
+import { resolve, join, dirname, extname } from 'node:path';
 import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { Transform, type TransformCallback } from 'node:stream';
 import type { Project } from '../db/repositories/projects.js';
 import { createLogger } from '../services/logger.js';
+import { buildSafeEnv } from '../agent/tools/command-policy.js';
 
 const log = createLogger('ProjectRouter');
 
@@ -158,8 +159,39 @@ export class ProjectRouter {
     let symlinkPath: string | undefined;
 
     if (project.type === 'static') {
-      middleware = express.static(fullFolderPath);
-      log.info('Static project mounted', { uuid: project.uuid, path: fullFolderPath });
+      const staticMiddleware = express.static(fullFolderPath);
+      const phpProxy = createProxyMiddleware({
+        target: `http://localhost:8080/${project.uuid}/`,
+        changeOrigin: true,
+      }) as any;
+
+      middleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        const urlExt = extname(req.path);
+        if (urlExt === '.php') {
+          phpProxy(req, res, next);
+          return;
+        }
+        staticMiddleware(req, res, (err?: any) => {
+          if (res.headersSent) return;
+          phpProxy(req, res, next);
+        });
+      };
+
+      log.info('Static project mounted (dual: express.static + Apache proxy for PHP)', { uuid: project.uuid, path: fullFolderPath });
+
+      const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+      try {
+        if (lstatSync(uuidLinkPath).isSymbolicLink()) {
+          unlinkSync(uuidLinkPath);
+        }
+      } catch {}
+      try {
+        symlinkSync(fullFolderPath, uuidLinkPath, 'junction');
+        symlinkPath = uuidLinkPath;
+        log.info('Static project symlink created for Apache/PHP compat', { uuid: project.uuid, symlink: uuidLinkPath });
+      } catch (err: any) {
+        log.warn('Failed to create symlink for static project (non-fatal)', { uuid: project.uuid, error: err.message });
+      }
     } else if (project.type === 'php') {
       const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
       try {
@@ -298,6 +330,44 @@ export class ProjectRouter {
     }
   }
 
+  async promoteToNode(project: Project, fullFolderPath: string): Promise<void> {
+    this.unmountProject(project);
+
+    const port = nextNodePort++;
+    const middleware = createProxyMiddleware({
+      target: `http://localhost:${port}`,
+      changeOrigin: true,
+    }) as any;
+
+    const active: ActiveProject = {
+      project: { ...project, type: 'node' },
+      middleware,
+      port,
+      restartCount: 0,
+      stopped: false,
+    };
+
+    this.activeProjects.set(project.uuid, active);
+    try {
+      this.spawnAndWatch({ ...project, type: 'node' }, fullFolderPath, port);
+    } catch (err: any) {
+      this.activeProjects.delete(project.uuid);
+      throw err;
+    }
+
+    const ready = await waitForPort(port);
+    if (!ready) {
+      log.warn('Promoted Node project did not become ready in time', { uuid: project.uuid, port });
+    } else {
+      log.info('Promoted Node project ready', { uuid: project.uuid, port });
+    }
+  }
+
+  isNodeProjectDetected(folderPath: string): boolean {
+    const pkgJsonPath = resolve(folderPath, 'package.json');
+    return existsSync(pkgJsonPath);
+  }
+
   getActiveNodeProjects(): NodeProcessInfo[] {
     const result: NodeProcessInfo[] = [];
     for (const [uuid, active] of this.activeProjects) {
@@ -342,7 +412,7 @@ export class ProjectRouter {
 
   remountSymlinks(): void {
     for (const [uuid, active] of this.activeProjects) {
-      if (active.project.type === 'php' && active.symlinkPath) {
+      if ((active.project.type === 'php' || active.project.type === 'static') && active.symlinkPath) {
         const linkPath = active.symlinkPath;
         try {
           if (!lstatSync(linkPath).isSymbolicLink()) {
@@ -418,11 +488,10 @@ export class ProjectRouter {
 
     const preloadPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'preload', 'port-force.cjs');
 
-    const env: Record<string, string> = {
-      ...process.env as Record<string, string>,
+    const env: Record<string, string> = buildSafeEnv({
       PORT: String(port),
       BASE_PATH: `/p/${uuid}/`,
-    };
+    });
 
     if (startCmd === 'npm') {
       const existingNodeOptions = env.NODE_OPTIONS || '';

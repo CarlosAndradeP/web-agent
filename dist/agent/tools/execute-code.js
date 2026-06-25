@@ -2,9 +2,10 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolve } from 'node:path';
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { safeWorkspacePath } from './sanitize.js';
+import { buildSafeEnv } from './command-policy.js';
 const execAsync = promisify(exec);
 export function createExecuteCodeTool(workspaceDir) {
     return tool({
@@ -15,7 +16,7 @@ export function createExecuteCodeTool(workspaceDir) {
             timeout: z.number().optional().describe('Timeout in seconds (default: 30)'),
         }),
         execute: async ({ code, language, timeout = 30 }) => {
-            const tmpDir = resolve(workspaceDir, '.tmp-exec');
+            const tmpDir = safeWorkspacePath(workspaceDir, '.tmp-exec');
             mkdirSync(tmpDir, { recursive: true });
             const ext = language === 'python' ? 'py' : language === 'typescript' ? 'ts' : 'js';
             const filename = `exec-${Date.now()}.${ext}`;
@@ -36,6 +37,7 @@ export function createExecuteCodeTool(workspaceDir) {
                     cwd: workspaceDir,
                     timeout: timeout * 1000,
                     maxBuffer: 1024 * 1024 * 10,
+                    env: buildSafeEnv(),
                 });
                 return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
             }

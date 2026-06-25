@@ -113,6 +113,7 @@ export interface Project {
   pid: number | null;
   status: 'active' | 'stopped' | 'error';
   sessionId: string | null;
+  nodeReady?: boolean;
   createdAt: string;
   updatedAt: string;
 }

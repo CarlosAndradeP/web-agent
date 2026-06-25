@@ -9,7 +9,29 @@ import { createWebFetchTool } from './web-fetch.js';
 import { createInstallPackageTool } from './install-package.js';
 import { createInvokeSubAgentTool } from './sub-agent.js';
 import { createLogger } from '../../services/logger.js';
+import { v4 as uuid } from 'uuid';
 const log = createLogger('ToolSet');
+function wrapWithApproval(tool, toolName, approvalManager, userId) {
+    const originalExecute = tool.execute;
+    if (!originalExecute)
+        return tool;
+    return {
+        ...tool,
+        execute: async (input) => {
+            const requestId = uuid();
+            const approved = await approvalManager.requestApproval({
+                id: requestId,
+                taskName: 'Agent',
+                toolName,
+                toolInput: input,
+            }, userId);
+            if (!approved) {
+                return { error: 'Approval denied by user', blocked: true };
+            }
+            return originalExecute(input);
+        },
+    };
+}
 export function buildToolSet(options) {
     log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode });
     const allTools = {
@@ -33,20 +55,22 @@ export function buildToolSet(options) {
             approvalTools: options.approvalTools,
         });
     }
-    if (options.approvalMode === 'none') {
+    if (options.approvalMode === 'none' || !options.approvalManager) {
         log.info('Approval mode: none — all tools execute immediately');
         return allTools;
     }
+    const approvalManager = options.approvalManager;
+    const userId = options.userId;
     if (options.approvalMode === 'all') {
         for (const key of Object.keys(allTools)) {
-            allTools[key] = { ...allTools[key], needsApproval: true };
+            allTools[key] = wrapWithApproval(allTools[key], key, approvalManager, userId);
         }
         log.info('Approval mode: all — all tools require approval');
         return allTools;
     }
     for (const toolName of options.approvalTools) {
         if (allTools[toolName]) {
-            allTools[toolName] = { ...allTools[toolName], needsApproval: true };
+            allTools[toolName] = wrapWithApproval(allTools[toolName], toolName, approvalManager, userId);
         }
     }
     log.info('Approval mode: custom', { approvalTools: options.approvalTools });

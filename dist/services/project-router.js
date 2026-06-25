@@ -6,6 +6,7 @@ import { existsSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { createLogger } from '../services/logger.js';
+import { buildSafeEnv } from '../agent/tools/command-policy.js';
 const log = createLogger('ProjectRouter');
 let nextNodePort = 9000;
 async function waitForPort(port, timeoutMs = 15000) {
@@ -370,11 +371,10 @@ export class ProjectRouter {
             throw new Error(`Node.js entry point not found: ${entryFile}. Create the file first, then start the project.`);
         }
         const preloadPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'preload', 'port-force.cjs');
-        const env = {
-            ...process.env,
+        const env = buildSafeEnv({
             PORT: String(port),
             BASE_PATH: `/p/${uuid}/`,
-        };
+        });
         if (startCmd === 'npm') {
             const existingNodeOptions = env.NODE_OPTIONS || '';
             const preloadOpt = `--require "${preloadPath}"`;

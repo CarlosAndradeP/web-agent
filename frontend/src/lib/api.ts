@@ -150,7 +150,7 @@ export const api = {
   },
   projects: {
     list: () => fetchJSON<{ projects: Project[] }>(`${BASE}/projects`),
-    create: (data: { name: string; folderPath: string; type: 'static' | 'php' | 'node' }) =>
+    create: (data: { name: string; folderPath: string; type?: 'static' | 'php' | 'node' }) =>
       fetchJSON<{ project: Project }>(`${BASE}/projects`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -162,6 +162,8 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}/start`, { method: 'POST' }),
     stop: (id: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}/stop`, { method: 'POST' }),
+    promoteNode: (id: string) =>
+      fetchJSON<{ project: Project }>(`${BASE}/projects/${id}/promote-node`, { method: 'POST' }),
   },
   admin: {
     users: () => fetchJSON<{ users: UserPublic[] }>(`${BASE}/admin/users`),

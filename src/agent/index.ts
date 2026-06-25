@@ -1,9 +1,10 @@
 import { ToolLoopAgent, stepCountIs } from 'ai';
 import { createProvider } from './provider.js';
-import { AUTOCORRECTIVE_SYSTEM_PROMPT, buildSystemPrompt } from './instructions.js';
+import { buildSystemPrompt } from './instructions.js';
 import { buildToolSet } from './tools/index.js';
 import { createLogger } from '../services/logger.js';
 import type { ApprovalMode, AgentStep } from '../types/index.js';
+import type { ApprovalManager } from '../services/approval-manager.js';
 
 const log = createLogger('Agent');
 
@@ -27,6 +28,8 @@ export interface CreateAgentOptions {
   abortSignal?: AbortSignal;
   onStep?: (step: AgentStep) => void;
   projectInfo?: ProjectInfo;
+  approvalManager?: ApprovalManager;
+  userId?: string;
 }
 
 export function createAgent(options: CreateAgentOptions) {
@@ -40,6 +43,8 @@ export function createAgent(options: CreateAgentOptions) {
     apiBaseUrl: options.apiBaseUrl,
     apiKey: options.apiKey,
     agentType: options.agentType,
+    approvalManager: options.approvalManager,
+    userId: options.userId,
   });
 
   log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });
