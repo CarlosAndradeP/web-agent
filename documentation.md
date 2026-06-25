@@ -482,21 +482,29 @@ Chaves usadas: `default_model`, `max_steps`, `approval_mode`, `approval_tools`, 
 ### Layout
 
 ```
-┌──────────────┬──────────────────────────────────────────┐
-│   Sidebar    │  [Chat] [Files] [Config] [Admin/Account]│
-│              ├──────────────────────────────────────────┤
-│  Projects    │                                          │
-│  ─────────  │  Content area based on active tab        │
-│  ● My Site   │                                          │
-│  ● App Node  │  Chat: ChatPanel with project session    │
-│  ● Blog PHP  │  Files: FileManager with explorer nav    │
-│              │  Config: ConfigPanel                      │
-│  [+ New]    │  Admin: AdminPanel (if admin)             │
-│              │  Account: UserPanel (if not admin)        │
-│  ───────    │──────────────────────────────────────────│
-│  👤 admin   │                                          │
-│  999999 cr  │                                          │
-└──────────────┴──────────────────────────────────────────┘
+┌──────────────┬──┬──────────────────────────────────────────┐
+│   Sidebar    │▐▐│  [Chat] [Files] [Config] [Admin/Account]│
+│  (resizable) │▐▐├──────────────────────────────────────────┤
+│              │▐▐│                                          │
+│  ┌ Logo ──┐ │▐▐│  Content area based on active tab        │
+│  │ ◉ W.A. │ │▐▐│                                          │
+│  └────────┘ │▐▐│  Chat: ChatPanel with project session    │
+│              │▐▐│  Files: FileManager (resizable tree)     │
+│  ▶ Chat     │▐▐│  Config: ConfigPanel                      │
+│    Files    │▐▐│  Admin: AdminPanel (if admin)             │
+│    Config   │▐▐│  Account: UserPanel (if not admin)        │
+│    Admin    │▐▐│                                          │
+│  ───────── │▐▐│  Resize handles:                          │
+│  PROJECTS + │▐▐│  - 3px pill between sidebar↔content      │
+│  ───────── │▐▐│  - 3px pill between filetree↔viewer      │
+│  ● My Site  │▐▐│  - Double-click to reset width           │
+│  ● App Node │▐▐│  - Hover azul, active az;ulado claro      │
+│  ● Blog PHP │▐▐│  - Widths persisted in localStorage      │
+│              │▐▐│                                          │
+│  ───────── │▐▐│                                          │
+│  👤 admin   │▐▐│                                          │
+│  999999 cr  │▐▐│                                          │
+└──────────────┴──┴──────────────────────────────────────────┘
 ```
 
 ### Componentes
@@ -504,15 +512,15 @@ Chaves usadas: `default_model`, `max_steps`, `approval_mode`, `approval_tools`, 
 | Componente | Arquivo | Funcionalidade |
 |-----------|---------|---------------|
 | App | `App.tsx` | AuthProvider wrapper, Login/Layout switch |
-| LoginPage | `LoginPage.tsx` | Login/Register com tabs |
-| Layout | `Layout.tsx` | Sidebar + tabs, gerencia projeto ativo |
-| Sidebar | `Sidebar.tsx` | Lista de projetos com badges (S/P/N), delete, open URL |
-| ChatPanel | `ChatPanel.tsx` | SSE streaming + seletor de modelo |
-| MessageBubble | `MessageBubble.tsx` | Render Markdown + tool calls inline |
-| ToolCallDisplay | `ToolCallDisplay.tsx` | Accordion para tool inputs/outputs |
-| StepProgressBar | `StepProgressBar.tsx` | Barra de progresso |
-| TypingIndicator | `TypingIndicator.tsx` | Indicador de digitação |
-| FileManager | `FileManager.tsx` | Explorer com navegação + breadcrumbs + preview + rename + delete + create + publish + zip download + zip extract |
+| LoginPage | `LoginPage.tsx` | Login/Register com tabs, logo com ícone Globe |
+| Layout | `Layout.tsx` | Sidebar + tabs + project management, resize handles com double-click reset, mobile overlay com backdrop-blur |
+| Sidebar | `Sidebar.tsx` | Logo com ícone, nav tabs com acento azul, projects list com badges borderados, action buttons flex shrink-0, user footer com avatar borderado |
+| ChatPanel | `ChatPanel.tsx` | SSE streaming + seletor de modelo, empty state com Sparkles, input bar refined |
+| MessageBubble | `MessageBubble.tsx` | Render Markdown + tool calls inline, avatares rounded-lg com borda |
+| ToolCallDisplay | `ToolCallDisplay.tsx` | Accordion para tool inputs/outputs, código em containers com borda, cores sutis |
+| StepProgressBar | `StepProgressBar.tsx` | Barra de progresso h-0.5, centralizada em max-w-3xl |
+| TypingIndicator | `TypingIndicator.tsx` | Indicador de digitação com dots zinc-500 |
+| FileManager | `FileManager.tsx` | Explorer com navegação + breadcrumbs + preview + rename + delete + create + publish + zip download + zip extract, file tree e content viewer redimensionáveis com resize handle |
 | ConfigPanel | `ConfigPanel.tsx` | Modelo, steps, aprovação, API |
 | AdminPanel | `AdminPanel.tsx` | Usuários, créditos, histórico, stats (apenas admins) |
 | UserPanel | `UserPanel.tsx` | Conta, segurança (trocar senha), créditos (não-admins) |
@@ -535,6 +543,7 @@ Chaves usadas: `default_model`, `max_steps`, `approval_mode`, `approval_tools`, 
 | `useFiles` | `hooks/useFiles.ts` | Tree + content + refresh (aceita basePath dinâmico) |
 | `useSessions` | `hooks/useSessions.ts` | CRUD de sessões |
 | `useProjects` | `hooks/useProjects.ts` | CRUD de projetos (list, create, delete) |
+| `useResizable` | `hooks/useResizable.ts` | Painéis redimensionáveis com localStorage, suporte left/right, double-click reset, cursor global via CSS |
 
 ### Libs
 
@@ -826,6 +835,9 @@ cd frontend && npx tsc --noEmit  # Frontend — zero erros
 | AI SDK v6 `inputSchema` ao invés de `parameters` | API mudou na v6 |
 | Sidebar mostra projetos, não sessões | Cada projeto = chat + workspace + URL pública; sessão vinculada automaticamente |
 | CSS `hidden` para persistência de layout | React conditional render destroy state; `hidden` mantém mounted |
+| Resize handles via useResizable hook | Hook reutilizável com `storageKey`, `defaultWidth`, `minWidth`, `maxWidth`, `side` (left/right); Retorna `{ width, handleMouseDown, handleDoubleClick }`; Larguras salvas em localStorage; Double-click reseta ao default |
+| Pill 3px resize handles | Visual feedback com `bg-zinc-700` → hover `bg-blue-500` → active `bg-blue-400`; Hitbox ampliada com divs invisíveis (-1px cada lado) |
+| Cursor global durante resize | `body[data-resizing]` CSS rule força `cursor: col-resize; pointer-events: none` em todos os elementos — garante cursor consistente sobre iframes/elements com cursor próprio |
 | Symlink para projetos PHP no Apache | `DocumentRoot /app/workspace` não mapeia UUID → caminho real; symlink `<workspace>/<uuid>` → `<workspace>/<user>/<folder>/` resolve o mapeamento sem reconfigurar Apache |
 | `archiver` (ZipArchive) para download de pastas como ZIP | Streaming ZIP via Node.js sem criar arquivo temporário; `adm-zip` para extração (memória → disco) |
 | `user:join` re-emito no `socket.on('connect')` | Socket.IO perde room membership ao reconectar; re-join garante que `credits:deducted` chega ao cliente |

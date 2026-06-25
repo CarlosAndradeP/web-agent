@@ -706,3 +706,142 @@ Mas **não interceptava** `app.listen('9000')` — string numérica pura sem os 
 - `frontend/src/components/Layout.tsx`
 - `frontend/src/components/PublishProjectDialog.tsx`
 - `frontend/src/components/Sidebar.tsx`
+
+---
+
+## Iteração 9 — Reestruturação Completa do Layout Frontend
+
+### FEAT-15: Reestruturação do layout — painéis redimensionáveis, polimento visual e consistência
+
+**Problema anterior:** O layoutfrontend apresentava diversos problemas visuais e estruturais:
+
+1. **Botões de ação desapareciam** com nomes longos — eram posicionados com `absolute right-1.5 top-1/2 -translate-y-1/2`, sendo cortados quando o texto do projeto ultrapassava o espaço disponível
+2. **Sidebar com largura fixa** (`w-56`) que não podia ser ajustada pelo usuário
+3. **File tree com largura fixa** (`md:w-64`) que não podia ser ajustada
+4. **Resize handle visual precário** — div de 1px (`w-1`) sem feedback visual adequado
+5. **Inconsistência visual** entre componentes — mistura de bordas `border-zinc-800`, opacidades conflitantes, badges sem bordas, avatares sem bordas, hover states inconsistentes
+6. **Mobile overlay sem backdrop-blur** — fundo preto opaco sem desfoque
+7. **Empty states genéricos** — emoji em vez de ícone Lucide, sem container visual
+8. **Cores de acentuação inconsistentes** — running indicator azul em vez de verde (emerald), texto de status com cores inadequadas
+
+**Correção — conceito:**
+- Botões de ação passam de `absolute` para `flex shrink-0` inline, sempre visíveis no hover
+- Sidebar e File tree passam de larguras fixas para redimensionáveis via `useResizable` hook com localStorage
+- Resize handles visuais: pill de 3px com hover azul, hitbox ampliada, double-click para reset à largura default
+- Polimento visual consistente: bordas `/60`, backgrounds `/30`/`/80`, badges com bordas, avatares com bordas
+- Empty states com ícones Lucide em containers arredondados
+- Mobile overlay com `backdrop-blur-sm`, largura fixa `w-72`, animação `animate-in`
+
+**Mudanças por arquivo:**
+
+### `frontend/src/hooks/useResizable.ts` (reescrito)
+- Novo parâmetro `side: 'left' | 'right'` para direção do resize (suporta painéis à esquerda ou direita)
+- `handleDoubleClick`: reseta largura ao `defaultWidth` e salva no localStorage
+- `document.body.dataset.resizing = 'true'` durante drag — permite CSS global forçar cursor `col-resize` (regra em `index.css`)
+- Retorna `{ width, handleMouseDown, handleDoubleClick }`
+
+### `frontend/src/index.css`
+- Nova regra `body[data-resizing] *` que força `cursor: col-resize !important; pointer-events: none` em todos os elementos durante resize — garante cursor consistente mesmo sobre iframes e elementos com cursor próprio
+- Exceção `.resize-handle-hitbox` retém pointer-events durante resize
+
+### `frontend/src/components/Layout.tsx` (reescrito)
+- Sidebar isolada em wrapper `shrink-0` com `border-r border-zinc-800/60` no wrapper (não no Sidebar interno) — elimina borda dupla/ausente
+- Resize handle visual: `div` de 3px com pill centralizada (`h-8 w-[3px] rounded-full bg-zinc-700`), hover azul (`group-hover:bg-blue-500`), hitbox ampliada com divs invisíveis (`-left-1 -right-1`)
+- `onDoubleClick={sidebarReset}` no resize handle — duplo-clique reseta largura ao default (240px)
+- Mobile overlay: `w-72` fixo (não flex), `backdrop-blur-sm` no fundo, `shadow-2xl` na sidebar, animação `animate-in`
+- Empty state: ícone `+` em container `rounded-xl` em vez de emoji
+- Tab de tasks: texto direto sem container extra
+- Default sidebar width: 224 → 240, min 180 → 200, max 480 → 400
+
+### `frontend/src/components/Sidebar.tsx` (reescrito)
+- Logo area: ícone Globe em container `rounded-lg bg-zinc-800 border border-zinc-700/50` em vez de apenas texto "Web Agent" com dot
+- Running indicator: `bg-emerald-400` (verde) em vez de `bg-blue-400` (azul) — indicação semântica correta
+- Nav tabs: ícone ativo em `text-blue-400`, item ativo com `shadow-sm`, gaps ajustados
+- Separador: `h-px bg-zinc-800` em vez de `<Separator>` — mais consistente
+- Projects header: `tracking-widest` (mais espaçado), `text-zinc-600` (mais sutil)
+- Type badges: adicionado `border border-purple-700/30` e `border border-blue-700/30` (bordas sutis)
+- Project items: `rounded-lg` (antes `rounded-md`), `py-1.5`, `shadow-sm` no ativo, `hover:bg-zinc-800/40`
+- Action buttons: `hover:bg-zinc-700/80` (antes `hover:bg-zinc-700`), sem fundo extra `bg-zinc-900/90`
+- Ícone ExternalLink: `text-zinc-500` em vez de `text-zinc-400`
+- Ícone Delete: `text-zinc-500` em vez de `text-zinc-400`
+- Empty state: `FolderOpen` ícone `text-zinc-800` (antes `Folder` com `text-zinc-700`)
+- Footer: avatar com `border border-zinc-700/50` (antes sem borda), logout button `rounded-lg` (antes `shrink-0`)
+- Removido `relative` desnecessário do wrapper do projeto (botões não mais absolutos)
+
+### `frontend/src/components/Header.tsx` (reescrito)
+- Border: `border-zinc-800/60` (antes `border-zinc-800`)
+- Background: `backdrop-blur-md` (antes `backdrop-blur-sm`)
+- Ícone Globe adicionado ao lado do nome
+- Running indicator: `bg-emerald-400` (antes `bg-blue-400`)
+
+### `frontend/src/components/ChatPanel.tsx` (reescrito)
+- Empty state: ícone Sparkles em container `rounded-2xl bg-zinc-800/80 border border-zinc-700/40` (antes emoji em `rounded-full`)
+- Texto "Web Agent" em `text-lg font-semibold` (antes `text-xl`)
+- Input bar: `bg-zinc-900` com `border border-zinc-800` (antes `bg-zinc-800 border border-zinc-700`), `rounded-xl` mantido
+- Focus ring: `focus-within:ring-zinc-600 focus-within:border-zinc-700` (antes `focus-within:ring-zinc-500`)
+- Model select: `bg-zinc-800 border border-zinc-700/50 rounded-lg` (antes `bg-zinc-700 border border-zinc-600 rounded-md`)
+- Botões: `rounded-lg` (antes padrão quadrado)
+- Background input area: `bg-zinc-950/50` (antes `bg-zinc-900/80`)
+- Botão scroll-to-bottom: `bg-zinc-800/90 border border-zinc-700/60 backdrop-blur-sm`
+
+### `frontend/src/components/FileManager.tsx` (reescrito)
+- File tree panel: `bg-zinc-900/30` (fundo sutil)
+- Toolbar buttons: `text-zinc-500 hover:text-zinc-200` (antes sem cor explícita)
+- Breadcrumb: `hover:bg-zinc-800/60` (antes `hover:bg-zinc-800`), active `bg-zinc-800/60`
+- FileNode: depth padding `16px` por nível (antes `12px`), ícones `h-4 w-4` (antes `h-3.5 w-3.5`)
+- Folder ícone: `text-blue-400/60` e `text-blue-400/80` (opacidade por estado)
+- Chevron ícones: `text-zinc-500` e `text-zinc-600` (adequado ao contexto)
+- File size: `tabular-nums` (alinhamento numérico), "K" em vez de "KB"
+- Action buttons: `hover:bg-zinc-700/80`, `text-zinc-500` (antes `text-zinc-400`)
+- Resize handle: igual ao sidebar — pill 3px, hover azul, hitbox, double-click reset
+- Default file tree width: 256 → 260, min 180 → 200, max 520 → 480
+- Drop zone: `border-dashed border-zinc-800` (antes `border-2 border-dashed`), `border-blue-500/50` no dragover
+- Content viewer header: `bg-zinc-900/30` (antes `bg-zinc-900/50`)
+- Action buttons: `text-zinc-500 hover:text-zinc-200` (antes sem cor explícita)
+- Empty state: `File` ícone `text-zinc-800` (antes `opacity-50`)
+
+### `frontend/src/components/StepProgressBar.tsx` (reescrito)
+- Background: `bg-zinc-950/50 backdrop-blur-sm` (antes `bg-zinc-900/50`)
+- Progress bar: `h-0.5` (antes `h-1`) — mais sutil
+- Max-width container: `max-w-3xl mx-auto` centralizado com chat
+- Steps counter: `text-zinc-600` (antes `text-zinc-500`)
+- Tool description text: mais sutil (`text-zinc-500` em vez de `text-zinc-400`)
+
+### `frontend/src/components/MessageBubble.tsx` (reescrito)
+- Avatar: `rounded-lg` (antes `rounded-full`), `border border-zinc-700/40` (antes sem borda)
+- Assistant message bubble: `bg-zinc-800/80 border border-zinc-700/40` (antes `bg-zinc-800 border border-zinc-700`)
+- `leading-relaxed` adicionado para melhor legibilidade
+
+### `frontend/src/components/ToolCallDisplay.tsx` (reescrito)
+- Tool name: `text-zinc-400` (antes `text-blue-400`) — menos gritante
+- Status + step + duration: empacotados em `div.ml-auto` com `gap-2`
+- Step badge: `text-[9px]` (antes `text-[10px]`)
+- Duration: `text-zinc-600` (antes `text-zinc-500`), `tabular-nums`
+- Completed state: `border-zinc-700/40 bg-zinc-800/30` (antes `border-emerald-500/20 bg-emerald-500/5`) — mais sutil
+- Code blocks: `bg-zinc-900/80 border border-zinc-800/40 rounded-lg` (antes `bg-zinc-800/80` sem borda)
+- Labels: `text-zinc-600 font-semibold` (antes `text-zinc-500 font-medium`)
+
+### `frontend/src/components/TypingIndicator.tsx` (reescrito)
+- Dots: `bg-zinc-500` (antes `bg-zinc-400`)
+- Text: `text-zinc-600` (antes `text-zinc-500`) — mais sutil
+
+### `frontend/src/components/LoginPage.tsx` (reescrito)
+- Container: `rounded-2xl shadow-xl border border-zinc-800/60` (antes `rounded-xl border border-zinc-800`)
+- Logo: ícone Globe em container arredondado em vez de apenas texto
+- Tabs: `py-2 shadow-sm` no ativo (antes `py-1.5`)
+- Erro: box com `bg-red-400/10 rounded-lg py-2 px-3` (antes texto solto)
+- Botão: `rounded-lg` (antes padrão)
+
+**Arquivos alterados:**
+- `frontend/src/hooks/useResizable.ts`
+- `frontend/src/index.css`
+- `frontend/src/components/Layout.tsx`
+- `frontend/src/components/Sidebar.tsx`
+- `frontend/src/components/Header.tsx`
+- `frontend/src/components/ChatPanel.tsx`
+- `frontend/src/components/FileManager.tsx`
+- `frontend/src/components/StepProgressBar.tsx`
+- `frontend/src/components/MessageBubble.tsx`
+- `frontend/src/components/ToolCallDisplay.tsx`
+- `frontend/src/components/TypingIndicator.tsx`
+- `frontend/src/components/LoginPage.tsx`

@@ -4,7 +4,7 @@
 
 Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cada usuário tem workspace isolado, créditos, e pode criar projetos com chatvinculado e URL pública.
 
-## Status: IMPLEMENTADO (M1–M12 + F0–F8 + Issues 1–5 + Iteração 3 + Iteração 4)
+## Status: IMPLEMENTADO (M1–M12 + F0–F8 + Issues 1–5 + Iteração 3–9)
 
 ### Milestones Completados
 
@@ -262,8 +262,8 @@ web-agent/
 │   │   ├── contexts/
 │   │   │   └── AuthContext.tsx   # Auth state + Socket.IO credits + 401 interceptor
 │   │   ├── components/
-│   │   │   ├── Layout.tsx       # Sidebar + tabs + project management
-│   │   │   ├── Sidebar.tsx      # Projects list with badges
+│   │   │   ├── Layout.tsx       # Sidebar + tabs + resize handles + mobile overlay
+│   │   │   ├── Sidebar.tsx      # Logo, nav, projects list, user footer
 │   │   │   ├── LoginPage.tsx    # Login/Register tabs
 │   │   │   ├── ChatPanel.tsx    # SSE streaming + model selector
 │   │   │   ├── MessageBubble.tsx
@@ -282,7 +282,8 @@ web-agent/
 │   │   ├── hooks/
 │   │   │   ├── useChat.ts       # SSE + 402 friendly message
 │   │   │   ├── useFiles.ts
-│   │   │   ├── useProjects.ts   # New: project CRUD
+│   │   │   ├── useProjects.ts   # Project CRUD
+│   │   │   ├── useResizable.ts  # Panéis redimensionáveis + localStorage
 │   │   │   ├── useSessions.ts
 │   │   │   ├── useSocket.ts
 │   │   │   └── useTasks.ts
@@ -397,3 +398,57 @@ Ver detalhes completos em [`documentation.md`](documentation.md#8-banco-de-dados
 | `frontend/src/components/ApprovalDialog.tsx` | Reescrito com `toolActionMap`, `getSummary()`, accordion de detalhes |
 | `src/db/repositories/config.ts` | `approval_mode` default: `'custom'` → `'none'` |
 | `src/db/migrate.ts` | Migration: `UPDATE config SET value = 'none' WHERE key = 'approval_mode' AND value = 'custom'` |
+
+---
+
+## Iteração 9 — Reestruturação Completa do Layout Frontend
+
+### Objetivo
+
+Corrigir problemas visuais e estruturais do layout: botões de ação desaparecendo com nomes longos, painéis com largura fixa, resize handles precários, inconsistência visual entre componentes.
+
+### Mudanças
+
+| Área | Antes | Depois |
+|------|-------|--------|
+| Botões de ação em projetos | `absolute right-1.5` com `pr-12` no texto | `flex shrink-0` inline, sempre visíveis no hover |
+| Botões de ação em arquivos | `absolute right-1` com `pr-10` no texto | `flex shrink-0` inline, sempre visíveis no hover |
+| Sidebar largura | Fixa `w-56` (224px) | Redimensionável 200–400px (default 240), localStorage |
+| File tree largura | Fixa `md:w-64` (256px) | Redimensionável 200–480px (default 260), localStorage |
+| Resize handle | `w-1` (1px), sem feedback | Pill 3px com hover azul, hitbox ampliada, double-click reset |
+| Cursor durante resize | Apenas `document.body.style.cursor` | `body[data-resizing] *` via CSS — cursor global |
+| Mobile overlay | Fundo preto opaco | `backdrop-blur-sm`, `w-72` fixo, `shadow-2xl`, animação |
+| Logo sidebar | Texto "Web Agent" com dot | Ícone Globe em container `rounded-lg` com borda |
+| Running indicator | `bg-blue-400` | `bg-emerald-400` (verde = semântica correta) |
+| Nav tab ativa | Sem acento no ícone | Ícone em `text-blue-400`, `shadow-sm` |
+| Type badges | Fundo sólido sem borda | Fundo com `border border-*/30` |
+| Empty state chat | Emoji em `rounded-full` | Ícone Sparkles em `rounded-2xl` |
+| Avatar | `rounded-full` sem borda | `rounded-lg` com `border border-zinc-700/40` |
+| Tool call cards | Verde no completado | `border-zinc-700/40 bg-zinc-800/30` sutil |
+| Code blocks | `bg-zinc-800/80` sem borda | `bg-zinc-900/80 border border-zinc-800/40 rounded-lg` |
+| LoginPage | Container `rounded-xl` | `rounded-2xl shadow-xl` com ícone Globe no header |
+| Progress bar | `h-1` | `h-0.5` mais sutil |
+
+### Hook useResizable (reescrito)
+
+- Novo parâmetro `side: 'left' | 'right'` para direção do resize
+- `handleDoubleClick`: reseta ao `defaultWidth`
+- `document.body.dataset.resizing = 'true'` durante drag
+- Retorna `{ width, handleMouseDown, handleDoubleClick }`
+
+### Arquivos Alterados (12)
+
+| Arquivo | Tipo |
+|---------|------|
+| `frontend/src/hooks/useResizable.ts` | Reescrito |
+| `frontend/src/index.css` | Nova regra CSS |
+| `frontend/src/components/Layout.tsx` | Reescrito |
+| `frontend/src/components/Sidebar.tsx` | Reescrito |
+| `frontend/src/components/Header.tsx` | Reescrito |
+| `frontend/src/components/ChatPanel.tsx` | Reescrito |
+| `frontend/src/components/FileManager.tsx` | Reescrito |
+| `frontend/src/components/StepProgressBar.tsx` | Reescrito |
+| `frontend/src/components/MessageBubble.tsx` | Reescrito |
+| `frontend/src/components/ToolCallDisplay.tsx` | Reescrito |
+| `frontend/src/components/TypingIndicator.tsx` | Reescrito |
+| `frontend/src/components/LoginPage.tsx` | Reescrito |

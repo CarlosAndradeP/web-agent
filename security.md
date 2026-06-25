@@ -13,7 +13,7 @@ A selecao de tipo (`static`/`php`/`node`) tem impacto em **5 camadas** do sistem
 | ProjectRouter - Middleware | `src/services/project-router.ts:94-144` | Injeta `<base href>` e `window.__BASE_PATH__` em HTML apenas para projetos node |
 | ProjectRouter - Start/Stop | `src/services/project-router.ts:88-139` | Start/Stop so existe para node (spawn/kill processo, porta) |
 | System Prompt do Agente | `src/agent/instructions.ts:21-57` | Recebe `projectInfo.type` e gera instrucoes especificas (PORT, BASE_PATH, Apache, etc.) |
-| Frontend - UI | `Layout.tsx:200-210`, `Sidebar.tsx:38-42,106-131` | Badge de tipo (S/P/N), botoes Play/Stop so pra node |
+| Frontend - UI | `Layout.tsx`, `Sidebar.tsx`, `FileManager.tsx` | Badge de tipo (Globe/P/N), botoes Play/Stop so pra node, resize handles |
 | Frontend - API | `api.ts:153`, `useProjects.ts:22` | Param `type` obrigatorio no payload |
 | Database | `schema.ts:95` | Coluna `type TEXT NOT NULL DEFAULT 'static'` |
 | Chat | `src/api/chat.ts:79-103` | Usa `projectRow.type` pra montar `projectInfo` → agente recebe regras por tipo |

@@ -7,7 +7,7 @@ Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cad
 - **Backend**: Express v5 + TypeScript + SQLite (better-sqlite3)
 - **Agent**: Vercel AI SDK v6 (ToolLoopAgent) + 10 ferramentas + sub-agente + autocorreção
 - **Auth**: JWT (bcryptjs) com access token (15min) + refresh token (7 dias)
-- **Frontend**: React 19 + Vite 8 + TailwindCSS 4 + shadcn/ui
+- **Frontend**: React 19 + Vite 8 + TailwindCSS 4 + shadcn/ui (layout redimensionável, resize handles, polimento visual)
 - **Real-time**: SSE (streaming) + Socket.IO (créditos, arquivos, aprovações)
 - **Projetos**: Static (express.static) / PHP (Apache 8080) / Node.js (spawn + proxy)
 - **Docker**: `php:8.3-apache-bookworm` — Apache + Node.js no mesmo container
@@ -82,6 +82,7 @@ npm run dev:frontend
 - Download de pasta compactada em ZIP
 - Extrair ZIP diretamente no gerenciador
 - Publicar pasta como projeto
+- File tree redimensionável via drag (localStorage, double-click reset)
 
 ### Agente Autônomo
 - 10 ferramentas: writeFile, readFile, listFiles, deleteFile, runCommand, executeCode, searchFiles, webFetch, installPackage, invokeSubAgent
@@ -91,6 +92,16 @@ npm run dev:frontend
 - Streaming em tempo real via SSE com indicadores contextuais por ferramenta
 - Aprovação customizável (none/todas/custom) — padrão: `none` (execução imediata); usuário pode ativar na ConfigPanel
 - Opera no escopo do projeto ativo (workspace do projeto, não raiz do usuário)
+
+### Layout e UI
+- Sidebar redimensionável via drag (200–400px, default 240px, localStorage)
+- File tree redimensionável via drag (200–480px, default 260px, localStorage)
+- Resize handles: pill 3px com hover azul, double-click reseta à largura default
+- Cursor global `col-resize` durante drag (via CSS `body[data-resizing]`)
+- Mobile: sidebar overlay com backdrop-blur, animação de entrada
+- Design escuro consistente: bordas `/60`, backgrounds opacos, badges com bordas sutis
+- Empty states com ícones Lucide em containers arredondados
+- Running indicators em emerald (verde), acentos em azul apenas para navegação ativa
 
 ## Configuração
 
@@ -192,9 +203,9 @@ web-agent/
 │   └── websocket/          # Socket.IO events (room-scoped)
 ├── frontend/               # React + Vite + TailwindCSS
 │   └── src/
-│       ├── components/     # 17+ components (AdminPanel, UserPanel, FileManager com explorer)
+│       ├── components/     # 17+ components (AdminPanel, UserPanel, FileManager com explorer, resize handles)
 │       ├── contexts/       # AuthContext (auth + credits listener + localStorage sync)
-│       ├── hooks/          # 6 hooks (useChat, useProjects, useFiles com basePath, etc.)
+│       ├── hooks/          # 7 hooks (useChat, useProjects, useFiles, useResizable, etc.)
 │       └── lib/            # api.ts, auth-api.ts
 ├── apache/                 # Apache config (ports, vhost)
 ├── Dockerfile              # php:8.3-apache-bookworm multi-stage
