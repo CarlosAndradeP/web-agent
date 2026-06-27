@@ -9,10 +9,8 @@ import { createLogger } from '../services/logger.js';
 const log = createLogger('WebSocket');
 
 declare module 'socket.io' {
-  interface Socket {
-    data: {
-      user?: JwtPayload;
-    };
+  interface SocketData {
+    user?: JwtPayload;
   }
 }
 

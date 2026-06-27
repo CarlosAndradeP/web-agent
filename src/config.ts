@@ -12,8 +12,6 @@ function rewriteUrlForDocker(url: string): string {
     const parsed = new URL(url);
     if (
       parsed.hostname === 'host.docker.internal' ||
-      parsed.hostname === 'localhost' ||
-      parsed.hostname === '127.0.0.1' ||
       parsed.hostname.endsWith('.internal') ||
       parsed.hostname.endsWith('.docker')
     ) {

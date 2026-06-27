@@ -140,10 +140,14 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
     }
   });
 
-  router.put('/models/:modelId', (req, res) => {
-    const { modelId } = req.params;
-    const { enabled, costPerStep, displayName } = req.body;
+  // PUT /models — modelId in body (avoids Express 5 decoding %2F in URL paths)
+  router.put('/models', (req, res) => {
+    const { modelId, enabled, costPerStep, displayName } = req.body;
 
+    if (!modelId || typeof modelId !== 'string') {
+      res.status(400).json({ error: 'modelId is required and must be a string' });
+      return;
+    }
     if (enabled !== undefined && typeof enabled !== 'boolean') {
       res.status(400).json({ error: 'enabled must be a boolean' });
       return;
@@ -155,7 +159,7 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
 
     try {
       const result = modelConfigRepo.upsert(
-        decodeURIComponent(modelId),
+        modelId,
         enabled ?? true,
         costPerStep ?? 1,
         displayName ?? null
@@ -166,10 +170,15 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
     }
   });
 
-  router.delete('/models/:modelId', (req, res) => {
-    const { modelId } = req.params;
+  // POST /models/delete — modelId in body (avoids Express 5 decoding %2F in URL paths)
+  router.post('/models/delete', (req, res) => {
+    const { modelId } = req.body;
+    if (!modelId || typeof modelId !== 'string') {
+      res.status(400).json({ error: 'modelId is required and must be a string' });
+      return;
+    }
     try {
-      modelConfigRepo.deleteByModelId(decodeURIComponent(modelId));
+      modelConfigRepo.deleteByModelId(modelId);
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

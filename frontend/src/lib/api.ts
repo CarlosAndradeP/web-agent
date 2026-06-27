@@ -209,12 +209,15 @@ export const api = {
     stats: () => fetchJSON<{ totalUsers: number; totalProjects: number; totalTasks: number; totalCreditsUsed: number; totalCreditsGranted: number; activeProjects: number; runningTasks: number; totalSteps: number }>(`${BASE}/admin/stats`),
     models: () => fetchJSON<{ models: AdminModelInfo[] }>(`${BASE}/admin/models`),
     updateModel: (modelId: string, data: { enabled?: boolean; costPerStep?: number; displayName?: string | null }) =>
-      fetchJSON<{ success: boolean }>(`${BASE}/admin/models/${encodeURIComponent(modelId)}`, {
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/models`, {
         method: 'PUT',
-        body: JSON.stringify(data),
+        body: JSON.stringify({ modelId, ...data }),
       }),
     deleteModelConfig: (modelId: string) =>
-      fetchJSON<{ success: boolean }>(`${BASE}/admin/models/${encodeURIComponent(modelId)}`, { method: 'DELETE' }),
+      fetchJSON<{ success: boolean }>(`${BASE}/admin/models/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ modelId }),
+      }),
     batchUpdateModels: (modelIds: string[], enabled: boolean) =>
       fetchJSON<{ success: boolean; updated: number }>(`${BASE}/admin/models/batch`, {
         method: 'PATCH',
