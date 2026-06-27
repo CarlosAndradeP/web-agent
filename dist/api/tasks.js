@@ -6,8 +6,22 @@ export function createTasksRouter(db, taskManager) {
     const router = Router();
     const tasksRepo = new TasksRepository(db);
     const sessionsRepo = new SessionsRepository(db);
-    router.get('/', (_req, res) => {
-        res.json({ tasks: taskManager.getTasks() });
+    const isAdmin = (req) => req.user?.role === 'admin';
+    // GET / — List tasks. Non-admins see only their own tasks
+    router.get('/', (req, res) => {
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 200);
+        const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+        if (isAdmin(req)) {
+            const tasks = tasksRepo.listPaginated(limit, offset);
+            const total = tasksRepo.count();
+            res.json({ tasks, total, limit, offset });
+        }
+        else {
+            const userId = req.user?.userId;
+            const tasks = tasksRepo.findByUserId(userId, limit, offset);
+            const total = tasksRepo.countByUserId(userId);
+            res.json({ tasks, total, limit, offset });
+        }
     });
     router.post('/', (req, res) => {
         const { sessionId, description, model, maxSteps } = req.body;
@@ -41,22 +55,47 @@ export function createTasksRouter(db, taskManager) {
             res.status(500).json({ error: err.message });
         }
     });
+    // GET /:id — Check ownership for non-admins
     router.get('/:id', (req, res) => {
         const task = taskManager.getTask(req.params.id);
         if (!task) {
             res.status(404).json({ error: 'Task not found' });
             return;
         }
+        if (!isAdmin(req) && task.userId && task.userId !== req.user?.userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
         res.json({ task });
     });
+    // PATCH /:id — Check ownership for non-admins
     router.patch('/:id', (req, res) => {
+        const task = taskManager.getTask(req.params.id);
+        if (!task) {
+            res.status(404).json({ error: 'Task not found' });
+            return;
+        }
+        if (!isAdmin(req) && task.userId && task.userId !== req.user?.userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
         const { status } = req.body;
         if (status === 'cancelled') {
             taskManager.cancelTask(req.params.id);
         }
         res.json({ success: true });
     });
+    // GET /:id/steps — Check ownership for non-admins
     router.get('/:id/steps', (req, res) => {
+        const task = taskManager.getTask(req.params.id);
+        if (!task) {
+            res.status(404).json({ error: 'Task not found' });
+            return;
+        }
+        if (!isAdmin(req) && task.userId && task.userId !== req.user?.userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
         const rows = db.prepare('SELECT * FROM agent_steps WHERE task_id = ? ORDER BY step_number ASC').all(req.params.id);
         const steps = rows.map(row => ({
             id: row.id,

@@ -2,18 +2,20 @@ import { Router } from 'express';
 import { resolveModels } from '../services/model-resolver.js';
 import { createLogger } from '../services/logger.js';
 const log = createLogger('ConfigAPI');
-export function createConfigRouter(configRepo) {
+export function createConfigRouter(configRepo, adminMiddleware) {
     const router = Router();
+    // GET returns public config (no apiKey) for all authenticated users
     router.get('/', (_req, res) => {
-        res.json(configRepo.getAll());
+        res.json(configRepo.getPublic());
     });
-    router.put('/', async (req, res) => {
+    // PUT is admin-only — returns full config including apiKey
+    router.put('/', adminMiddleware, async (req, res) => {
         const modelToValidate = req.body.defaultModel;
         if (modelToValidate !== undefined) {
             try {
                 const apiBaseUrl = req.body.apiBaseUrl ?? configRepo.getAll().apiBaseUrl;
                 const availableModels = await resolveModels(apiBaseUrl);
-                if (!availableModels.find(m => m.id === modelToValidate)) {
+                if (!availableModels.some(m => m.id === modelToValidate)) {
                     log.warn('Default model not available, saving anyway', { model: modelToValidate, available: availableModels.map(m => m.id) });
                     res.status(400).json({ error: `Model "${modelToValidate}" is not available. Available models: ${availableModels.map(m => m.id).join(', ')}` });
                     return;

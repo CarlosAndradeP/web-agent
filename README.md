@@ -1,269 +1,322 @@
 # Web Agent
 
-Plataforma multi-usuário de desenvolvimento web com agente de IA autônomo. Cada usuário tem workspace isolado, sistema de créditos configurável por modelo, e pode criar projetos publicáveis com chat vinculado e URL pública.
+Multi-user web development platform with an autonomous AI agent. Each user gets an isolated workspace with a configurable per-model credit system, and can create publishable projects with linked chat sessions and public URLs.
 
 ## Stack
 
 - **Backend**: Express v5 + TypeScript + SQLite (better-sqlite3)
-- **Agent**: Vercel AI SDK v6 (ToolLoopAgent) + 10 ferramentas + sub-agente + autocorreção
-- **Auth**: JWT (bcryptjs) com access token (15min) + refresh token (7 dias)
-- **Frontend**: React 19 + Vite 8 + TailwindCSS 4 + shadcn/ui (layout redimensionável, resize handles, polimento visual)
-- **Real-time**: SSE (streaming) + Socket.IO (créditos, arquivos, aprovações)
-- **Projetos**: Static (express.static) / PHP (Apache 8080) / Node.js (spawn + proxy)
-- **Docker**: `php:8.3-apache-bookworm` — Apache + Node.js no mesmo container
+- **Agent**: Vercel AI SDK v6 (ToolLoopAgent) + 10 tools + sub-agent + autocorrection
+- **Auth**: JWT (bcryptjs) with access token (15min) + refresh token (7d). Authenticated fetch via `authFetch()` wrapper (no global monkey-patching)
+- **Frontend**: React 19 + Vite 8 + TailwindCSS 4 + shadcn/ui (resizable layout, drag handles, visual polish)
+- **Real-time**: SSE (streaming) + Socket.IO (credits, file changes, approvals — singleton connection)
+- **Projects**: Static (express.static) / PHP (Apache 8080) / Node.js (spawn + proxy, auto-restart with exponential backoff)
+- **Docker**: `php:8.3-apache-bookworm` — Apache + Node.js in same container
 
 ## Quick Start
 
-### Docker (Produção)
+### Docker (Production)
 
 ```bash
 cp .env.example .env
-# Edite .env com API_BASE_URL, API_KEY, JWT_SECRET
+# Edit .env — MUST set: API_BASE_URL, API_KEY, JWT_SECRET, ADMIN_PASSWORD
 docker compose up -d --build
-# Acesse http://localhost:89
-# Login padrão: admin / admin123
+# Access http://localhost:89
 ```
 
-### Desenvolvimento Local
+> **Security:** `JWT_SECRET` and `ADMIN_PASSWORD` are required in production. The server refuses to start without them.
+
+### Local Development
 
 ```bash
 npm install
 cd frontend && npm install && cd ..
 cp .env.example .env
 
-# Terminal 1 — Backend (porta 89)
+# Terminal 1 — Backend (port 89)
 npm run dev
 
-# Terminal 2 — Frontend (porta 5173, proxy :89)
+# Terminal 2 — Frontend (port 5173, proxies /api and /socket.io to :89)
 npm run dev:frontend
-# Acesse http://localhost:5173
+# Access http://localhost:5173
 ```
 
-## Funcionalidades
+## Features
 
-### Multi-usuário
-- Login/registro com JWT
-- Admin pode pausar novos registros (toggle no painel Settings)
-- Workspaces isolados por usuário (`workspace/<username>/`)
-- Painel admin: gerenciar usuários, créditos, roles, configurações
+### Multi-user
+- JWT login/register with transparent 401 retry and token rotation
+- Admin can pause new registrations (toggle in Settings panel)
+- Isolated workspaces per user (`workspace/<username>/`)
+- Admin panel: manage users, credits, roles, settings
 
-### Sistema de Créditos
-- Custo por step configurável por modelo (admin define no painel)
-- Atualização em tempo real via Socket.IO (room-scoped por usuário)
-- Tarefa abortada automaticamente se créditos esgotam
-- Mensagem amigável "Créditos esgotados"
-- Novo usuário: 100 créditos (configurável)
-- Exibição do custo por step no seletor de modelo do chat
+### Credit System
+- Per-model configurable cost per step (admin defines in panel)
+- Real-time updates via Socket.IO (room-scoped per user)
+- Task auto-aborted if credits exhausted
+- Friendly "Credits exhausted" message
+- New users: 100 credits (configurable)
 
-### Gerenciamento de Modelos (Admin)
-- Habilitar/desabilitar modelos para usuários
-- Definir custo por step para cada modelo
-- Definir nome de exibição (displayName) customizado
-- Modelos offline (não disponíveis na API) são sinalizados
-- Alterações refletem imediatamente no chat dos usuários
+### Model Management (Admin)
+- Enable/disable models for users
+- Set cost per step for each model
+- Set custom display name
+- Offline models (unavailable in API) are flagged
+- Changes reflect immediately in user chat
 
-### Projetos
-- Sidebar mostra projetos (não sessões)
-- Cada projeto tem chat vinculado = contexto do agente
-- Cada projeto opera em sua subpasta no workspace (isolamento)
-- URL pública: `/p/<uuid>/`
-- 3 tipos: Static, PHP (Apache), Node.js (subprocess)
-- Projetos Node.js são criados parados (start manual) — verificação de entrypoint antes de iniciar
-- Publish direto do FileManager
-- Projetos com falha de mount são marcados como `error` automaticamente
+### Projects
+- Sidebar shows projects (not sessions)
+- Each project has linked chat = agent context
+- Each project operates in its subfolder within workspace (isolation)
+- Public URL: `/p/<uuid>/`
+- 3 types: Static, PHP (Apache), Node.js (subprocess)
+- Node.js projects are created stopped (manual start) — entrypoint verification before starting
+- Node.js auto-restart on crash with exponential backoff (max 5 restarts, delay 1s → 16s → 30s cap)
+- Port recycling pool (9000–65535) — ports released on stop/unmount
+- Publish directly from FileManager
+- Projects with mount failures are marked as `error`
 
 ### FileManager
-- Navegação estilo explorer com breadcrumbs clicáveis
-- Duplo-clique em pasta para navegar dentro
-- Botão voltar (nível acima)
-- Escopado ao projeto ativo (não lista toda a workspace)
-- Criar arquivo/pasta, renomear, deletar (arquivo e pasta)
-- Upload drag & drop (arquivos e .zip)
-- Download de pasta compactada em ZIP
-- Extrair ZIP diretamente no gerenciador
-- Publicar pasta como projeto
-- File tree redimensionável via drag (localStorage, double-click reset)
+- Explorer-style navigation with clickable breadcrumbs
+- Double-click folder to navigate into
+- Back button (parent level)
+- Scoped to active project (doesn't list entire workspace)
+- Create file/folder, rename, delete (file and folder)
+- Upload drag & drop (files and .zip)
+- Download folder as ZIP
+- Extract ZIP directly in manager
+- Publish folder as project
+- Resizable file tree via drag (localStorage, double-click reset)
 
-### Agente Autônomo
-- 10 ferramentas: writeFile, readFile, listFiles, deleteFile, runCommand, executeCode, searchFiles, webFetch, installPackage, invokeSubAgent
-- Sub-agente: delegar sub-tarefas a agente filho (5 tools, maxSteps limitado)
-- Conhece a URL pública do projeto (via `PUBLIC_BASE_URL`)
-- Autocorreção: analisa erros, corrige e tenta novamente
-- Streaming em tempo real via SSE com indicadores contextuais por ferramenta
-- Aprovação customizável (none/todas/custom) — padrão: `none` (execução imediata); usuário pode ativar na ConfigPanel
-- Opera no escopo do projeto ativo (workspace do projeto, não raiz do usuário)
+### Autonomous Agent
+- 10 tools: writeFile, readFile, listFiles, deleteFile, runCommand, executeCode, searchFiles, webFetch, installPackage, invokeSubAgent
+- Sub-agent: delegate sub-tasks to child agent (5 tools, limited maxSteps)
+- **Multi-turn conversation** — Agent receives full conversation history (not just the last message). Context includes prior compaction summaries
+- **Auto-compaction** — When conversation exceeds token threshold (~60k estimated tokens), context is automatically summarized via LLM. Old messages are soft-hidden (`is_compacted=1`), summary stored in session. Manual trigger via `/compact`
+- Knows project public URL (via `PUBLIC_BASE_URL`)
+- Autocorrection: analyzes errors, fixes and retries
+- Real-time streaming via SSE with contextual indicators per tool
+- **Force stop** — Cancel button kills the server-side agent (AbortController), not just the client stream
+- Configurable approval (none/all/custom) — default: `none` (immediate execution); user can enable in ConfigPanel
+- Operates in active project scope (project workspace, not user root)
+- `webFetch` tool has SSRF protection: blocks private IPs, link-local, cloud metadata (169.254.169.254), octal/hex IPs, post-DNS resolution checks
+- `installPackage` uses `execFile()` (no shell interpolation)
 
-### Layout e UI
-- Sidebar redimensionável via drag (200–400px, default 240px, localStorage)
-- File tree redimensionável via drag (200–480px, default 260px, localStorage)
-- Resize handles: pill 3px com hover azul, double-click reseta à largura default
-- Cursor global `col-resize` durante drag (via CSS `body[data-resizing]`)
-- Mobile: sidebar overlay com backdrop-blur, animação de entrada
-- Design escuro consistente: bordas `/60`, backgrounds opacos, badges com bordas sutis
-- Empty states com ícones Lucide em containers arredondados
-- Running indicators em emerald (verde), acentos em azul apenas para navegação ativa
+### Chat Input
+- **Slash commands** — 6 commands with autocomplete:
+  - `/clear` — Clear chat messages
+  - `/new` — Start a new session
+  - `/compact` — Compact conversation context
+  - `/help` — Show available commands
+  - `/model <name>` — Switch model (partial match)
+  - `/steps <N>` — Set max agent steps (1–200)
+- **File attachment** — 📎 button opens file picker, uploads to project workspace. Attached files listed as removable pills. Next message includes file paths for agent context. Drag-and-drop supported on messages area
+- **System messages** — Command feedback and upload confirmations shown as styled system messages in chat
 
-## Configuração
+### Layout & UI
+- Resizable sidebar via drag (200–400px, default 240px, localStorage)
+- Resizable file tree via drag (200–480px, default 260px, localStorage)
+- Resize handles: 3px pill with blue hover, double-click resets to default width
+- Global `col-resize` cursor during drag (via CSS `body[data-resizing]`)
+- Mobile: sidebar overlay with backdrop-blur, entrance animation
+- Consistent dark design: `/60` borders, opaque backgrounds, subtle border badges
+- Empty states with Lucide icons in rounded containers
+- Running indicators in emerald (green), blue accents only for active navigation
+- `isRunning` state derived from chat streaming (not hardcoded)
 
-| Variável | Default | Descrição |
-|----------|---------|-----------|
-| `API_BASE_URL` | `http://192.168.3.5:11431/v1` | URL da API LLM (OpenAI-compatible) |
-| `API_KEY` | — | Chave de API |
-| `PORT` | `89` | Porta do servidor |
-| `WORKSPACE_BASE_DIR` | `./workspace` | Base para workspaces per-user |
-| `DATA_DIR` | `./data` | Diretório do SQLite |
-| `MAX_STEPS` | `100` | Limite de steps por tarefa |
-| `DEFAULT_MODEL` | `z-ai/glm-5.1` | Modelo padrão |
-| `JWT_SECRET` | `web-agent-jwt-...` | Secret para JWT |
-| `ADMIN_PASSWORD` | `admin123` | Senha do admin bootstrap |
-| `INITIAL_CREDITS` | `100` | Créditos para novos usuários |
-| `PUBLIC_BASE_URL` | — | URL base pública do servidor (ex: `http://myserver.com`) — usada para gerar URLs de projetos |
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_BASE_URL` | — | LLM provider API URL (OpenAI-compatible) |
+| `API_KEY` | — | LLM API key |
+| `PORT` | `89` | Server port |
+| `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory |
+| `DATA_DIR` | `./data` | SQLite database directory |
+| `MAX_STEPS` | `100` | Max agent steps per task |
+| `DEFAULT_MODEL` | `z-ai/glm-5.1` | Default LLM model |
+| `JWT_SECRET` | *(required in production)* | JWT signing secret |
+| `ADMIN_PASSWORD` | *(required in production)* | Admin bootstrap password |
+| `INITIAL_CREDITS` | `100` | Credits for new users |
+| `PUBLIC_BASE_URL` | — | Public base URL for project links |
+| `AGENT_TYPE` | `none` | Agent mode: `main` / `sub` / `none` |
+| `DOCKER_CONTAINER` | `0` | Set to `1` when running in Docker |
 
 ## API
 
-### Auth (público + autenticado)
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/api/auth/login` | Login |
-| `POST` | `/api/auth/register` | Registro (cria workspace) |
-| `POST` | `/api/auth/refresh` | Refresh token rotation |
-| `GET` | `/api/auth/me` | Dados do usuário logado |
+### Auth (public + authenticated)
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/auth/login` | Login (rate-limited: 5 req/min per IP) |
+| `POST` | `/api/auth/register` | Register (rate-limited: 5 req/min per IP) |
+| `POST` | `/api/auth/refresh` | Refresh token rotation (rate-limited: 20 req/min per IP) |
+| `GET` | `/api/auth/me` | Current user data |
 | `POST` | `/api/auth/logout` | Logout |
-| `POST` | `/api/auth/change-password` | Trocar senha (auth) |
-| `GET` | `/api/auth/credits/history` | Histórico de créditos próprio (auth) |
-| `PATCH` | `/api/auth/profile` | Atualizar email (auth) |
+| `POST` | `/api/auth/change-password` | Change password |
+| `GET` | `/api/auth/credits/history` | Own credit history (paginated) |
+| `PATCH` | `/api/auth/profile` | Update email |
 
-### Chat + Core (autenticado)
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `POST` | `/api/chat` | Chat com agente (SSE, credit check) |
-| `GET` | `/api/models` | Modelos disponíveis (habilitados, com costPerStep) |
-| `GET/POST` | `/api/tasks` | Listar/criar tarefas |
-| `PATCH` | `/api/tasks/:id` | Atualizar/cancelar tarefa |
-| `GET/PUT/DELETE/POST` | `/api/files/*` | Operações de arquivo (per-user) |
-| `GET/PUT` | `/api/config` | Configurações |
-| `GET/POST` | `/api/sessions` | Sessões (filtradas por user) |
-| `GET/POST` | `/api/projects` | Projetos (auto-cria sessão + pasta) |
+### Chat + Core (authenticated, user-scoped)
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/chat` | Chat with agent (SSE, credit check before streaming, multi-turn context, auto-compact) |
+| `POST` | `/api/chat/compact` | Manually compact conversation context for a session |
+| `GET` | `/api/models` | Available models (enabled, with costPerStep) |
+| `GET` | `/api/tasks?limit=&offset=` | List user's tasks (paginated, admin sees all) |
+| `POST` | `/api/tasks` | Create task |
+| `PATCH` | `/api/tasks/:id` | Update/cancel task (ownership verified) |
+| `GET/PUT/DELETE/POST` | `/api/files/*` | File operations (path traversal protected, per-user) |
+| `GET/PUT` | `/api/config` | Configuration (apiKey filtered for non-admins) |
+| `GET/POST` | `/api/sessions?limit=&offset=` | Sessions (user-scoped, paginated) |
+| `DELETE` | `/api/sessions/:id/messages` | Clear all messages in a session (ownership verified) |
+| `GET/POST` | `/api/projects` | Projects (auto-creates session + folder) |
 
 ### Admin (auth + admin role)
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `GET` | `/api/admin/users` | Listar usuários |
-| `POST` | `/api/admin/users/:id/credits` | Adicionar créditos |
-| `PATCH` | `/api/admin/users/:id/role` | Alterar role |
-| `DELETE` | `/api/admin/users/:id` | Deletar usuário |
-| `GET` | `/api/admin/users/:id/credits/history` | Histórico de créditos |
-| `GET` | `/api/admin/stats` | Estatísticas globais (ampliadas) |
-| `GET` | `/api/admin/models` | Listar todos os modelos com config |
-| `PUT` | `/api/admin/models/:modelId` | Configurar modelo (enabled, costPerStep, displayName) |
-| `DELETE` | `/api/admin/models/:modelId` | Remover configuração de modelo |
-| `PATCH` | `/api/admin/models/batch` | Habilitar/desabilitar modelos em lote |
-| `PATCH` | `/api/admin/users/:id` | Atualizar email do usuário |
-| `POST` | `/api/admin/users/:id/reset-password` | Resetar senha do usuário |
-| `GET` | `/api/admin/node-processes` | Listar processos Node.js ativos |
-| `POST` | `/api/admin/node-processes/:uuid/stop` | Parar processo Node.js |
-| `POST` | `/api/admin/node-processes/:uuid/restart` | Reiniciar processo Node.js |
-| `GET` | `/api/admin/settings` | Configurações do sistema (registration toggle) |
-| `PATCH` | `/api/admin/settings` | Atualizar configurações |
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/api/admin/users` | List users |
+| `POST` | `/api/admin/users/:id/credits` | Add credits (atomic operation) |
+| `PATCH` | `/api/admin/users/:id/role` | Change role |
+| `DELETE` | `/api/admin/users/:id` | Delete user |
+| `GET` | `/api/admin/users/:id/credits/history` | Credit history (paginated) |
+| `GET` | `/api/admin/stats` | Global statistics |
+| `GET` | `/api/admin/models` | List all models with config |
+| `PUT` | `/api/admin/models/:modelId` | Configure model (enabled, costPerStep, displayName) |
+| `DELETE` | `/api/admin/models/:modelId` | Remove model config |
+| `PATCH` | `/api/admin/models/batch` | Batch enable/disable models |
+| `PATCH` | `/api/admin/users/:id` | Update user email |
+| `POST` | `/api/admin/users/:id/reset-password` | Reset user password |
+| `GET` | `/api/admin/node-processes` | List active Node.js processes |
+| `POST` | `/api/admin/node-processes/:uuid/stop` | Stop Node.js process |
+| `POST` | `/api/admin/node-processes/:uuid/restart` | Restart Node.js process |
+| `GET` | `/api/admin/settings` | System settings (registration toggle) |
+| `PATCH` | `/api/admin/settings` | Update settings |
 
-### Projetos (público por UUID)
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| `GET` | `/p/<uuid>/*` | Servir projeto publicado (static, php, node) |
+### Projects (public by UUID)
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/p/<uuid>/*` | Serve published project (static, php, node) |
 
-## Ferramentas do Agente
+## Agent Tools
 
-| Ferramenta | Descrição | Aprovação se custom |
-|-----------|-----------|-------------------|
-| `writeFile` | Criar/editar arquivos | — |
-| `readFile` | Ler arquivos | — |
-| `listFiles` | Listar diretórios | — |
-| `deleteFile` | Remover arquivos/dirs | Sim |
-| `runCommand` | Comandos shell | Sim |
-| `executeCode` | JS/TS/Python | Sim |
-| `searchFiles` | Buscar conteúdo (grep) | — |
-| `webFetch` | HTTP GET | — |
-| `installPackage` | npm/pip install | Sim |
-| `invokeSubAgent` | Delegar sub-tarefa a agente filho (5 tools, max 30 steps) | — |
+| Tool | Description | Approval if custom |
+|---|---|---|
+| `writeFile` | Create/edit files | — |
+| `readFile` | Read files | — |
+| `listFiles` | List directories | — |
+| `deleteFile` | Remove files/dirs | Yes |
+| `runCommand` | Shell commands (policy-filtered) | Yes |
+| `executeCode` | JS/TS/Python | Yes |
+| `searchFiles` | Search content (grep) | — |
+| `webFetch` | HTTP GET (SSRF-protected) | — |
+| `installPackage` | npm/pip install (execFile, no shell) | Yes |
+| `invokeSubAgent` | Delegate sub-task to child agent (5 tools, max 30 steps) | — |
 
-> **Nota:** Approval mode padrão é `none` — todas as ferramentas executam imediatamente. Mude para `all` ou `custom` na ConfigPanel para ativar aprovação.
+> **Note:** Default approval mode is `none` — all tools execute immediately. Change to `all` or `custom` in ConfigPanel to enable approval.
 
-## Estrutura
+## Project Structure
 
 ```
 web-agent/
-├── src/                    # Backend TypeScript
+├── src/                    # Backend TypeScript (ESM)
 │   ├── server.ts           # Express + Socket.IO + auth bootstrap + project remount
-│   ├── agent/              # ToolLoopAgent + 9 tools + provider
-│   ├── api/                # REST routers (auth, admin, chat, models, tasks, files, config, sessions, projects)
-│   ├── db/                 # Schema + migration + 8 repositories (incl. ModelConfigRepository)
+│   ├── agent/              # ToolLoopAgent + 10 tools + provider + instructions
+│   ├── api/                # 9 REST routers (auth, admin, chat, models, tasks, files, config, sessions, projects)
+│   ├── db/                 # Schema (10 tables + 7 indexes) + migration + 8 repositories
 │   ├── middleware/          # Auth + Admin middleware
 │   ├── lib/                # JWT utilities
-│   ├── services/           # TaskManager, CreditManager, ProjectRouter, etc.
-│   └── websocket/          # Socket.IO events (room-scoped)
-├── frontend/               # React + Vite + TailwindCSS
+│   ├── services/           # TaskManager, CreditManager, ProjectRouter, CompactionService, Logger, etc.
+│   ├── preload/            # port-force.cjs (PORT monkey-patch for Node.js projects)
+│   ├── types/              # Shared TypeScript types (single source of truth)
+│   └── websocket/          # Socket.IO events (room-scoped, JWT-authenticated)
+├── frontend/               # React 19 + Vite 8 + TailwindCSS 4
 │   └── src/
-│       ├── components/     # 17+ components (AdminPanel, UserPanel, FileManager com explorer, resize handles)
-│       ├── contexts/       # AuthContext (auth + credits listener + localStorage sync)
-│       ├── hooks/          # 7 hooks (useChat, useProjects, useFiles, useResizable, etc.)
-│       └── lib/            # api.ts, auth-api.ts
-├── apache/                 # Apache config (ports, vhost)
-├── Dockerfile              # php:8.3-apache-bookworm multi-stage
-├── docker-compose.yml
-├── fix.md                  # Documentação dos bugs corrigidos
-├── documentation.md         # Documentação técnica completa
-└── plano.md                # Plano de desenvolvimento
+│       ├── components/     # 17+ components + shadcn/ui primitives
+│       ├── contexts/       # AuthContext (auth + socket singleton + authFetch)
+│       ├── hooks/          # 7 hooks (useChat, useProjects, useFiles, useSocket, etc.)
+│       ├── lib/            # api.ts (authFetch-integrated), socket singleton, auth-api
+│       └── types/          # Frontend type definitions
+├── scripts/                # Build helper scripts (copy-preload.cjs)
+├── apache/                 # Apache config (ports, vhost with -Indexes)
+├── Dockerfile              # Multi-stage php:8.3-apache-bookworm
+├── docker-compose.yml      # Production Docker (requires JWT_SECRET + ADMIN_PASSWORD)
+├── .dockerignore           # Excludes node_modules, dist, data, .env, etc.
+├── CHANGELOG.md            # Detailed change history
+└── SECURITY.md             # Security model and reporting
 ```
 
 ## Scripts
 
-| Comando | Descrição |
-|---------|-----------|
-| `npm run dev` | Backend com hot reload (tsx watch) |
-| `npm run build` | Compilar TypeScript |
-| `npm run start` | Executar compilado |
-| `npm run build:frontend` | Build do frontend |
-| `npm run dev:frontend` | Frontend dev server (porta 5173) |
+| Command | Description |
+|---|---|
+| `npm run dev` | Backend with hot reload (tsx watch) |
+| `npm run build` | Compile TypeScript + copy preload script |
+| `npm run start` | Run compiled backend |
+| `npm run build:frontend` | Build frontend for production |
+| `npm run dev:frontend` | Frontend dev server (port 5173) |
 
-## Bugs Conhecidos (pendentes)
+## Known Bugs (pending)
 
-| Severidade | Bug |
-|-----------|-----|
-| Crítico | Approval flow não pausa execução do agente |
-| Crítico | AbortController não aborta LLM call em andamento |
-| Médio | `search-files` usa `grep` (não funciona em Windows) |
-| Médio | Sem path traversal protection nas agent tools |
-| Baixo | `execution-sandbox.ts` é código morto |
-| ~~Baixo~~ | ~~Node.js projects sem restart-on-crash~~ ✅ (start stopped + entrypoint check) |
+| Severity | Bug |
+|---|---|
+| Medium | `search-files` uses `grep` (doesn't work on Windows) |
+| Medium | Approval flow doesn't pause agent execution (tool runs before approval arrives) |
+| Low | Compaction token estimate is a rough heuristic (~4 chars/token, 60k threshold) — not model-specific |
 
-## Bugs Corrigidos
+## Fixed Bugs
 
-Veja detalhes completos em [`fix.md`](fix.md).
+See full details in [`CHANGELOG.md`](CHANGELOG.md).
 
-| Severidade | Bug | Resumo |
-|-----------|-----|--------|
-| Crítico | Créditos nunca eram deduzidos | `mapRow()` não mapeava `user_id`/`workspace_dir` |
-| Crítico | Agente escrevia no workspace global | Mesma causa — fallback para `appConfig.workspaceDir` |
-| Crítico | Rotas admin sem proteção de role | `adminMiddleware` não aplicado |
-| Crítico | Créditos não atualizam em tempo real | `creditManager.setIo()` nunca era chamado |
-| Crítico | Links de projetos não funcionam (PHP/Node/Static) | Proxy PHP sem mapeamento UUID→caminho; pathRewrite morto; query strings perdidas |
-| Crítico | ERR_TOO_MANY_REDIRECTS em `/p/<uuid>/` | `subPath === ''` causava redirect loop infinito |
-| Médio | Projetos sem `index.html` carregavam SPA | `next()` no project-router caía no catch-all |
-| Médio | Projetos com falha de mount ficavam "active" | Status não atualizado no `catch` do startup |
-| Médio | Steps duplicados em `agent_steps` | Inserção no `onStepFinish` + `eventStream` |
-| Médio | Créditos broadcastados para todos os usuários | `io.emit()` → `io.to(user:ID).emit()` |
-| Baixo | Cache de créditos stale no localStorage | `updateCredits()` não sincronizava |
-| Médio | Popup de aprovação exibia JSON completo | Resumido: ícone + ação + resumo; detalhes em accordion |
-| Config | Approval mode padrão era `custom` | Mudado para `none`; migration atualiza DBs existentes |
+| Severity | Bug | Fix |
+|---|---|---|
+| Critical | Credits never deducted | `mapRow()` didn't map `user_id`/`workspace_dir` |
+| Critical | Agent wrote to global workspace | Same cause — fallback to `appConfig.workspaceDir` |
+| Critical | Admin routes without role protection | `adminMiddleware` not applied |
+| Critical | Credits not real-time | `creditManager.setIo()` never called |
+| Critical | Project links broken (PHP/Node/Static) | PHP proxy without UUID→path mapping; dead pathRewrite; lost query strings |
+| Critical | ERR_TOO_MANY_REDIRECTS on `/p/<uuid>/` | `subPath === ''` caused infinite redirect loop |
+| Critical | Fetch monkey-patch caused stale closures | Replaced with `authFetch()` wrapper |
+| Critical | JWT in download URLs (logged) | Authorization header-based downloads |
+| High | Socket.IO singleton — 4 separate connections | Consolidated to singleton in `lib/socket.ts` |
+| High | Config API leaked apiKey to all users | Filtered in response, `getPublic()` method |
+| High | No authorization on tasks/sessions | Ownership verification for non-admins |
+| High | TOCTOU race in credit deduction | Atomic `UPDATE WHERE credits >= ?` |
+| High | No WebSocket auth | JWT verification on handshake + ownership checks |
+| High | SSRF in webFetch (incomplete blocklist) | Added link-local, cloud metadata, octal/hex IPs, DNS resolution check |
+| High | Zip Slip in file extraction | Manual entry validation with `safeWorkspacePath()` |
+| High | Content-Disposition header injection | `sanitizeFilename()` strips CRLF and quotes |
+| High | Command injection in installPackage | `execFile()` instead of `exec()` |
+| Medium | Projects without index.html loaded SPA | `next()` in project-router hit catch-all |
+| Medium | Mount failures left projects as "active" | Status updated in `catch` |
+| Medium | Duplicate steps in `agent_steps` | Fixed insertion logic |
+| Medium | Credits broadcast to all users | `io.emit()` → `io.to(user:ID).emit()` |
+| Medium | AbortController didn't abort LLM call | `abortSignal.aborted` check in stream generator |
+| Medium | Node.js ports never recycled | Port pool with `allocatePort()`/`releasePort()` |
+| Medium | Node.js restart without backoff | Exponential backoff: 1s → 2s → 4s → 8s → 16s (cap 30s) |
+| Medium | `isRunning` hardcoded false in Layout | Derived from `isStreaming` via callback |
+| Medium | Mixed PT/EN in UI | Translated ApprovalDialog + useChat messages to EN |
+| Medium | JSON.parse without try/catch | Wrapped in try/catch with undefined fallback |
+| Medium | Stale closure in useChat.send | `messagesRef` pattern, `messages` removed from deps |
+| Medium | Logger blocked event loop | `appendFileSync` → `createWriteStream` with cache |
+| Medium | Missing DB indexes | 7 indexes added to schema + migration |
+| Low | Apache directory listing enabled | `Options -Indexes FollowSymLinks` |
+| Low | `addCredits()` read-modify-write race | Atomic `UPDATE SET credits = credits + ?` |
+| Low | Duplicate `safePath` in files.ts | Imports `safeWorkspacePath` from sanitize.ts |
+| Low | `@types/multer` in dependencies | Moved to devDependencies |
+| Low | Duplicate `env_file` in docker-compose | Removed volume mount, kept `env_file` |
+| Low | Missing `useCallback` in FileManager | 7 handlers wrapped in `useCallback` |
+| Low | Duplicate types (UserPublic, CreditTransaction) | Import from `types/index.ts` |
+| Low | Dead code: execution-sandbox.ts, unused shadcn | Deleted |
+| Low | Incomplete `.gitignore` | Added `dist/`, `data/`, `*.log`, `*.db-wal`, `.env.local` |
+| Low | Log message bug in chat API | `{ sessionId: model }` → `{ sessionId, model }` |
+| Low | Fragile inline build script | Extracted to `scripts/copy-preload.cjs` |
 
-## Schema — Tabela model_config
+## Schema — model_config Table
 
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | TEXT PK | UUID interno |
-| `model_id` | TEXT UNIQUE | ID do modelo (ex: `z-ai/glm-5.1`) |
-| `enabled` | INTEGER | 1=habilitado, 0=desabilitado (default 1) |
-| `cost_per_step` | REAL | Créditos por step (default 1) |
-| `display_name` | TEXT | Nome de exibição customizado |
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | Internal UUID |
+| `model_id` | TEXT UNIQUE | Model ID (e.g. `z-ai/glm-5.1`) |
+| `enabled` | INTEGER | 1=enabled, 0=disabled (default 1) |
+| `cost_per_step` | REAL | Credits per step (default 1) |
+| `display_name` | TEXT | Custom display name |
 | `created_at` | DATETIME | |
 | `updated_at` | DATETIME | |

@@ -1,14 +1,32 @@
 import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, extname } from 'node:path';
 import { existsSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { createLogger } from '../services/logger.js';
 import { buildSafeEnv } from '../agent/tools/command-policy.js';
 const log = createLogger('ProjectRouter');
-let nextNodePort = 9000;
+const PORT_MIN = 9000;
+const PORT_MAX = 65535;
+let nextNodePort = PORT_MIN;
+const releasedPorts = new Set();
+function allocatePort() {
+    // Reuse a released port if available
+    for (const port of releasedPorts) {
+        releasedPorts.delete(port);
+        return port;
+    }
+    if (nextNodePort > PORT_MAX) {
+        // Wrap around and scan for gaps
+        nextNodePort = PORT_MIN;
+    }
+    return nextNodePort++;
+}
+function releasePort(port) {
+    releasedPorts.add(port);
+}
 async function waitForPort(port, timeoutMs = 15000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -124,8 +142,39 @@ export class ProjectRouter {
         let middleware;
         let symlinkPath;
         if (project.type === 'static') {
-            middleware = express.static(fullFolderPath);
-            log.info('Static project mounted', { uuid: project.uuid, path: fullFolderPath });
+            const staticMiddleware = express.static(fullFolderPath);
+            const phpProxy = createProxyMiddleware({
+                target: `http://localhost:8080/${project.uuid}/`,
+                changeOrigin: true,
+            });
+            middleware = (req, res, next) => {
+                const urlExt = extname(req.path);
+                if (urlExt === '.php') {
+                    phpProxy(req, res, next);
+                    return;
+                }
+                staticMiddleware(req, res, (err) => {
+                    if (res.headersSent)
+                        return;
+                    phpProxy(req, res, next);
+                });
+            };
+            log.info('Static project mounted (dual: express.static + Apache proxy for PHP)', { uuid: project.uuid, path: fullFolderPath });
+            const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+            try {
+                if (lstatSync(uuidLinkPath).isSymbolicLink()) {
+                    unlinkSync(uuidLinkPath);
+                }
+            }
+            catch { }
+            try {
+                symlinkSync(fullFolderPath, uuidLinkPath, 'junction');
+                symlinkPath = uuidLinkPath;
+                log.info('Static project symlink created for Apache/PHP compat', { uuid: project.uuid, symlink: uuidLinkPath });
+            }
+            catch (err) {
+                log.warn('Failed to create symlink for static project (non-fatal)', { uuid: project.uuid, error: err.message });
+            }
         }
         else if (project.type === 'php') {
             const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
@@ -144,7 +193,7 @@ export class ProjectRouter {
             log.info('PHP project mounted (proxy to Apache via symlink)', { uuid: project.uuid, symlink: uuidLinkPath, target: fullFolderPath });
         }
         else if (project.type === 'node') {
-            const port = nextNodePort++;
+            const port = allocatePort();
             const active = {
                 project,
                 middleware: createProxyMiddleware({
@@ -191,6 +240,10 @@ export class ProjectRouter {
                 log.warn('Failed to kill node process', { uuid: project.uuid, error: err.message });
             }
         }
+        // Release port back to the pool
+        if (active.port) {
+            releasePort(active.port);
+        }
         if (active.symlinkPath) {
             try {
                 if (lstatSync(active.symlinkPath).isSymbolicLink()) {
@@ -216,7 +269,7 @@ export class ProjectRouter {
         if (!existsSync(fullFolderPath)) {
             throw new Error(`Folder does not exist: ${fullFolderPath}`);
         }
-        const port = existing?.port ?? nextNodePort++;
+        const port = existing?.port ?? allocatePort();
         const middleware = createProxyMiddleware({
             target: `http://localhost:${port}`,
             changeOrigin: true,
@@ -255,6 +308,44 @@ export class ProjectRouter {
             log.warn('Failed to stop node process', { uuid, error: err.message });
             throw err;
         }
+        // Release port back to the pool
+        if (active.port) {
+            releasePort(active.port);
+        }
+    }
+    async promoteToNode(project, fullFolderPath) {
+        this.unmountProject(project);
+        const port = nextNodePort++;
+        const middleware = createProxyMiddleware({
+            target: `http://localhost:${port}`,
+            changeOrigin: true,
+        });
+        const active = {
+            project: { ...project, type: 'node' },
+            middleware,
+            port,
+            restartCount: 0,
+            stopped: false,
+        };
+        this.activeProjects.set(project.uuid, active);
+        try {
+            this.spawnAndWatch({ ...project, type: 'node' }, fullFolderPath, port);
+        }
+        catch (err) {
+            this.activeProjects.delete(project.uuid);
+            throw err;
+        }
+        const ready = await waitForPort(port);
+        if (!ready) {
+            log.warn('Promoted Node project did not become ready in time', { uuid: project.uuid, port });
+        }
+        else {
+            log.info('Promoted Node project ready', { uuid: project.uuid, port });
+        }
+    }
+    isNodeProjectDetected(folderPath) {
+        const pkgJsonPath = resolve(folderPath, 'package.json');
+        return existsSync(pkgJsonPath);
     }
     getActiveNodeProjects() {
         const result = [];
@@ -299,7 +390,7 @@ export class ProjectRouter {
     }
     remountSymlinks() {
         for (const [uuid, active] of this.activeProjects) {
-            if (active.project.type === 'php' && active.symlinkPath) {
+            if ((active.project.type === 'php' || active.project.type === 'static') && active.symlinkPath) {
                 const linkPath = active.symlinkPath;
                 try {
                     if (!lstatSync(linkPath).isSymbolicLink()) {
@@ -334,12 +425,13 @@ export class ProjectRouter {
                 return;
             if (active.restartCount < 5) {
                 active.restartCount++;
-                log.info('Restarting Node project after crash', { uuid: project.uuid, restartCount: active.restartCount });
+                const delay = Math.min(1000 * Math.pow(2, active.restartCount - 1), 30000);
+                log.info('Restarting Node project after crash', { uuid: project.uuid, restartCount: active.restartCount, delayMs: delay });
                 setTimeout(() => {
                     if (!active.stopped && this.activeProjects.has(project.uuid)) {
                         this.spawnAndWatch(project, fullFolderPath, port);
                     }
-                }, 1000);
+                }, delay);
             }
             else {
                 log.warn('Node project exceeded max restarts', { uuid: project.uuid, restartCount: active.restartCount });

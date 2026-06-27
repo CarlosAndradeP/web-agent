@@ -1,5 +1,5 @@
-import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { mkdirSync, existsSync, createWriteStream, type WriteStream } from 'node:fs';
+import { resolve } from 'node:path';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -14,6 +14,34 @@ const LEVEL_LABELS: Record<LogLevel, string> = {
   [LogLevel.WARN]: 'WARN',
   [LogLevel.ERROR]: 'ERROR',
 };
+
+// Shared write streams per log file — prevents opening a new stream per log line
+const streamCache = new Map<string, WriteStream>();
+
+function getLogStream(logDir: string, dateStr: string): WriteStream | null {
+  const key = `${logDir}:${dateStr}`;
+  let stream = streamCache.get(key);
+  if (stream && !stream.destroyed) return stream;
+
+  try {
+    const logFile = resolve(logDir, `${dateStr}.log`);
+    stream = createWriteStream(logFile, { flags: 'a' });
+    stream.on('error', () => {
+      streamCache.delete(key);
+    });
+    streamCache.set(key, stream);
+    return stream;
+  } catch {
+    return null;
+  }
+}
+
+// Flush all open log streams on process exit
+process.on('exit', () => {
+  for (const stream of streamCache.values()) {
+    if (!stream.destroyed) stream.end();
+  }
+});
 
 export class Logger {
   private context: string;
@@ -42,17 +70,16 @@ export class Logger {
 
     if (level >= LogLevel.WARN) {
       console.error(withData);
-    } else if (level >= LogLevel.INFO) {
-      console.log(withData);
     } else {
       console.log(withData);
     }
 
     if (this.enableFile) {
-      try {
-        const logFile = resolve(this.logDir, `${new Date().toISOString().slice(0, 10)}.log`);
-        appendFileSync(logFile, withData + '\n', 'utf-8');
-      } catch {}
+      const dateStr = timestamp.slice(0, 10);
+      const stream = getLogStream(this.logDir, dateStr);
+      if (stream) {
+        stream.write(withData + '\n');
+      }
     }
   }
 

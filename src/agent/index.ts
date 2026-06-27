@@ -1,4 +1,5 @@
 import { ToolLoopAgent, stepCountIs } from 'ai';
+import type { ModelMessage } from '@ai-sdk/provider-utils';
 import { createProvider } from './provider.js';
 import { buildSystemPrompt } from './instructions.js';
 import { buildToolSet } from './tools/index.js';
@@ -30,6 +31,7 @@ export interface CreateAgentOptions {
   projectInfo?: ProjectInfo;
   approvalManager?: ApprovalManager;
   userId?: string;
+  conversationContext?: Array<ModelMessage>;
 }
 
 export function createAgent(options: CreateAgentOptions) {

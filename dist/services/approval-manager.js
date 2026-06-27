@@ -8,14 +8,14 @@ export class ApprovalManager {
         log.info('Socket.IO instance set');
     }
     requestApproval(request, userId) {
-        log.info('Approval requested', { id: request.id, toolName: request.toolName });
+        log.info('Approval requested', { id: request.id, toolName: request.toolName, userId });
         return new Promise((resolve) => {
             const timeout = setTimeout(() => {
                 this.pending.delete(request.id);
                 log.warn('Approval timed out (5min)', { id: request.id });
                 resolve(false);
             }, 300000);
-            this.pending.set(request.id, { resolve, timeout });
+            this.pending.set(request.id, { resolve, timeout, userId });
             if (this.io) {
                 const target = userId ? this.io.to(`user:${userId}`) : this.io;
                 target.emit('approval:request', request);
@@ -26,17 +26,21 @@ export class ApprovalManager {
             }
         });
     }
-    respond(id, approved) {
+    respond(id, approved, responderUserId, isAdmin) {
         const entry = this.pending.get(id);
-        if (entry) {
-            clearTimeout(entry.timeout);
-            entry.resolve(approved);
-            this.pending.delete(id);
-            log.info('Approval responded', { id, approved });
-        }
-        else {
+        if (!entry) {
             log.warn('No pending approval found for response', { id });
+            return;
         }
+        // Check ownership: only the approval owner or an admin can respond
+        if (!isAdmin && entry.userId && responderUserId && entry.userId !== responderUserId) {
+            log.warn('Approval response denied — not owner', { id, responderUserId, ownerUserId: entry.userId });
+            return;
+        }
+        clearTimeout(entry.timeout);
+        entry.resolve(approved);
+        this.pending.delete(id);
+        log.info('Approval responded', { id, approved });
     }
     hasPending(id) {
         return this.pending.has(id);

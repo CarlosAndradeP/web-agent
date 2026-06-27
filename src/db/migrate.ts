@@ -11,6 +11,8 @@ export function migrate(db: Database.Database): void {
     { table: 'tasks', column: 'workspace_dir', type: 'TEXT' },
     { table: 'sessions', column: 'project_id', type: 'TEXT' },
     { table: 'projects', column: 'session_id', type: 'TEXT' },
+    { table: 'messages', column: 'is_compacted', type: 'INTEGER DEFAULT 0' },
+    { table: 'sessions', column: 'summary_text', type: 'TEXT DEFAULT NULL' },
   ];
 
   for (const stmt of alterStatements) {
@@ -47,6 +49,26 @@ export function migrate(db: Database.Database): void {
   } catch (err: any) {
     log.warn('approval_mode migration skipped', { error: err.message });
   }
+
+  // Add performance indexes for existing databases
+  const indexStatements = [
+    'CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)',
+    'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)',
+    'CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id ON credit_transactions(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)',
+  ];
+
+  for (const stmt of indexStatements) {
+    try {
+      db.exec(stmt);
+    } catch (err: any) {
+      log.warn('Index creation skipped', { statement: stmt, error: err.message });
+    }
+  }
+  log.info('Performance indexes ensured');
 
   log.info('Migration complete');
 }

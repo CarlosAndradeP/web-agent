@@ -1,18 +1,10 @@
 import type Database from 'better-sqlite3';
+import type { UserPublic } from '../../types/index.js';
 export interface User {
     id: string;
     username: string;
     email: string | null;
     password_hash: string;
-    role: 'admin' | 'user';
-    credits: number;
-    createdAt: string;
-    updatedAt: string;
-}
-export interface UserPublic {
-    id: string;
-    username: string;
-    email: string | null;
     role: 'admin' | 'user';
     credits: number;
     createdAt: string;

@@ -57,7 +57,5 @@ ENV PORT=89
 ENV NODE_ENV=production
 ENV DOCKER_CONTAINER=1
 ENV WORKSPACE_BASE_DIR=/app/workspace
-ENV JWT_SECRET=change-me-in-production
-ENV ADMIN_PASSWORD=admin123
 
 CMD ["/app/docker-start.sh"]

@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { io } from 'socket.io-client';
 import { api } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
+import { getSocket } from '../lib/socket';
 import type { Project } from '../types';
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const { accessToken } = useAuth();
 
   const refresh = useCallback(async () => {
     try {
@@ -20,20 +23,42 @@ export function useProjects() {
     refresh();
   }, [refresh]);
 
+  // Listen for node-detected events on the singleton socket
   useEffect(() => {
-    const socket = io('/', { path: '/socket.io' });
-
-    socket.on('project:node-detected', (data: { folderPath: string; username: string }) => {
+    const handler = (data: { folderPath: string; username: string }) => {
       setProjects(prev => prev.map(p => {
         if (p.type === 'static' && p.folderPath === data.folderPath) {
           return { ...p, nodeReady: true };
         }
         return p;
       }));
-    });
+    };
+
+    // Attach listener when socket becomes available
+    const attach = () => {
+      const socket = getSocket();
+      if (socket) {
+        socket.on('project:node-detected', handler);
+        return true;
+      }
+      return false;
+    };
+
+    if (!attach()) {
+      // Socket not connected yet — poll briefly until AuthContext connects it
+      const interval = setInterval(() => {
+        if (attach()) clearInterval(interval);
+      }, 500);
+      return () => {
+        clearInterval(interval);
+        const socket = getSocket();
+        if (socket) socket.off('project:node-detected', handler);
+      };
+    }
 
     return () => {
-      socket.disconnect();
+      const socket = getSocket();
+      if (socket) socket.off('project:node-detected', handler);
     };
   }, []);
 

@@ -12,7 +12,27 @@ import { buildSafeEnv } from '../agent/tools/command-policy.js';
 
 const log = createLogger('ProjectRouter');
 
-let nextNodePort = 9000;
+const PORT_MIN = 9000;
+const PORT_MAX = 65535;
+let nextNodePort = PORT_MIN;
+const releasedPorts = new Set<number>();
+
+function allocatePort(): number {
+  // Reuse a released port if available
+  for (const port of releasedPorts) {
+    releasedPorts.delete(port);
+    return port;
+  }
+  if (nextNodePort > PORT_MAX) {
+    // Wrap around and scan for gaps
+    nextNodePort = PORT_MIN;
+  }
+  return nextNodePort++;
+}
+
+function releasePort(port: number): void {
+  releasedPorts.add(port);
+}
 
 interface ActiveProject {
   project: Project;
@@ -208,7 +228,7 @@ export class ProjectRouter {
       }) as any;
       log.info('PHP project mounted (proxy to Apache via symlink)', { uuid: project.uuid, symlink: uuidLinkPath, target: fullFolderPath });
     } else if (project.type === 'node') {
-      const port = nextNodePort++;
+      const port = allocatePort();
       const active: ActiveProject = {
         project,
         middleware: createProxyMiddleware({
@@ -257,6 +277,11 @@ export class ProjectRouter {
       }
     }
 
+    // Release port back to the pool
+    if (active.port) {
+      releasePort(active.port);
+    }
+
     if (active.symlinkPath) {
       try {
         if (lstatSync(active.symlinkPath).isSymbolicLink()) {
@@ -286,7 +311,7 @@ export class ProjectRouter {
       throw new Error(`Folder does not exist: ${fullFolderPath}`);
     }
 
-    const port = existing?.port ?? nextNodePort++;
+    const port = existing?.port ?? allocatePort();
     const middleware = createProxyMiddleware({
       target: `http://localhost:${port}`,
       changeOrigin: true,
@@ -327,6 +352,11 @@ export class ProjectRouter {
     } catch (err: any) {
       log.warn('Failed to stop node process', { uuid, error: err.message });
       throw err;
+    }
+
+    // Release port back to the pool
+    if (active.port) {
+      releasePort(active.port);
     }
   }
 
@@ -448,12 +478,13 @@ export class ProjectRouter {
 
       if (active.restartCount < 5) {
         active.restartCount++;
-        log.info('Restarting Node project after crash', { uuid: project.uuid, restartCount: active.restartCount });
+        const delay = Math.min(1000 * Math.pow(2, active.restartCount - 1), 30000);
+        log.info('Restarting Node project after crash', { uuid: project.uuid, restartCount: active.restartCount, delayMs: delay });
         setTimeout(() => {
           if (!active.stopped && this.activeProjects.has(project.uuid)) {
             this.spawnAndWatch(project, fullFolderPath, port);
           }
-        }, 1000);
+        }, delay);
       } else {
         log.warn('Node project exceeded max restarts', { uuid: project.uuid, restartCount: active.restartCount });
       }

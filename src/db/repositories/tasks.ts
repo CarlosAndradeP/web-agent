@@ -32,6 +32,26 @@ export class TasksRepository {
     return rows.map(this.mapRow);
   }
 
+  findByUserId(userId: string, limit: number = 50, offset: number = 0): Task[] {
+    const rows = this.db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(userId, limit, offset) as any[];
+    return rows.map(this.mapRow);
+  }
+
+  countByUserId(userId: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) as count FROM tasks WHERE user_id = ?').get(userId) as any;
+    return row.count;
+  }
+
+  listPaginated(limit: number = 50, offset: number = 0): Task[] {
+    const rows = this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset) as any[];
+    return rows.map(this.mapRow);
+  }
+
+  count(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as count FROM tasks').get() as any;
+    return row.count;
+  }
+
   updateStatus(id: string, status: TaskStatus, result: string | null = null, error: string | null = null): void {
     const now = new Date().toISOString();
     this.db.prepare(

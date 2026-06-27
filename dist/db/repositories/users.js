@@ -43,12 +43,14 @@ export class UsersRepository {
         this.db.prepare('UPDATE users SET credits = ?, updated_at = ? WHERE id = ?').run(credits, now, id);
     }
     addCredits(id, amount) {
+        const now = new Date().toISOString();
+        const result = this.db.prepare('UPDATE users SET credits = credits + ?, updated_at = ? WHERE id = ?').run(amount, now, id);
+        if (result.changes === 0)
+            throw new Error('User not found');
         const user = this.findById(id);
         if (!user)
             throw new Error('User not found');
-        const newBalance = user.credits + amount;
-        this.updateCredits(id, newBalance);
-        return newBalance;
+        return user.credits;
     }
     updateRole(id, role) {
         const now = new Date().toISOString();

@@ -1,14 +1,5 @@
 import type Database from 'better-sqlite3';
-export interface CreditTransaction {
-    id: string;
-    userId: string;
-    amount: number;
-    balanceAfter: number;
-    type: 'purchase' | 'consumption' | 'refund' | 'bonus';
-    description: string | null;
-    taskId: string | null;
-    createdAt: string;
-}
+import type { CreditTransaction } from '../../types/index.js';
 export declare class CreditsRepository {
     private db;
     constructor(db: Database.Database);

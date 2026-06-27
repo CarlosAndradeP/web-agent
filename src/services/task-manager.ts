@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Task, AgentStep } from '../types/index.js';
+import type { ModelMessage } from '@ai-sdk/provider-utils';
 import { TasksRepository } from '../db/repositories/tasks.js';
 import { createAgent, type ProjectInfo } from '../agent/index.js';
 import { ConfigRepository } from '../db/repositories/config.js';
@@ -26,6 +27,7 @@ export class TaskManager {
   private activeControllers = new Map<string, AbortController>();
   private taskProjectInfo = new Map<string, ProjectInfo>();
   private taskUserIds = new Map<string, string>();
+  private taskConversationContext = new Map<string, Array<ModelMessage>>();
 
   constructor(private db: Database.Database, creditManager: CreditManager, approvalManager?: ApprovalManager) {
     this.tasksRepo = new TasksRepository(db);
@@ -58,8 +60,8 @@ export class TaskManager {
     log.info('Socket.IO instance set');
   }
 
-  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo): Task {
-    log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps, userId });
+  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo, conversationContext?: Array<ModelMessage>): Task {
+    log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps, userId, contextLength: conversationContext?.length });
     const task = this.tasksRepo.create(sessionId, description, model, maxSteps);
     if (userId) {
       this.taskUserIds.set(task.id, userId);
@@ -71,6 +73,9 @@ export class TaskManager {
     }
     if (projectInfo) {
       this.taskProjectInfo.set(task.id, projectInfo);
+    }
+    if (conversationContext && conversationContext.length > 0) {
+      this.taskConversationContext.set(task.id, conversationContext);
     }
     if (this.io) {
       const room = userId ? `user:${userId}` : undefined;
@@ -94,11 +99,12 @@ export class TaskManager {
     const workspaceDir = task.workspaceDir ?? appConfig.workspaceDir;
     const userId = task.userId;
     const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
+    const conversationContext = this.taskConversationContext.get(taskId) ?? undefined;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
 
-    log.info('Running task (non-streaming)', { taskId, model, maxSteps: task.maxSteps });
+    log.info('Running task (non-streaming)', { taskId, model, maxSteps: task.maxSteps, hasContext: !!conversationContext });
 
     try {
       const { agent, abortSignal } = createAgent({
@@ -115,30 +121,32 @@ export class TaskManager {
         projectInfo,
         approvalManager: this.approvalManager ?? undefined,
         userId,
+        conversationContext,
       });
 
       const self = this;
       const creditManager = this.creditManager;
       const costPerStep = creditManager.getCostPerStep(model);
 
-      const result = await agent.generate({
-        prompt: task.description,
-        abortSignal,
-        onStepFinish: async ({ stepNumber, toolCalls, toolResults }) => {
-          self.tasksRepo.incrementStep(taskId);
-          if (this.io) {
-            this.emitToTaskUser(taskId, 'task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc: any) => tc.toolName) });
+      const stepCallback = async ({ stepNumber, toolCalls, toolResults }: any) => {
+        self.tasksRepo.incrementStep(taskId);
+        if (this.io) {
+          this.emitToTaskUser(taskId, 'task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc: any) => tc.toolName) });
+        }
+        if (userId && toolResults?.length) {
+          try {
+            creditManager.deductCredit(userId, taskId, costPerStep);
+          } catch (creditErr: any) {
+            log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
+            abortController.abort();
           }
-          if (userId && toolResults?.length) {
-            try {
-              creditManager.deductCredit(userId, taskId, costPerStep);
-            } catch (creditErr: any) {
-              log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
-              abortController.abort();
-            }
-          }
-        },
-      });
+        }
+      };
+
+      // Use messages array if we have conversation context, otherwise fall back to single prompt
+      const result = conversationContext && conversationContext.length > 0
+        ? await agent.generate({ messages: conversationContext, abortSignal, onStepFinish: stepCallback })
+        : await agent.generate({ prompt: task.description, abortSignal, onStepFinish: stepCallback });
 
       const text = result.text ?? 'Task completed';
       this.tasksRepo.updateStatus(taskId, 'completed', text);
@@ -152,6 +160,7 @@ export class TaskManager {
       this.activeControllers.delete(taskId);
       this.taskProjectInfo.delete(taskId);
       this.taskUserIds.delete(taskId);
+      this.taskConversationContext.delete(taskId);
     }
   }
 
@@ -168,11 +177,12 @@ export class TaskManager {
     const workspaceDir = task.workspaceDir ?? appConfig.workspaceDir;
     const userId = task.userId;
     const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
+    const conversationContext = this.taskConversationContext.get(taskId) ?? undefined;
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
 
-    log.info('Streaming task', { taskId, model, maxSteps: task.maxSteps, sessionId: task.sessionId });
+    log.info('Streaming task', { taskId, model, maxSteps: task.maxSteps, sessionId: task.sessionId, hasContext: !!conversationContext });
 
     const { agent, abortSignal } = createAgent({
       model,
@@ -188,29 +198,31 @@ export class TaskManager {
       projectInfo,
       approvalManager: this.approvalManager ?? undefined,
       userId,
+      conversationContext,
     });
 
     log.info('Agent created, calling stream()...', { taskId, model });
 
     const costPerStep = this.creditManager.getCostPerStep(model);
 
+    const stepCallback = async ({ stepNumber, toolCalls, toolResults }: any) => {
+      this.tasksRepo.incrementStep(taskId);
+      this.emitToTaskUser(taskId, 'task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc: any) => tc.toolName) });
+      if (userId && toolResults?.length) {
+        try {
+          this.creditManager.deductCredit(userId, taskId, costPerStep);
+        } catch (creditErr: any) {
+          log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
+          abortController.abort();
+        }
+      }
+    };
+
     try {
-      const streamResult = await agent.stream({
-        prompt: task.description,
-        abortSignal,
-        onStepFinish: async ({ stepNumber, toolCalls, toolResults }) => {
-          this.tasksRepo.incrementStep(taskId);
-          this.emitToTaskUser(taskId, 'task:step', { taskId, stepNumber, toolCalls: toolCalls?.map((tc: any) => tc.toolName) });
-          if (userId && toolResults?.length) {
-            try {
-              this.creditManager.deductCredit(userId, taskId, costPerStep);
-            } catch (creditErr: any) {
-              log.warn('Credit deduction failed, aborting task', { taskId, error: creditErr.message });
-              abortController.abort();
-            }
-          }
-        },
-      });
+      // Use messages array if we have conversation context, otherwise fall back to single prompt
+      const streamResult = conversationContext && conversationContext.length > 0
+        ? await agent.stream({ messages: conversationContext, abortSignal, onStepFinish: stepCallback })
+        : await agent.stream({ prompt: task.description, abortSignal, onStepFinish: stepCallback });
 
       log.info('Agent stream obtained, returning fullStream', { taskId });
 
@@ -218,6 +230,7 @@ export class TaskManager {
       const activeControllers = this.activeControllers;
       const taskProjectInfo = this.taskProjectInfo;
       const taskUserIds = this.taskUserIds;
+      const taskConversationContext = this.taskConversationContext;
       const insertStep = this.insertStep.bind(this);
       const emitToTaskUser = this.emitToTaskUser.bind(this);
 
@@ -231,6 +244,12 @@ export class TaskManager {
 
         try {
           for await (const chunk of fullStream) {
+            // Check if task was cancelled between chunks
+            if (abortSignal?.aborted) {
+              log.info('Stream aborted by signal', { taskId });
+              break;
+            }
+
             const chunkType = chunk.type as string;
 
             if (chunkType === 'text-delta') {
@@ -296,6 +315,7 @@ export class TaskManager {
           activeControllers.delete(taskId);
           taskProjectInfo.delete(taskId);
           taskUserIds.delete(taskId);
+          taskConversationContext.delete(taskId);
         }
       }
 
@@ -304,6 +324,7 @@ export class TaskManager {
       this.activeControllers.delete(taskId);
       this.taskProjectInfo.delete(taskId);
       this.taskUserIds.delete(taskId);
+      this.taskConversationContext.delete(taskId);
       this.tasksRepo.updateStatus(taskId, 'failed', null, err.message);
       this.emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
       log.error('Failed to create agent stream', { taskId, error: err.message, stack: err.stack });

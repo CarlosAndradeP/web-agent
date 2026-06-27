@@ -7,6 +7,10 @@ export declare class TasksRepository {
     findById(id: string): Task | undefined;
     findBySession(sessionId: string): Task[];
     list(): Task[];
+    findByUserId(userId: string, limit?: number, offset?: number): Task[];
+    countByUserId(userId: string): number;
+    listPaginated(limit?: number, offset?: number): Task[];
+    count(): number;
     updateStatus(id: string, status: TaskStatus, result?: string | null, error?: string | null): void;
     incrementStep(id: string): void;
     private mapRow;

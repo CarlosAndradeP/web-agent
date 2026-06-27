@@ -57,6 +57,7 @@ export interface AppConfig {
   apiKey: string;
   workspaceDir: string;
   agentType: string;
+  apiKeyConfigured?: boolean;
 }
 
 export interface ApprovalRequest {

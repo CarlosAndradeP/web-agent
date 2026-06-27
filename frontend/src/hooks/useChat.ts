@@ -27,6 +27,12 @@ export function useChat(sessionId: string) {
   const [totalSteps, setTotalSteps] = useState(0);
   const [currentToolName, setCurrentToolName] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
+  const attachedFilesRef = useRef<string[]>([]);
+
+  // Ref to always read the latest messages without stale closure
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
     setMessages([]);
@@ -36,26 +42,37 @@ export function useChat(sessionId: string) {
     if (!sessionId) return;
     api.sessions.messages(sessionId).then(data => {
       const loaded: ChatMessage[] = data.messages
-        .filter((m: Message) => m.role === 'user' || m.role === 'assistant')
+        .filter((m: Message) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
         .map((m: Message) => ({
           role: m.role,
           content: m.content || '',
           isUser: m.role === 'user',
           timestamp: new Date(m.createdAt).getTime(),
-          toolCalls: m.toolCalls ? JSON.parse(m.toolCalls) : undefined,
+          toolCalls: m.toolCalls ? (() => { try { return JSON.parse(m.toolCalls); } catch { return undefined; } })() : undefined,
         }));
       setMessages(loaded);
     }).catch(() => {});
   }, [sessionId]);
 
   const send = useCallback(async (content: string, model: string, maxSteps?: number) => {
+    // Prepend attached file context to the message if any
+    const attachedFiles = attachedFilesRef.current;
+    let effectiveContent = content;
+    if (attachedFiles.length > 0) {
+      const fileList = attachedFiles.join(', ');
+      effectiveContent = `[The user uploaded these files to the workspace: ${fileList}. They may reference them in their message.]\n\n${content}`;
+      attachedFilesRef.current = [];
+    }
+
     const userMsg: ChatMessage = { role: 'user', content, isUser: true, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     setIsStreaming(true);
     setCurrentStep(0);
     setTotalSteps(maxSteps || 20);
 
-    const allMessages = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
+    const allMessages = [...messagesRef.current, userMsg].map(m => ({ role: m.role, content: m.content }));
+    // Replace last message content with effective content (including attached files context)
+    allMessages[allMessages.length - 1].content = effectiveContent;
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -64,7 +81,7 @@ export function useChat(sessionId: string) {
 
       if (!response.ok) {
         if (response.status === 402) {
-          throw new Error('Créditos esgotados. Contate o administrador para adicionar mais créditos.');
+          throw new Error('Credits exhausted. Contact the administrator to add more credits.');
         }
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
@@ -97,7 +114,9 @@ export function useChat(sessionId: string) {
             try {
               const data = JSON.parse(dataStr);
 
-              if (data.type === 'text-delta') {
+              if (data.type === 'task-start') {
+                activeTaskIdRef.current = data.taskId ?? null;
+              } else if (data.type === 'text-delta') {
                 assistantContent += data.content;
                 setMessages(prev => {
                   const updated = [...prev];
@@ -187,13 +206,50 @@ export function useChat(sessionId: string) {
       setIsStreaming(false);
       setCurrentToolName(null);
       abortRef.current = null;
+      activeTaskIdRef.current = null;
     }
-  }, [sessionId, messages]);
+  }, [sessionId]);
 
-  const cancel = useCallback(() => {
+  const cancel = useCallback(async () => {
+    // First, cancel the server-side task so the agent stops executing
+    const taskId = activeTaskIdRef.current;
+    if (taskId) {
+      try {
+        await api.tasks.cancel(taskId);
+      } catch (err) {
+        console.warn('[Chat] Server cancel failed, continuing with local abort', err);
+      }
+    }
+    // Then abort the local stream reader
     abortRef.current?.abort();
     setIsStreaming(false);
+    activeTaskIdRef.current = null;
   }, []);
 
-  return { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName };
+  const addSystemMessage = useCallback((content: string) => {
+    const msg: ChatMessage = { role: 'system', content, isUser: false, timestamp: Date.now() };
+    setMessages(prev => [...prev, msg]);
+  }, []);
+
+  const addAttachedFiles = useCallback((filePaths: string[]) => {
+    attachedFilesRef.current = [...attachedFilesRef.current, ...filePaths];
+  }, []);
+
+  const clearAttachedFiles = useCallback(() => {
+    attachedFilesRef.current = [];
+  }, []);
+
+  const clearChat = useCallback(async () => {
+    setMessages([]);
+    setCurrentStep(0);
+    setCurrentToolName(null);
+    attachedFilesRef.current = [];
+    try {
+      await api.sessions.clearMessages(sessionId);
+    } catch (err) {
+      console.warn('[Chat] Failed to clear messages from server', err);
+    }
+  }, [sessionId]);
+
+  return { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearAttachedFiles, clearChat };
 }

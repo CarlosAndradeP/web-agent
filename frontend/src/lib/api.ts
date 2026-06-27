@@ -2,6 +2,13 @@ import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, Agen
 
 const BASE = '/api';
 
+// Lazy reference to authFetch — set by AuthProvider after mount
+let _authFetch: ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | null = null;
+
+export function setAuthFetch(fn: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>): void {
+  _authFetch = fn;
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem('webagent_access_token');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -17,7 +24,8 @@ function getAuthHeadersNoContentType(): Record<string, string> {
 }
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const fetcher = _authFetch ?? fetch;
+  const res = await fetcher(`${url}`, {
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -41,7 +49,8 @@ export const api = {
     list: () => fetchJSON<{ models: ModelInfo[] }>(`${BASE}/models`),
   },
   sessions: {
-    list: () => fetchJSON<{ sessions: Session[] }>(`${BASE}/sessions`),
+    list: (limit?: number, offset?: number) =>
+      fetchJSON<{ sessions: Session[]; total: number; limit: number; offset: number }>(`${BASE}/sessions?limit=${limit ?? 50}&offset=${offset ?? 0}`),
     create: (name: string, model?: string) =>
       fetchJSON<{ session: Session }>(`${BASE}/sessions`, {
         method: 'POST',
@@ -51,9 +60,12 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/sessions/${id}`, { method: 'DELETE' }),
     messages: (id: string) =>
       fetchJSON<{ messages: Message[] }>(`${BASE}/sessions/${id}/messages`),
+    clearMessages: (id: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/sessions/${id}/messages`, { method: 'DELETE' }),
   },
   tasks: {
-    list: () => fetchJSON<{ tasks: Task[] }>(`${BASE}/tasks`),
+    list: (limit?: number, offset?: number) =>
+      fetchJSON<{ tasks: Task[]; total: number; limit: number; offset: number }>(`${BASE}/tasks?limit=${limit ?? 50}&offset=${offset ?? 0}`),
     create: (data: { sessionId?: string; description: string; model?: string; maxSteps?: number }) =>
       fetchJSON<{ task: Task }>(`${BASE}/tasks`, {
         method: 'POST',
@@ -102,12 +114,20 @@ export const api = {
         body: JSON.stringify({ path }),
       }),
     downloadUrl: (path: string) => {
-      const token = localStorage.getItem('webagent_access_token');
-      return `${BASE}/files/download?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
+      // No token in URL — use downloadBlob instead for auth
+      return `${BASE}/files/download?path=${encodeURIComponent(path)}`;
     },
     downloadZipUrl: (path: string) => {
+      return `${BASE}/files/download-zip?path=${encodeURIComponent(path)}`;
+    },
+    downloadBlob: async (url: string) => {
+      const fetcher = _authFetch ?? fetch;
       const token = localStorage.getItem('webagent_access_token');
-      return `${BASE}/files/download-zip?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetcher(url, { headers });
+      if (!res.ok) throw new Error(`Download error: ${res.status}`);
+      return res.blob();
     },
     extractZip: async (file: File, destination?: string) => {
       const formData = new FormData();
@@ -147,6 +167,11 @@ export const api = {
         body: JSON.stringify({ sessionId, model, messages, maxSteps }),
       });
     },
+    compact: (sessionId: string) =>
+      fetchJSON<{ success: boolean; summary?: string }>(`${BASE}/chat/compact`, {
+        method: 'POST',
+        body: JSON.stringify({ sessionId }),
+      }),
   },
   projects: {
     list: () => fetchJSON<{ projects: Project[] }>(`${BASE}/projects`),

@@ -10,11 +10,17 @@ import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { config } from '../config.js';
 const log = createLogger('AuthAPI');
-export function createAuthRouter(db) {
+export function createAuthRouter(db, authLimiter, refreshLimiter) {
     const router = Router();
     const usersRepo = new UsersRepository(db);
     const creditsRepo = new CreditsRepository(db);
     const configRepo = new ConfigRepository(db);
+    if (authLimiter)
+        router.use('/login', authLimiter);
+    if (authLimiter)
+        router.use('/register', authLimiter);
+    if (refreshLimiter)
+        router.use('/refresh', refreshLimiter);
     router.post('/login', async (req, res) => {
         const { username, password } = req.body;
         if (!username || !password) {

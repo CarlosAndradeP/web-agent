@@ -26,6 +26,22 @@ export class TasksRepository {
         const rows = this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all();
         return rows.map(this.mapRow);
     }
+    findByUserId(userId, limit = 50, offset = 0) {
+        const rows = this.db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(userId, limit, offset);
+        return rows.map(this.mapRow);
+    }
+    countByUserId(userId) {
+        const row = this.db.prepare('SELECT COUNT(*) as count FROM tasks WHERE user_id = ?').get(userId);
+        return row.count;
+    }
+    listPaginated(limit = 50, offset = 0) {
+        const rows = this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+        return rows.map(this.mapRow);
+    }
+    count() {
+        const row = this.db.prepare('SELECT COUNT(*) as count FROM tasks').get();
+        return row.count;
+    }
     updateStatus(id, status, result = null, error = null) {
         const now = new Date().toISOString();
         this.db.prepare('UPDATE tasks SET status = ?, result = COALESCE(?, result), error = COALESCE(?, error), updated_at = ? WHERE id = ?').run(status, result, error, now, id);

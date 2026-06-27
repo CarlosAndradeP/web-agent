@@ -17,16 +17,20 @@ export class CreditManager {
         this.io = io;
     }
     deductCredit(userId, taskId, costPerStep = 1) {
-        const balance = this.creditsRepo.getBalance(userId);
-        if (balance <= 0) {
-            log.warn('Credits exhausted', { userId, taskId });
-            if (this.io) {
-                this.io.to(`user:${userId}`).emit('credits:exhausted', { userId, taskId });
-            }
-            throw new Error('Credits exhausted. Please contact admin to add more credits.');
-        }
         const amount = Math.max(1, Math.round(costPerStep));
-        this.creditsRepo.deduct(userId, amount, 'consumption', `Step in task ${taskId}`, taskId);
+        try {
+            this.creditsRepo.deduct(userId, amount, 'consumption', `Step in task ${taskId}`, taskId);
+        }
+        catch (err) {
+            if (err.message === 'Insufficient credits') {
+                log.warn('Credits exhausted', { userId, taskId });
+                if (this.io) {
+                    this.io.to(`user:${userId}`).emit('credits:exhausted', { userId, taskId });
+                }
+                throw new Error('Credits exhausted. Please contact admin to add more credits.');
+            }
+            throw err;
+        }
         const newBalance = this.creditsRepo.getBalance(userId);
         log.info('Credit deducted', { userId, taskId, amount, newBalance });
         if (this.io) {

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { createLogger } from '../../services/logger.js';
+import type { UserPublic } from '../../types/index.js';
 
 const log = createLogger('UsersRepository');
 
@@ -10,16 +11,6 @@ export interface User {
   username: string;
   email: string | null;
   password_hash: string;
-  role: 'admin' | 'user';
-  credits: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface UserPublic {
-  id: string;
-  username: string;
-  email: string | null;
   role: 'admin' | 'user';
   credits: number;
   createdAt: string;
@@ -73,11 +64,16 @@ export class UsersRepository {
   }
 
   addCredits(id: string, amount: number): number {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      'UPDATE users SET credits = credits + ?, updated_at = ? WHERE id = ?'
+    ).run(amount, now, id);
+
+    if (result.changes === 0) throw new Error('User not found');
+
     const user = this.findById(id);
     if (!user) throw new Error('User not found');
-    const newBalance = user.credits + amount;
-    this.updateCredits(id, newBalance);
-    return newBalance;
+    return user.credits;
   }
 
   updateRole(id: string, role: 'admin' | 'user'): void {

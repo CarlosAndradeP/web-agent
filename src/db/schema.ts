@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   model TEXT NOT NULL DEFAULT 'z-ai/glm-5.1',
   user_id TEXT,
   project_id TEXT,
+  summary_text TEXT DEFAULT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS messages (
   tool_call_id TEXT,
   step_number INTEGER,
   user_id TEXT,
+  is_compacted INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -110,4 +112,13 @@ CREATE TABLE IF NOT EXISTS model_config (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Performance indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
+CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id ON credit_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
 `;

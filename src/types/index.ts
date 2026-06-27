@@ -61,7 +61,11 @@ export interface AppConfig {
   apiKey: string;
   workspaceDir: string;
   agentType: string;
+  registrationEnabled: string;
 }
+
+/** AppConfig without sensitive fields — safe to return to non-admin users */
+export type AppConfigPublic = Omit<AppConfig, 'apiKey'> & { apiKeyConfigured: boolean };
 
 export interface ApprovalRequest {
   id: string;

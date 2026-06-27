@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type Database from 'better-sqlite3';
 import type { TaskManager, StreamEvent } from '../services/task-manager.js';
 import type { CreditManager } from '../services/credit-manager.js';
+import type { CompactionService } from '../services/compaction-service.js';
 import { MessagesRepository } from '../db/repositories/messages.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { SessionsRepository } from '../db/repositories/sessions.js';
@@ -15,13 +16,44 @@ import { createLogger } from '../services/logger.js';
 
 const log = createLogger('ChatAPI');
 
-export function createChatRouter(db: Database.Database, taskManager: TaskManager, creditManager: CreditManager) {
+export function createChatRouter(db: Database.Database, taskManager: TaskManager, creditManager: CreditManager, compactionService: CompactionService) {
   const router = Router();
   const messagesRepo = new MessagesRepository(db);
   const configRepo = new ConfigRepository(db);
   const sessionsRepo = new SessionsRepository(db);
   const usersRepo = new UsersRepository(db);
   const projectsRepo = new ProjectsRepository(db);
+
+  // POST /compact — Compress conversation context for a session
+  router.post('/compact', async (req, res) => {
+    const { sessionId } = req.body;
+    const userId = req.user?.userId;
+
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId is required' });
+      return;
+    }
+
+    // Verify ownership
+    const session = sessionsRepo.findById(sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    const isAdmin = req.user?.role === 'admin';
+    if (!isAdmin && session.userId && session.userId !== userId) {
+      res.status(403).json({ error: 'Access denied' });
+      return;
+    }
+
+    try {
+      const summary = await compactionService.compactSession(sessionId);
+      res.json({ success: true, summary });
+    } catch (err: any) {
+      log.error('Compaction failed', { sessionId, error: err.message });
+      res.status(500).json({ error: `Compaction failed: ${err.message}` });
+    }
+  });
 
   router.post('/', async (req, res) => {
     const { sessionId, model, messages, maxSteps } = req.body;
@@ -68,7 +100,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       }
     }
 
-    log.info('Chat request received', { sessionId: model, messageCount: messages?.length, maxSteps, userId, workspaceDir });
+    log.info('Chat request received', { sessionId, model, messageCount: messages?.length, maxSteps, userId, workspaceDir });
 
     if (!messages?.length) {
       log.warn('Chat request rejected: no messages');
@@ -103,13 +135,26 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       }
     }
 
+    // Persist incoming messages to the database
     for (const msg of messages) {
       messagesRepo.create(effectiveSessionId, msg.role, msg.content);
     }
 
+    // Auto-compact if the conversation is getting too long
+    const selectedModel = model ?? configRepo.getAll().defaultModel;
+    try {
+      const didCompact = await compactionService.autoCompactIfNeeded(effectiveSessionId, selectedModel);
+      if (didCompact) {
+        log.info('Auto-compacted session before sending to agent', { sessionId: effectiveSessionId });
+      }
+    } catch (err: any) {
+      log.warn('Auto-compaction check failed, continuing anyway', { error: err.message });
+    }
+
+    // Build the full conversation context (including any previous summary)
+    const conversationContext = compactionService.getConversationContext(effectiveSessionId);
+
     const appConfig = configRepo.getAll();
-    const selectedModel = model ?? appConfig.defaultModel;
-    const description = messages[messages.length - 1].content;
 
     try {
       const availableModels = await resolveModels(appConfig.apiBaseUrl);
@@ -124,9 +169,10 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       log.warn('Could not validate model, proceeding anyway', { error: err.message });
     }
 
-    log.info('Creating task for chat', { selectedModel, descriptionLength: description.length });
+    const description = messages[messages.length - 1].content;
+    log.info('Creating task for chat', { selectedModel, descriptionLength: description.length, contextLength: conversationContext.length });
 
-    const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo);
+    const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo, conversationContext);
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');

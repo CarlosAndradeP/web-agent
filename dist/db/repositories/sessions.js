@@ -18,6 +18,7 @@ export class SessionsRepository {
             id: row.id,
             name: row.name,
             model: row.model,
+            userId: row.user_id ?? undefined,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };
@@ -28,12 +29,51 @@ export class SessionsRepository {
             id: row.id,
             name: row.name,
             model: row.model,
+            userId: row.user_id ?? undefined,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         }));
     }
+    findByUserId(userId, limit = 50, offset = 0) {
+        const rows = this.db.prepare('SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(userId, limit, offset);
+        return rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            model: row.model,
+            userId: row.user_id ?? undefined,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        }));
+    }
+    countByUserId(userId) {
+        const row = this.db.prepare('SELECT COUNT(*) as count FROM sessions WHERE user_id = ?').get(userId);
+        return row.count;
+    }
+    listPaginated(limit = 50, offset = 0) {
+        const rows = this.db.prepare('SELECT * FROM sessions ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+        return rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            model: row.model,
+            userId: row.user_id ?? undefined,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        }));
+    }
+    count() {
+        const row = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get();
+        return row.count;
+    }
     delete(id) {
         this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    }
+    updateSummary(sessionId, summaryText) {
+        this.db.prepare('UPDATE sessions SET summary_text = ?, updated_at = ? WHERE id = ?')
+            .run(summaryText, new Date().toISOString(), sessionId);
+    }
+    getSummary(sessionId) {
+        const row = this.db.prepare('SELECT summary_text FROM sessions WHERE id = ?').get(sessionId);
+        return row?.summary_text ?? null;
     }
 }
 //# sourceMappingURL=sessions.js.map

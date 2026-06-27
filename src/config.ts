@@ -1,5 +1,8 @@
 import 'dotenv/config';
 import { existsSync } from 'node:fs';
+import { createLogger } from './services/logger.js';
+
+const log = createLogger('Config');
 
 const IS_DOCKER = process.env.DOCKER_CONTAINER === '1' || existsSync('/.dockerenv');
 
@@ -28,6 +31,26 @@ function rewriteUrlForDocker(url: string): string {
   }
 }
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  if (isProduction) {
+    log.error('FATAL: JWT_SECRET environment variable is required in production. Set it in .env or docker-compose.yml');
+    process.exit(1);
+  }
+  log.warn('JWT_SECRET not set — using insecure default. DO NOT use in production!');
+}
+
+const adminPassword = process.env.ADMIN_PASSWORD;
+if (!adminPassword) {
+  if (isProduction) {
+    log.error('FATAL: ADMIN_PASSWORD environment variable is required in production. Set it in .env or docker-compose.yml');
+    process.exit(1);
+  }
+  log.warn('ADMIN_PASSWORD not set — using insecure default "admin123". DO NOT use in production!');
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '89', 10),
   apiBaseUrl: rewriteUrlForDocker(process.env.API_BASE_URL || 'http://192.168.3.5:11431/v1'),
@@ -38,8 +61,8 @@ export const config = {
   maxSteps: parseInt(process.env.MAX_STEPS || '100', 10),
   defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.1',
   agentType: (process.env.AGENT_TYPE || 'none') as 'main' | 'sub' | 'none',
-  jwtSecret: process.env.JWT_SECRET || 'web-agent-jwt-secret-change-me-in-production',
-  adminPassword: process.env.ADMIN_PASSWORD || 'admin123',
+  jwtSecret: jwtSecret || 'web-agent-jwt-secret-insecure-default-dev-only',
+  adminPassword: adminPassword || 'admin123',
   initialCredits: parseInt(process.env.INITIAL_CREDITS || '100', 10),
   publicBaseUrl: process.env.PUBLIC_BASE_URL || '',
 };

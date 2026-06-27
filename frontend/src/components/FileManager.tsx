@@ -196,7 +196,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
 
   const pathSegments = currentPath === '.' ? [] : currentPath.split('/');
 
-  const handleSelect = async (path: string, type: string) => {
+  const handleSelect = useCallback(async (path: string, type: string) => {
     if (type === 'file') {
       const data = await api.files.content(path);
       setSelectedFile(data.path);
@@ -204,24 +204,37 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       setEditContent(data.content);
       setViewMode('view');
     }
-  };
+  }, []);
 
-  const handleDownload = (path: string) => {
-    const link = document.createElement('a');
-    link.href = api.files.downloadUrl(path);
-    link.download = path.split('/').pop() || 'file';
-    link.click();
-  };
+  const handleDownload = useCallback(async (path: string) => {
+    try {
+      const url = api.files.downloadUrl(path);
+      const blob = await api.files.downloadBlob(url);
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = path.split('/').pop() || 'file';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  }, []);
 
-  const handleDownloadZip = (path: string) => {
-    const link = document.createElement('a');
-    const token = localStorage.getItem('webagent_access_token');
-    link.href = `/api/files/download-zip?path=${encodeURIComponent(path)}${token ? `&token=${token}` : ''}`;
-    link.download = `${path.split('/').pop() || 'folder'}.zip`;
-    link.click();
-  };
+  const handleDownloadZip = useCallback(async (path: string) => {
+    try {
+      const url = api.files.downloadZipUrl(path);
+      const blob = await api.files.downloadBlob(url);
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${path.split('/').pop() || 'folder'}.zip`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  }, []);
 
-  const handleDelete = async () => {
+  const handleDelete = useCallback(async () => {
     await api.files.delete(deletePath);
     setShowDeleteDialog(false);
     if (selectedFile === deletePath || selectedFile?.startsWith(deletePath + '/')) {
@@ -229,9 +242,9 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       setFileContent('');
     }
     refresh();
-  };
+  }, [deletePath, selectedFile, refresh]);
 
-  const handleRename = async () => {
+  const handleRename = useCallback(async () => {
     const newName = renameNewName.trim();
     if (!newName) return;
     const parts = renameOldPath.split('/');
@@ -244,9 +257,9 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
     }
     setRenameNewName('');
     refresh();
-  };
+  }, [renameNewName, renameOldPath, selectedFile, refresh]);
 
-  const handleCreate = async () => {
+  const handleCreate = useCallback(async () => {
     const name = createName.trim();
     if (!name) return;
     if (createType === 'file') {
@@ -257,14 +270,14 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
     setShowCreateDialog(false);
     setCreateName('');
     refresh();
-  };
+  }, [createName, createType, refresh]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!selectedFile) return;
     await api.files.write(selectedFile, editContent);
     setFileContent(editContent);
     setViewMode('view');
-  };
+  }, [selectedFile, editContent]);
 
   const handleUpload = async (files: FileList) => {
     const fileArr = Array.from(files);

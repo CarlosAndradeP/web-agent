@@ -5,16 +5,22 @@ export function createSessionsRouter(db) {
     const router = Router();
     const sessionsRepo = new SessionsRepository(db);
     const messagesRepo = new MessagesRepository(db);
+    const isAdmin = (req) => req.user?.role === 'admin';
+    // GET / — List sessions. Non-admins see only their own
     router.get('/', (req, res) => {
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 200);
+        const offset = Math.max(parseInt(req.query.offset) || 0, 0);
         const userId = req.user?.userId;
-        let sessions = sessionsRepo.list();
-        if (userId) {
-            sessions = sessions.filter(s => {
-                const row = db.prepare('SELECT user_id FROM sessions WHERE id = ?').get(s.id);
-                return row?.user_id === userId || !row?.user_id;
-            });
+        if (isAdmin(req)) {
+            const sessions = sessionsRepo.listPaginated(limit, offset);
+            const total = sessionsRepo.count();
+            res.json({ sessions, total, limit, offset });
         }
-        res.json({ sessions });
+        else {
+            const sessions = sessionsRepo.findByUserId(userId, limit, offset);
+            const total = sessionsRepo.countByUserId(userId);
+            res.json({ sessions, total, limit, offset });
+        }
     });
     router.post('/', (req, res) => {
         const { name, model } = req.body;
@@ -32,11 +38,45 @@ export function createSessionsRouter(db) {
         }
         res.status(201).json({ session });
     });
+    // GET /:id/messages — Verify ownership for non-admins
     router.get('/:id/messages', (req, res) => {
+        const session = sessionsRepo.findById(req.params.id);
+        if (!session) {
+            res.status(404).json({ error: 'Session not found' });
+            return;
+        }
+        if (!isAdmin(req) && session.userId && session.userId !== req.user?.userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
         const messages = messagesRepo.findBySession(req.params.id);
         res.json({ messages });
     });
+    // DELETE /:id/messages — Clear all messages in a session
+    router.delete('/:id/messages', (req, res) => {
+        const session = sessionsRepo.findById(req.params.id);
+        if (!session) {
+            res.status(404).json({ error: 'Session not found' });
+            return;
+        }
+        if (!isAdmin(req) && session.userId && session.userId !== req.user?.userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
+        const deleted = messagesRepo.deleteBySession(req.params.id);
+        res.json({ success: true, deleted });
+    });
+    // DELETE /:id — Verify ownership for non-admins
     router.delete('/:id', (req, res) => {
+        const session = sessionsRepo.findById(req.params.id);
+        if (!session) {
+            res.status(404).json({ error: 'Session not found' });
+            return;
+        }
+        if (!isAdmin(req) && session.userId && session.userId !== req.user?.userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
         sessionsRepo.delete(req.params.id);
         res.json({ success: true });
     });

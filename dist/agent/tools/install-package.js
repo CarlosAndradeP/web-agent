@@ -1,9 +1,9 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validateCommand, buildSafeEnv } from './command-policy.js';
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const ALLOWED_NPM_SCOPE_PREFIXES = ['@'];
 const BLOCKED_PACKAGES = [
     'prettier-plugin-exec',
@@ -20,6 +20,14 @@ function validatePackageName(pkg, manager) {
         if (!isScoped && !simpleName) {
             return { allowed: false, reason: `Invalid npm package name: ${pkg}` };
         }
+        // For scoped packages, validate the full pattern: @scope/name
+        if (isScoped && !/^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(pkg)) {
+            return { allowed: false, reason: `Invalid scoped npm package name: ${pkg}` };
+        }
+    }
+    // Shell metacharacter check — reject any package with shell-exploitable chars
+    if (/[;|&`$(){}[\]<>!~#\\'" \n\r\t]/.test(pkg)) {
+        return { allowed: false, reason: `Package name contains invalid characters: ${pkg}` };
     }
     return { allowed: true };
 }
@@ -35,6 +43,7 @@ export function createInstallPackageTool(workspaceDir) {
             if (!pkgCheck.allowed) {
                 return { stdout: '', stderr: pkgCheck.reason, exitCode: 126 };
             }
+            // Build command for policy validation (uses same string format)
             const command = manager === 'npm'
                 ? `npm install --prefix "${workspaceDir}" ${pkg} --ignore-scripts`
                 : `pip install --no-cache-dir ${pkg}`;
@@ -43,12 +52,24 @@ export function createInstallPackageTool(workspaceDir) {
                 return { stdout: '', stderr: policyResult.reason, exitCode: 126 };
             }
             try {
-                const { stdout, stderr } = await execAsync(command, {
-                    timeout: 60000,
-                    maxBuffer: 1024 * 1024 * 5,
-                    cwd: workspaceDir,
-                    env: buildSafeEnv(),
-                });
+                // Use execFile (not exec) to avoid shell interpretation of arguments
+                let stdout, stderr;
+                if (manager === 'npm') {
+                    ({ stdout, stderr } = await execFileAsync('npm', ['install', '--prefix', workspaceDir, pkg, '--ignore-scripts'], {
+                        timeout: 60000,
+                        maxBuffer: 1024 * 1024 * 5,
+                        cwd: workspaceDir,
+                        env: buildSafeEnv(),
+                    }));
+                }
+                else {
+                    ({ stdout, stderr } = await execFileAsync('pip', ['install', '--no-cache-dir', pkg], {
+                        timeout: 60000,
+                        maxBuffer: 1024 * 1024 * 5,
+                        cwd: workspaceDir,
+                        env: buildSafeEnv(),
+                    }));
+                }
                 return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
             }
             catch (err) {

@@ -52,7 +52,7 @@ ${projectInfo.type === 'node' ? `- This is a Node.js project. The project starts
   Vue Router: createRouter({ history: createWebHistory(process.env.BASE_PATH || '/') })
 - For fetch/API calls from the browser, use relative URLs (no leading slash) or prepend the BASE_PATH.` : ''}
 ${projectInfo.type === 'php' ? '- This is a PHP project served via Apache. Changes to PHP files are immediately reflected at the project URL.' : ''}
-${projectInfo.type === 'static' ? '- This is a static project. Files are served directly from the workspace directory.' : ''}`;
+${projectInfo.type === 'static' ? '- This project serves web content (HTML, CSS, JS) and also supports PHP files automatically. If you need to create a Node.js server (with package.json and a start script), inform the user they can start it from the UI by clicking the "Iniciar Node.js" button that will appear in the sidebar.' : ''}`;
     }
     return prompt;
 }

@@ -25,6 +25,7 @@ import { ProjectsRepository } from './db/repositories/projects.js';
 import { CreditManager } from './services/credit-manager.js';
 import { TaskManager } from './services/task-manager.js';
 import { ApprovalManager } from './services/approval-manager.js';
+import { CompactionService } from './services/compaction-service.js';
 import { FileWatcher } from './services/file-watcher.js';
 import { setupWebSocket } from './websocket/index.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -32,6 +33,38 @@ import { adminMiddleware } from './middleware/admin.js';
 import { createLogger } from './services/logger.js';
 
 const log = createLogger('Server');
+
+// Simple in-memory rate limiter
+function createRateLimiter(windowMs: number, maxRequests: number) {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+
+  // Cleanup expired entries every minute
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of hits) {
+      if (now > entry.resetAt) hits.delete(key);
+    }
+  }, 60000).unref?.();
+
+  return (req: any, res: any, next: any) => {
+    const ip = req.ip ?? req.connection?.remoteAddress ?? 'unknown';
+    const now = Date.now();
+    let entry = hits.get(ip);
+    if (!entry || now > entry.resetAt) {
+      entry = { count: 0, resetAt: now + windowMs };
+      hits.set(ip, entry);
+    }
+    entry.count++;
+    if (entry.count > maxRequests) {
+      res.status(429).json({ error: 'Too many requests, please try again later' });
+      return;
+    }
+    next();
+  };
+}
+
+const authLimiter = createRateLimiter(60_000, 5);   // 5 req/min per IP
+const refreshLimiter = createRateLimiter(60_000, 20); // 20 req/min per IP
 
 log.info('Starting Web Agent server...', { port: config.port, apiBaseUrl: config.apiBaseUrl, defaultModel: config.defaultModel });
 
@@ -90,6 +123,7 @@ const creditManager = new CreditManager(db, creditsRepo, usersRepo);
 const projectRouter = new ProjectRouter(app);
 const approvalManager = new ApprovalManager();
 const taskManager = new TaskManager(db, creditManager, approvalManager);
+const compactionService = new CompactionService(db);
 const fileWatcher = new FileWatcher();
 
 mkdirSync(config.workspaceBaseDir, { recursive: true });
@@ -103,15 +137,15 @@ for (const u of allUsers) {
   }
 }
 
-app.use('/api/auth', createAuthRouter(db));
+app.use('/api/auth', createAuthRouter(db, authLimiter, refreshLimiter));
 
 app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo, projectRouter));
 
-app.use('/api/chat', authMiddleware, createChatRouter(db, taskManager, creditManager));
+app.use('/api/chat', authMiddleware, createChatRouter(db, taskManager, creditManager, compactionService));
 app.use('/api/models', authMiddleware, createModelsRouter(db, configRepo));
 app.use('/api/tasks', authMiddleware, createTasksRouter(db, taskManager));
 app.use('/api/files', authMiddleware, createFilesRouter(configRepo));
-app.use('/api/config', authMiddleware, createConfigRouter(configRepo));
+app.use('/api/config', authMiddleware, createConfigRouter(configRepo, adminMiddleware));
 app.use('/api/sessions', authMiddleware, createSessionsRouter(db));
 app.use('/api/projects', authMiddleware, createProjectsRouter(db, projectRouter));
 

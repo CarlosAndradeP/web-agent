@@ -7,14 +7,13 @@ services:
     volumes:
       - ./workspace:/app/workspace
       - ./data:/app/data
-      - ./.env:/app/.env:ro
     env_file: .env
     environment:
       - NODE_ENV=production
       - DOCKER_CONTAINER=1
       - WORKSPACE_BASE_DIR=/app/workspace
-      - JWT_SECRET=${JWT_SECRET:-web-agent-jwt-secret-change-me}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       - INITIAL_CREDITS=100
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
     extra_hosts:

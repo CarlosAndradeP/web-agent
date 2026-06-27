@@ -130,9 +130,13 @@ export default function ConfigPanel() {
             <label className="block text-xs text-zinc-500 mb-1.5 font-medium">API Key</label>
             <Input
               type="password"
-              value={config.apiKey}
+              value={config.apiKey ?? ''}
+              placeholder={config.apiKeyConfigured ? '•••••••• (configured)' : 'Not configured'}
               onChange={e => setConfig({ ...config, apiKey: e.target.value })}
             />
+            {config.apiKeyConfigured && !config.apiKey && (
+              <p className="text-[10px] text-zinc-600 mt-1">Key is configured. Leave empty to keep current value.</p>
+            )}
           </div>
 
           <div>

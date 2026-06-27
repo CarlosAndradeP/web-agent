@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { resolve, basename } from 'node:path';
+import { resolve, basename, normalize, sep } from 'node:path';
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, createReadStream, existsSync, renameSync } from 'node:fs';
 import multer from 'multer';
 import { ZipArchive as ArchiverZip } from 'archiver';
@@ -8,6 +8,7 @@ import type { ConfigRepository } from '../db/repositories/config.js';
 import type { FileEntry } from '../types/index.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { config } from '../config.js';
+import { safeWorkspacePath } from '../agent/tools/sanitize.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -30,12 +31,9 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     return dir;
   };
 
-  const safePath = (workspaceDir: string, path: string): string => {
-    const fullPath = resolve(workspaceDir, path);
-    if (!fullPath.startsWith(resolve(workspaceDir))) {
-      throw new Error('Path traversal detected');
-    }
-    return fullPath;
+  /** Sanitize filename for Content-Disposition header — strip quotes and CRLF */
+  const sanitizeFilename = (name: string): string => {
+    return name.replace(/[\r\n"]/g, '').replace(/[^\w .\-]/g, '_') || 'file';
   };
 
   router.get('/', (req, res) => {
@@ -47,7 +45,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     const path = (req.query.path as string) ?? '.';
     const recursive = req.query.recursive === 'true';
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       const tree = listDir(fullPath, recursive);
       res.json({ tree });
     } catch (err: any) {
@@ -67,11 +65,11 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       const content = readFileSync(fullPath, 'utf-8');
       if (req.query.download === 'true') {
         const filename = path.split('/').pop() || 'file';
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(filename)}"`);
         res.setHeader('Content-Type', 'application/octet-stream');
         res.send(content);
         return;
@@ -94,7 +92,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       if (!existsSync(fullPath)) {
         res.status(404).json({ error: 'File not found' });
         return;
@@ -123,7 +121,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       mkdirSync(resolve(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, content, 'utf-8');
       res.json({ success: true, path });
@@ -147,7 +145,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     try {
       const uploaded: string[] = [];
       for (const file of files) {
-        const safeDest = dest ? safePath(workspaceDir, dest) : workspaceDir;
+        const safeDest = dest ? safeWorkspacePath(workspaceDir, dest) : workspaceDir;
         const targetPath = resolve(safeDest, file.originalname);
         if (!targetPath.startsWith(resolve(workspaceDir))) {
           throw new Error('Path traversal detected in upload destination');
@@ -174,7 +172,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       mkdirSync(fullPath, { recursive: true });
       res.json({ success: true, path });
     } catch (err: any) {
@@ -194,7 +192,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       rmSync(fullPath, { recursive: true, force: true });
       res.json({ success: true, path });
     } catch (err: any) {
@@ -214,8 +212,8 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullOld = safePath(workspaceDir, oldPath);
-      const fullNew = safePath(workspaceDir, newPath);
+      const fullOld = safeWorkspacePath(workspaceDir, oldPath);
+      const fullNew = safeWorkspacePath(workspaceDir, newPath);
       renameSync(fullOld, fullNew);
       res.json({ success: true, oldPath, newPath });
     } catch (err: any) {
@@ -235,7 +233,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       mkdirSync(resolve(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, '', 'utf-8');
       res.json({ success: true, path });
@@ -256,7 +254,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       if (!existsSync(fullPath)) {
         res.status(404).json({ error: 'Path not found' });
         return;
@@ -267,7 +265,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
         return;
       }
       const folderName = basename(fullPath);
-      res.setHeader('Content-Disposition', `attachment; filename="${folderName}.zip"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(folderName)}.zip"`);
       res.setHeader('Content-Type', 'application/zip');
       const archive = new ArchiverZip({ zlib: { level: 6 } });
       archive.pipe(res);
@@ -291,11 +289,33 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       return;
     }
     try {
-      const safeDest = dest ? safePath(workspaceDir, dest) : workspaceDir;
+      const safeDest = dest ? safeWorkspacePath(workspaceDir, dest) : workspaceDir;
       mkdirSync(safeDest, { recursive: true });
       const zip = new AdmZip(file.buffer);
-      zip.extractAllTo(safeDest, true);
-      const extractedEntries = zip.getEntries().map(e => e.entryName);
+
+      // Safe extraction: validate each entry path stays within workspace
+      const extractedEntries: string[] = [];
+      const entries = zip.getEntries();
+      for (const entry of entries) {
+        const entryName = entry.entryName;
+        // Validate no path traversal in zip entries
+        const normalizedEntry = normalize(entryName);
+        if (normalizedEntry.startsWith('..') || normalize(entryName).split(sep).some(part => part === '..')) {
+          return res.status(400).json({ error: `Zip Slip blocked: entry "${entryName}" resolves outside destination` });
+        }
+        const fullEntryPath = resolve(safeDest, normalizedEntry);
+        if (!fullEntryPath.startsWith(resolve(safeDest))) {
+          return res.status(400).json({ error: `Zip Slip blocked: entry "${entryName}" resolves outside workspace` });
+        }
+
+        if (entry.isDirectory) {
+          mkdirSync(fullEntryPath, { recursive: true });
+        } else {
+          mkdirSync(resolve(fullEntryPath, '..'), { recursive: true });
+          writeFileSync(fullEntryPath, entry.getData());
+        }
+        extractedEntries.push(entryName);
+      }
       res.json({ success: true, destination: dest, extracted: extractedEntries });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -310,7 +330,7 @@ export function createFilesRouter(configRepo: ConfigRepository) {
     }
     const path = (req.query.path as string) ?? '.';
     try {
-      const fullPath = safePath(workspaceDir, path);
+      const fullPath = safeWorkspacePath(workspaceDir, path);
       const entries = readdirSync(fullPath, { withFileTypes: true });
       const folders = entries
         .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')

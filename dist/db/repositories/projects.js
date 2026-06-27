@@ -34,6 +34,10 @@ export class ProjectsRepository {
         const now = new Date().toISOString();
         this.db.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
     }
+    updateType(id, type) {
+        const now = new Date().toISOString();
+        this.db.prepare('UPDATE projects SET type = ?, updated_at = ? WHERE id = ?').run(type, now, id);
+    }
     updatePort(id, port) {
         const now = new Date().toISOString();
         this.db.prepare('UPDATE projects SET port = ?, updated_at = ? WHERE id = ?').run(port, now, id);

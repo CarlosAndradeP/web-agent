@@ -1,10 +1,9 @@
-export declare function validateUrl(url: string): {
+export declare function validateUrl(url: string): Promise<{
     allowed: boolean;
     reason?: string;
-};
+}>;
 export declare function createWebFetchTool(): import("ai").Tool<{
     url: string;
-    format?: "text" | "html" | "json" | undefined;
 }, {
     content: string;
     status: number;

@@ -44,7 +44,14 @@ export class ConfigRepository {
             apiKey: this.get('api_key'),
             workspaceDir: this.get('workspace_dir'),
             agentType: this.get('agent_type') ?? 'none',
+            registrationEnabled: this.get('registration_enabled') ?? 'true',
         };
+    }
+    /** Returns config without sensitive fields (apiKey) — safe for non-admin users */
+    getPublic() {
+        const all = this.getAll();
+        const { apiKey, ...rest } = all;
+        return { ...rest, apiKeyConfigured: !!apiKey };
     }
     updateAll(data) {
         if (data.defaultModel !== undefined)
@@ -57,7 +64,7 @@ export class ConfigRepository {
             this.set('approval_tools', JSON.stringify(data.approvalTools));
         if (data.apiBaseUrl !== undefined)
             this.set('api_base_url', data.apiBaseUrl);
-        if (data.apiKey !== undefined)
+        if (data.apiKey !== undefined && data.apiKey !== '')
             this.set('api_key', data.apiKey);
         if (data.workspaceDir !== undefined)
             this.set('workspace_dir', data.workspaceDir);

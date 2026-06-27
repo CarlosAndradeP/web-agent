@@ -13,11 +13,15 @@ import { config } from '../config.js';
 
 const log = createLogger('AuthAPI');
 
-export function createAuthRouter(db: Database.Database) {
+export function createAuthRouter(db: Database.Database, authLimiter?: any, refreshLimiter?: any) {
   const router = Router();
   const usersRepo = new UsersRepository(db);
   const creditsRepo = new CreditsRepository(db);
   const configRepo = new ConfigRepository(db);
+
+  if (authLimiter) router.use('/login', authLimiter);
+  if (authLimiter) router.use('/register', authLimiter);
+  if (refreshLimiter) router.use('/refresh', refreshLimiter);
 
   router.post('/login', async (req, res) => {
     const { username, password } = req.body;

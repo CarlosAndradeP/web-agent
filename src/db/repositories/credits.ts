@@ -1,19 +1,9 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuid } from 'uuid';
 import { createLogger } from '../../services/logger.js';
+import type { CreditTransaction } from '../../types/index.js';
 
 const log = createLogger('CreditsRepository');
-
-export interface CreditTransaction {
-  id: string;
-  userId: string;
-  amount: number;
-  balanceAfter: number;
-  type: 'purchase' | 'consumption' | 'refund' | 'bonus';
-  description: string | null;
-  taskId: string | null;
-  createdAt: string;
-}
 
 export class CreditsRepository {
   constructor(private db: Database.Database) {}
@@ -22,12 +12,17 @@ export class CreditsRepository {
     const id = uuid();
     const now = new Date().toISOString();
 
-    const user = this.db.prepare('SELECT credits FROM users WHERE id = ?').get(userId) as any;
-    if (!user) throw new Error('User not found');
-    if (user.credits < amount) throw new Error('Insufficient credits');
+    // Atomic deduct: UPDATE with balance check in WHERE clause
+    const result = this.db.prepare(
+      'UPDATE users SET credits = credits - ?, updated_at = ? WHERE id = ? AND credits >= ?'
+    ).run(amount, now, userId, amount);
 
-    const newBalance = user.credits - amount;
-    this.db.prepare('UPDATE users SET credits = ?, updated_at = ? WHERE id = ?').run(newBalance, now, userId);
+    if (result.changes === 0) {
+      throw new Error('Insufficient credits');
+    }
+
+    const newBalance = this.getBalance(userId);
+
     this.db.prepare(
       'INSERT INTO credit_transactions (id, user_id, amount, balance_after, type, description, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(id, userId, -amount, newBalance, type, description ?? null, taskId ?? null, now);

@@ -9,24 +9,64 @@ import StepProgressBar from './StepProgressBar';
 import TypingIndicator from './TypingIndicator';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
-import { Send, Square, Paperclip, ChevronDown, Globe, Sparkles } from 'lucide-react';
+import { Send, Square, Paperclip, ChevronDown, Globe, Sparkles, X, Upload } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+interface SlashCommand {
+  name: string;
+  description: string;
+  usage?: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: '/clear', description: 'Clear chat messages' },
+  { name: '/new', description: 'Start a new session' },
+  { name: '/compact', description: 'Compact conversation context' },
+  { name: '/help', description: 'Show available commands' },
+  { name: '/model', description: 'Switch model', usage: '/model <name>' },
+  { name: '/steps', description: 'Set max agent steps', usage: '/steps <number>' },
+];
 
 interface Props {
   sessionId: string;
+  onStreamingChange?: (isStreaming: boolean) => void;
+  onNewSession?: () => void;
+  basePath?: string;
 }
 
-export default function ChatPanel({ sessionId }: Props) {
-  const { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName } = useChat(sessionId);
+export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, basePath }: Props) {
+  const { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId);
   const { socket } = useSocket();
+
+  // Notify parent layout about streaming state changes
+  useEffect(() => {
+    onStreamingChange?.(isStreaming);
+  }, [isStreaming, onStreamingChange]);
+
   const [input, setInput] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [customMaxSteps, setCustomMaxSteps] = useState<number | undefined>(undefined);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [showCommands, setShowCommands] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Filter slash commands based on current input
+  const filteredCommands = input.startsWith('/')
+    ? SLASH_COMMANDS.filter(cmd => cmd.name.startsWith(input.split(' ')[0]))
+    : [];
+
+  useEffect(() => {
+    setShowCommands(filteredCommands.length > 0 && input.startsWith('/') && !input.includes(' ') === false || (input.startsWith('/') && !input.includes(' ')));
+  }, [input]);
 
   useEffect(() => {
     let defaultModel = '';
@@ -75,17 +115,128 @@ export default function ChatPanel({ sessionId }: Props) {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
+  const executeCommand = useCallback((command: string): boolean => {
+    const parts = command.trim().split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+
+    switch (cmd) {
+      case '/clear':
+        clearChat();
+        setAttachedFiles([]);
+        addSystemMessage('🗑️ Chat cleared.');
+        return true;
+
+      case '/new':
+        onNewSession?.();
+        addSystemMessage('✨ New session started.');
+        return true;
+
+      case '/compact':
+        addSystemMessage('🔄 Compacting conversation context...');
+        api.chat.compact(sessionId).then((result: any) => {
+          addSystemMessage(result?.summary ? `✅ Context compacted. Summary: ${result.summary.slice(0, 200)}...` : '✅ Context compacted.');
+        }).catch((err: any) => {
+          addSystemMessage(`❌ Compaction failed: ${err.message}`);
+        });
+        return true;
+
+      case '/help':
+        addSystemMessage(
+          '**Available Commands:**\n\n' +
+          SLASH_COMMANDS.map(c => `• \`${c.usage || c.name}\` — ${c.description}`).join('\n')
+        );
+        return true;
+
+      case '/model':
+        if (args.length === 0) {
+          addSystemMessage(`Current model: \`${selectedModel}\`\n\nAvailable: ${models.map(m => `\`${m.id}\``).join(', ')}`);
+          return true;
+        }
+        const modelQuery = args.join(' ').toLowerCase();
+        const match = models.find(m => m.id.toLowerCase() === modelQuery || m.id.toLowerCase().includes(modelQuery));
+        if (match) {
+          setSelectedModel(match.id);
+          addSystemMessage(`🔄 Model switched to \`${match.id}\``);
+        } else {
+          addSystemMessage(`❌ Model not found. Available: ${models.map(m => `\`${m.id}\``).join(', ')}`);
+        }
+        return true;
+
+      case '/steps':
+        if (args.length === 0) {
+          addSystemMessage(`Current max steps: \`${customMaxSteps ?? 'default'}\``);
+          return true;
+        }
+        const stepsValue = parseInt(args[0], 10);
+        if (isNaN(stepsValue) || stepsValue < 1 || stepsValue > 200) {
+          addSystemMessage('❌ Steps must be a number between 1 and 200.');
+          return true;
+        }
+        setCustomMaxSteps(stepsValue);
+        addSystemMessage(`⚙️ Max steps set to \`${stepsValue}\``);
+        return true;
+
+      default:
+        addSystemMessage(`❌ Unknown command: \`${cmd}\`. Type \`/help\` for available commands.`);
+        return true;
+    }
+  }, [clearChat, onNewSession, sessionId, addSystemMessage, selectedModel, models, customMaxSteps]);
+
   const handleSend = () => {
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput('');
+
+    // Check for slash commands
+    if (text.startsWith('/')) {
+      const cmdPart = text.split(' ')[0];
+      const isKnownCommand = SLASH_COMMANDS.some(c => c.name === cmdPart);
+      // Execute even unknown commands (will show error)
+      executeCommand(text);
+      return;
+    }
+
+    // Add any attached files to the useChat ref
+    if (attachedFiles.length > 0) {
+      addAttachedFiles(attachedFiles);
+      setAttachedFiles([]);
+    }
+
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-    send(text, selectedModel);
+    send(text, selectedModel, customMaxSteps);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Slash command autocomplete navigation
+    if (showCommands && filteredCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setCommandIndex(prev => Math.min(prev + 1, filteredCommands.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setCommandIndex(prev => Math.max(prev - 1, 0));
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        const selected = filteredCommands[commandIndex];
+        if (selected) {
+          setInput(selected.name + ' ');
+          setShowCommands(false);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        setShowCommands(false);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -94,6 +245,7 @@ export default function ChatPanel({ sessionId }: Props) {
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
+    setCommandIndex(0);
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 160) + 'px';
@@ -106,12 +258,69 @@ export default function ChatPanel({ sessionId }: Props) {
     setApproval(null);
   };
 
+  // File attachment handlers
+  const handleFileAttach = useCallback(async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      const result = await api.files.upload(fileArray, basePath || '.');
+      if (result.uploaded && result.uploaded.length > 0) {
+        setAttachedFiles(prev => [...prev, ...result.uploaded]);
+        addSystemMessage(`📎 Uploaded: ${result.uploaded.join(', ')}`);
+      }
+    } catch (err: any) {
+      addSystemMessage(`❌ Upload failed: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [basePath, addSystemMessage]);
+
+  const removeAttachedFile = useCallback((file: string) => {
+    setAttachedFiles(prev => prev.filter(f => f !== file));
+  }, []);
+
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files.length > 0) {
+      handleFileAttach(e.dataTransfer.files);
+    }
+  }, [handleFileAttach]);
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       <StepProgressBar currentStep={currentStep} totalSteps={totalSteps} isStreaming={isStreaming} currentToolName={currentToolName} />
 
+      {/* Drag overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-blue-500/10 border-2 border-dashed border-blue-400 rounded-lg flex items-center justify-center backdrop-blur-sm">
+          <div className="text-center">
+            <Upload className="h-10 w-10 text-blue-400 mx-auto mb-2" />
+            <p className="text-blue-300 font-medium">Drop files to upload</p>
+          </div>
+        </div>
+      )}
+
       {/* Messages area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
         <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -122,12 +331,13 @@ export default function ChatPanel({ sessionId }: Props) {
               <p className="text-sm text-zinc-500 max-w-sm leading-relaxed">
                 Describe a task and the agent will execute it autonomously. It can read, write, search files, run commands, and more.
               </p>
+              <p className="text-xs text-zinc-600 mt-3">Type <code className="text-zinc-400">/help</code> for commands</p>
             </div>
           )}
           {messages.map((msg, i) => (
             <MessageBubble
               key={msg.timestamp ?? i}
-              role={msg.isUser ? 'user' : 'assistant'}
+              role={msg.isUser ? 'user' : (msg.role === 'system' ? 'system' : 'assistant')}
               content={msg.content}
               toolCalls={msg.toolCalls}
               isStreaming={isStreaming && i === messages.length - 1 && !msg.isUser}
@@ -153,12 +363,46 @@ export default function ChatPanel({ sessionId }: Props) {
       {/* Input area */}
       <div className="border-t border-zinc-800/60 bg-zinc-950/50 backdrop-blur-md">
         <div className="max-w-3xl mx-auto p-3">
-          <div className="flex items-end gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 focus-within:ring-1 focus-within:ring-zinc-600 focus-within:border-zinc-700 transition-all">
+          {/* Attached files preview */}
+          {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {attachedFiles.map(file => (
+                <div key={file} className="flex items-center gap-1 px-2 py-1 bg-zinc-800 border border-zinc-700/50 rounded-md text-xs text-zinc-300">
+                  <Paperclip className="h-3 w-3 text-zinc-500" />
+                  <span className="truncate max-w-[150px]">{file}</span>
+                  <button onClick={() => removeAttachedFile(file)} className="ml-1 text-zinc-500 hover:text-zinc-300">
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 focus-within:ring-1 focus-within:ring-zinc-600 focus-within:border-zinc-700 transition-all relative">
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={e => {
+                if (e.target.files && e.target.files.length > 0) {
+                  handleFileAttach(e.target.files);
+                  e.target.value = '';
+                }
+              }}
+            />
             <button
-              className="shrink-0 h-8 w-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors text-zinc-500 hover:text-zinc-300"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="shrink-0 h-8 w-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors text-zinc-500 hover:text-zinc-300 disabled:opacity-50"
               title="Attach file"
             >
-              <Paperclip className="h-4 w-4" />
+              {isUploading ? (
+                <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Paperclip className="h-4 w-4" />
+              )}
             </button>
             <textarea
               ref={textareaRef}
@@ -193,7 +437,41 @@ export default function ChatPanel({ sessionId }: Props) {
                 <Send className="h-3.5 w-3.5" />
               </Button>
             )}
+
+            {/* Slash command autocomplete dropdown */}
+            {showCommands && filteredCommands.length > 0 && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl overflow-hidden z-20">
+                {filteredCommands.map((cmd, i) => (
+                  <button
+                    key={cmd.name}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800 transition-colors',
+                      i === commandIndex && 'bg-zinc-800'
+                    )}
+                    onClick={() => {
+                      setInput(cmd.name + ' ');
+                      setShowCommands(false);
+                      textareaRef.current?.focus();
+                    }}
+                    onMouseEnter={() => setCommandIndex(i)}
+                  >
+                    <span className="text-sm font-mono text-blue-400">{cmd.name}</span>
+                    <span className="text-xs text-zinc-500">{cmd.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+
+          {/* Custom steps indicator */}
+          {customMaxSteps !== undefined && (
+            <div className="flex items-center gap-1 mt-1.5 text-[10px] text-zinc-600">
+              <span>Max steps: {customMaxSteps}</span>
+              <button onClick={() => { setCustomMaxSteps(undefined); addSystemMessage('⚙️ Max steps reset to default.'); }} className="text-zinc-500 hover:text-zinc-300 ml-1">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

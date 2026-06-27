@@ -7,6 +7,7 @@ const log = createLogger('ApprovalManager');
 interface PendingApproval {
   resolve: (approved: boolean) => void;
   timeout: ReturnType<typeof setTimeout>;
+  userId?: string;
 }
 
 export class ApprovalManager {
@@ -19,7 +20,7 @@ export class ApprovalManager {
   }
 
   requestApproval(request: ApprovalRequest, userId?: string): Promise<boolean> {
-    log.info('Approval requested', { id: request.id, toolName: request.toolName });
+    log.info('Approval requested', { id: request.id, toolName: request.toolName, userId });
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pending.delete(request.id);
@@ -27,7 +28,7 @@ export class ApprovalManager {
         resolve(false);
       }, 300000);
 
-      this.pending.set(request.id, { resolve, timeout });
+      this.pending.set(request.id, { resolve, timeout, userId });
 
       if (this.io) {
         const target = userId ? this.io.to(`user:${userId}`) : this.io;
@@ -39,16 +40,23 @@ export class ApprovalManager {
     });
   }
 
-  respond(id: string, approved: boolean): void {
+  respond(id: string, approved: boolean, responderUserId?: string, isAdmin?: boolean): void {
     const entry = this.pending.get(id);
-    if (entry) {
-      clearTimeout(entry.timeout);
-      entry.resolve(approved);
-      this.pending.delete(id);
-      log.info('Approval responded', { id, approved });
-    } else {
+    if (!entry) {
       log.warn('No pending approval found for response', { id });
+      return;
     }
+
+    // Check ownership: only the approval owner or an admin can respond
+    if (!isAdmin && entry.userId && responderUserId && entry.userId !== responderUserId) {
+      log.warn('Approval response denied — not owner', { id, responderUserId, ownerUserId: entry.userId });
+      return;
+    }
+
+    clearTimeout(entry.timeout);
+    entry.resolve(approved);
+    this.pending.delete(id);
+    log.info('Approval responded', { id, approved });
   }
 
   hasPending(id: string): boolean {

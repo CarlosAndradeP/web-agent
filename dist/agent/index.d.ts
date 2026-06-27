@@ -1,4 +1,5 @@
 import { ToolLoopAgent } from 'ai';
+import type { ModelMessage } from '@ai-sdk/provider-utils';
 import type { ApprovalMode, AgentStep } from '../types/index.js';
 import type { ApprovalManager } from '../services/approval-manager.js';
 export interface ProjectInfo {
@@ -22,6 +23,7 @@ export interface CreateAgentOptions {
     projectInfo?: ProjectInfo;
     approvalManager?: ApprovalManager;
     userId?: string;
+    conversationContext?: Array<ModelMessage>;
 }
 export declare function createAgent(options: CreateAgentOptions): {
     agent: ToolLoopAgent<never, Record<string, any>, never>;

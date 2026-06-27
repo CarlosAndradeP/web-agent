@@ -15,8 +15,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
 
   if (authHeader?.startsWith('Bearer ')) {
     token = authHeader.slice(7);
-  } else if (typeof req.query.token === 'string' && req.query.token) {
-    token = req.query.token;
   }
 
   if (!token) {

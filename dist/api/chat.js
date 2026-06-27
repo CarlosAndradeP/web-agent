@@ -10,13 +10,41 @@ import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
 const log = createLogger('ChatAPI');
-export function createChatRouter(db, taskManager, creditManager) {
+export function createChatRouter(db, taskManager, creditManager, compactionService) {
     const router = Router();
     const messagesRepo = new MessagesRepository(db);
     const configRepo = new ConfigRepository(db);
     const sessionsRepo = new SessionsRepository(db);
     const usersRepo = new UsersRepository(db);
     const projectsRepo = new ProjectsRepository(db);
+    // POST /compact — Compress conversation context for a session
+    router.post('/compact', async (req, res) => {
+        const { sessionId } = req.body;
+        const userId = req.user?.userId;
+        if (!sessionId) {
+            res.status(400).json({ error: 'sessionId is required' });
+            return;
+        }
+        // Verify ownership
+        const session = sessionsRepo.findById(sessionId);
+        if (!session) {
+            res.status(404).json({ error: 'Session not found' });
+            return;
+        }
+        const isAdmin = req.user?.role === 'admin';
+        if (!isAdmin && session.userId && session.userId !== userId) {
+            res.status(403).json({ error: 'Access denied' });
+            return;
+        }
+        try {
+            const summary = await compactionService.compactSession(sessionId);
+            res.json({ success: true, summary });
+        }
+        catch (err) {
+            log.error('Compaction failed', { sessionId, error: err.message });
+            res.status(500).json({ error: `Compaction failed: ${err.message}` });
+        }
+    });
     router.post('/', async (req, res) => {
         const { sessionId, model, messages, maxSteps } = req.body;
         const userId = req.user?.userId;
@@ -62,7 +90,7 @@ export function createChatRouter(db, taskManager, creditManager) {
                 }
             }
         }
-        log.info('Chat request received', { sessionId: model, messageCount: messages?.length, maxSteps, userId, workspaceDir });
+        log.info('Chat request received', { sessionId, model, messageCount: messages?.length, maxSteps, userId, workspaceDir });
         if (!messages?.length) {
             log.warn('Chat request rejected: no messages');
             res.status(400).json({ error: 'messages are required' });
@@ -93,12 +121,24 @@ export function createChatRouter(db, taskManager, creditManager) {
                 log.warn('Failed to resolve project workspace', { error: err.message });
             }
         }
+        // Persist incoming messages to the database
         for (const msg of messages) {
             messagesRepo.create(effectiveSessionId, msg.role, msg.content);
         }
+        // Auto-compact if the conversation is getting too long
+        const selectedModel = model ?? configRepo.getAll().defaultModel;
+        try {
+            const didCompact = await compactionService.autoCompactIfNeeded(effectiveSessionId, selectedModel);
+            if (didCompact) {
+                log.info('Auto-compacted session before sending to agent', { sessionId: effectiveSessionId });
+            }
+        }
+        catch (err) {
+            log.warn('Auto-compaction check failed, continuing anyway', { error: err.message });
+        }
+        // Build the full conversation context (including any previous summary)
+        const conversationContext = compactionService.getConversationContext(effectiveSessionId);
         const appConfig = configRepo.getAll();
-        const selectedModel = model ?? appConfig.defaultModel;
-        const description = messages[messages.length - 1].content;
         try {
             const availableModels = await resolveModels(appConfig.apiBaseUrl);
             if (!availableModels.find(m => m.id === selectedModel)) {
@@ -112,8 +152,9 @@ export function createChatRouter(db, taskManager, creditManager) {
         catch (err) {
             log.warn('Could not validate model, proceeding anyway', { error: err.message });
         }
-        log.info('Creating task for chat', { selectedModel, descriptionLength: description.length });
-        const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo);
+        const description = messages[messages.length - 1].content;
+        log.info('Creating task for chat', { selectedModel, descriptionLength: description.length, contextLength: conversationContext.length });
+        const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo, conversationContext);
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');

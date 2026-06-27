@@ -7,11 +7,14 @@ export class MessagesRepository {
     create(sessionId, role, content, toolCalls = null, toolCallId = null, stepNumber = null) {
         const id = uuid();
         const now = new Date().toISOString();
-        this.db.prepare('INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, step_number, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, sessionId, role, content, toolCalls, toolCallId, stepNumber, now);
+        this.db.prepare('INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, step_number, is_compacted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)').run(id, sessionId, role, content, toolCalls, toolCallId, stepNumber, now);
         return { id, sessionId, role: role, content, toolCalls, toolCallId, stepNumber, createdAt: now };
     }
-    findBySession(sessionId) {
-        const rows = this.db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC').all(sessionId);
+    findBySession(sessionId, includeCompacted = false) {
+        const query = includeCompacted
+            ? 'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC'
+            : 'SELECT * FROM messages WHERE session_id = ? AND (is_compacted IS NULL OR is_compacted = 0) ORDER BY created_at ASC';
+        const rows = this.db.prepare(query).all(sessionId);
         return rows.map(row => ({
             id: row.id,
             sessionId: row.session_id,
@@ -22,6 +25,40 @@ export class MessagesRepository {
             stepNumber: row.step_number,
             createdAt: row.created_at,
         }));
+    }
+    deleteBySession(sessionId) {
+        const result = this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+        return result.changes;
+    }
+    /**
+     * Compact a session: insert a summary message and mark all prior messages as compacted.
+     * Returns the ID of the created summary message.
+     */
+    compactSession(sessionId, summaryText) {
+        const id = uuid();
+        const now = new Date().toISOString();
+        const insertSummary = this.db.prepare('INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, step_number, is_compacted, created_at) VALUES (?, ?, ?, ?, NULL, NULL, NULL, 1, ?)');
+        const markCompacted = this.db.prepare('UPDATE messages SET is_compacted = 1 WHERE session_id = ? AND id != ? AND (is_compacted IS NULL OR is_compacted = 0)');
+        const transaction = this.db.transaction(() => {
+            insertSummary.run(id, sessionId, 'system', summaryText, now);
+            markCompacted.run(sessionId, id);
+        });
+        transaction();
+        return id;
+    }
+    /**
+     * Count non-compacted messages for a session.
+     */
+    countActive(sessionId) {
+        const row = this.db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ? AND (is_compacted IS NULL OR is_compacted = 0)').get(sessionId);
+        return row?.count ?? 0;
+    }
+    /**
+     * Estimate total character count of active (non-compacted) messages for a session.
+     */
+    totalContentLength(sessionId) {
+        const row = this.db.prepare("SELECT COALESCE(SUM(LENGTH(COALESCE(content, ''))), 0) as total FROM messages WHERE session_id = ? AND (is_compacted IS NULL OR is_compacted = 0)").get(sessionId);
+        return row?.total ?? 0;
     }
 }
 //# sourceMappingURL=messages.js.map

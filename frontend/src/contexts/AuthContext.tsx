@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { authApi, type UserPublic } from '../lib/auth-api';
-import { io, type Socket } from 'socket.io-client';
+import { setAuthFetch } from '../lib/api';
+import { connectWithAuth, disconnectSocket } from '../lib/socket';
+import type { Socket } from 'socket.io-client';
 
 interface AuthState {
   user: UserPublic | null;
@@ -13,6 +15,7 @@ interface AuthState {
   logout: () => void;
   updateCredits: (credits: number) => void;
   updateUser: (updates: Partial<UserPublic>) => void;
+  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -31,6 +34,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_KEY));
   const [isLoading, setIsLoading] = useState(false);
+
+  // Use refs for tokens so fetch interceptors always read the latest value
+  const accessTokenRef = useRef(accessToken);
+  const refreshTokenRef = useRef(refreshToken);
+
+  useEffect(() => { accessTokenRef.current = accessToken; }, [accessToken]);
+  useEffect(() => { refreshTokenRef.current = refreshToken; }, [refreshToken]);
 
   const storeAuth = (access: string, refresh: string, userData: UserPublic) => {
     localStorage.setItem(TOKEN_KEY, access);
@@ -71,10 +81,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    const token = accessToken;
+    const token = accessTokenRef.current;
     clearAuth();
     authApi.logout(token ?? undefined).catch(() => {});
-  }, [accessToken]);
+  }, []);
 
   const updateCredits = useCallback((credits: number) => {
     setUser(prev => {
@@ -94,12 +104,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Auth-aware fetch: adds Authorization header, handles 401 with transparent refresh
+  const refreshingRef = useRef(false);
+  const authFetch = useCallback(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const token = accessTokenRef.current;
+    const headers = new Headers(init?.headers);
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    const response = await fetch(input, { ...init, headers });
+
+    if (response.status === 401 && !refreshingRef.current) {
+      const currentRefreshToken = refreshTokenRef.current;
+      if (!currentRefreshToken) {
+        clearAuth();
+        return response;
+      }
+
+      refreshingRef.current = true;
+      try {
+        const data = await authApi.refresh(currentRefreshToken);
+        storeAuth(data.accessToken, data.refreshToken, data.user);
+
+        // Retry the original request with new token
+        const retryHeaders = new Headers(init?.headers);
+        retryHeaders.set('Authorization', `Bearer ${data.accessToken}`);
+        return fetch(input, { ...init, headers: retryHeaders });
+      } catch {
+        clearAuth();
+      } finally {
+        refreshingRef.current = false;
+      }
+    }
+
+    return response;
+  }, []);
+
+  // Register authFetch with the API module on mount
+  useEffect(() => {
+    setAuthFetch(authFetch);
+  }, [authFetch]);
+
+  // Auto-refresh token before expiry (every 14 minutes)
+  useEffect(() => {
+    if (!accessToken || !refreshToken) return;
+
+    const interval = setInterval(async () => {
+      const currentRefreshToken = refreshTokenRef.current;
+      if (!currentRefreshToken) return;
+      try {
+        const data = await authApi.refresh(currentRefreshToken);
+        storeAuth(data.accessToken, data.refreshToken, data.user);
+      } catch {
+        clearAuth();
+      }
+    }, 14 * 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [accessToken, refreshToken]);
+
+  // Socket.IO connection using singleton — managed by AuthContext lifecycle
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      disconnectSocket();
+      socketRef.current = null;
+      return;
+    }
 
-    const socket = io('/', { path: '/socket.io' });
+    const token = accessTokenRef.current;
+    if (!token) return;
+
+    const socket = connectWithAuth(token);
     socketRef.current = socket;
 
     const joinRoom = () => {
@@ -123,58 +201,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       socket.off('connect', joinRoom);
-      socket.disconnect();
+      socket.off('credits:deducted');
+      socket.off('credits:exhausted');
+      disconnectSocket();
       socketRef.current = null;
     };
   }, [user?.id]);
-
-  useEffect(() => {
-    if (!accessToken || !refreshToken) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const data = await authApi.refresh(refreshToken);
-        storeAuth(data.accessToken, data.refreshToken, data.user);
-      } catch {
-        clearAuth();
-      }
-    }, 14 * 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, [accessToken, refreshToken]);
-
-  useEffect(() => {
-    if (!accessToken) return;
-
-    let refreshing = false;
-    const originalFetch = window.fetch;
-    window.fetch = async (...args) => {
-      const response = await originalFetch(...args);
-      if (response.status === 401 && !refreshing && refreshToken) {
-        refreshing = true;
-        try {
-          const data = await authApi.refresh(refreshToken);
-          storeAuth(data.accessToken, data.refreshToken, data.user);
-          const newReq = new Request(args[0] instanceof Request ? args[0].url : String(args[0]), {
-            ...args[1],
-            headers: {
-              ...(args[0] instanceof Request ? Object.fromEntries(args[0].headers.entries()) : {}),
-              ...(args[1]?.headers as Record<string, string> || {}),
-              Authorization: `Bearer ${data.accessToken}`,
-            },
-          });
-          refreshing = false;
-          return originalFetch(newReq);
-        } catch {
-          refreshing = false;
-          clearAuth();
-        }
-      }
-      return response;
-    };
-
-    return () => { window.fetch = originalFetch; };
-  }, [accessToken, refreshToken]);
 
   return (
     <AuthContext.Provider value={{
@@ -188,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       updateCredits,
       updateUser,
+      authFetch,
     }}>
       {children}
     </AuthContext.Provider>

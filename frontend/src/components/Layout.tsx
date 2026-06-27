@@ -29,6 +29,7 @@ export default function Layout() {
   const [newProjectFolder, setNewProjectFolder] = useState('');
   const [existingFolders, setExistingFolders] = useState<{ name: string; path: string }[]>([]);
   const [useExistingFolder, setUseExistingFolder] = useState(false);
+  const [isChatStreaming, setIsChatStreaming] = useState(false);
   const { projects, createProject, deleteProject, startProject, stopProject, promoteNode, refresh: refreshProjects } = useProjects();
   const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
@@ -105,6 +106,15 @@ export default function Layout() {
     setMobileMenuOpen(false);
   }, []);
 
+  const handleNewSession = useCallback(async () => {
+    try {
+      const session = await createSession('New Session');
+      setSessionId(session.id);
+    } catch (err: any) {
+      console.error('Failed to create new session:', err);
+    }
+  }, [createSession]);
+
   const effectiveSessionId = sessionId || 'default';
   const activeProject = projects.find(p => p.id === activeProjectId);
 
@@ -119,7 +129,7 @@ export default function Layout() {
     onProjectStart: startProject,
     onProjectStop: stopProject,
     onPromoteNode: promoteNode,
-    isRunning: false,
+    isRunning: isChatStreaming,
   };
 
   return (
@@ -152,14 +162,14 @@ export default function Layout() {
         <Header
           onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
           menuOpen={mobileMenuOpen}
-          isRunning={false}
+          isRunning={isChatStreaming}
           sessionName={activeProject?.name}
         />
 
         <main className="flex-1 overflow-hidden">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
             {effectiveSessionId ? (
-              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} />
+              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} onStreamingChange={setIsChatStreaming} onNewSession={handleNewSession} basePath={activeProject?.folderPath} />
             ) : (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center space-y-3">

@@ -5,7 +5,7 @@ export declare class ApprovalManager {
     private io;
     setIo(io: Server): void;
     requestApproval(request: ApprovalRequest, userId?: string): Promise<boolean>;
-    respond(id: string, approved: boolean): void;
+    respond(id: string, approved: boolean, responderUserId?: string, isAdmin?: boolean): void;
     hasPending(id: string): boolean;
 }
 //# sourceMappingURL=approval-manager.d.ts.map

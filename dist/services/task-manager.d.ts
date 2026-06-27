@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Task } from '../types/index.js';
+import type { ModelMessage } from '@ai-sdk/provider-utils';
 import { type ProjectInfo } from '../agent/index.js';
 import { CreditManager } from '../services/credit-manager.js';
 import type { ApprovalManager } from './approval-manager.js';
@@ -19,11 +20,12 @@ export declare class TaskManager {
     private activeControllers;
     private taskProjectInfo;
     private taskUserIds;
+    private taskConversationContext;
     constructor(db: Database.Database, creditManager: CreditManager, approvalManager?: ApprovalManager);
     private emitToTaskUser;
     private insertStep;
     setIo(io: Server): void;
-    createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo): Task;
+    createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo, conversationContext?: Array<ModelMessage>): Task;
     runTask(taskId: string): Promise<void>;
     streamTask(taskId: string): Promise<AsyncIterable<StreamEvent>>;
     cancelTask(taskId: string): void;

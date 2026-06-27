@@ -4,7 +4,7 @@ import { SessionsRepository } from '../db/repositories/sessions.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { config } from '../config.js';
 import { resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
 const log = createLogger('ProjectsAPI');
 export function createProjectsRouter(db, projectRouter) {
@@ -19,11 +19,12 @@ export function createProjectsRouter(db, projectRouter) {
     });
     router.post('/', async (req, res) => {
         const userId = req.user.userId;
-        const { name, folderPath, type } = req.body;
-        if (!name || !folderPath || !type) {
-            res.status(400).json({ error: 'name, folderPath, and type are required' });
+        const { name, folderPath, type: reqType } = req.body;
+        if (!name || !folderPath) {
+            res.status(400).json({ error: 'name and folderPath are required' });
             return;
         }
+        const type = reqType || 'static';
         if (!['static', 'php', 'node'].includes(type)) {
             res.status(400).json({ error: 'type must be "static", "php", or "node"' });
             return;
@@ -123,6 +124,49 @@ export function createProjectsRouter(db, projectRouter) {
         catch (err) {
             log.error('Failed to stop project', { projectId: project.id, error: err.message });
             res.status(500).json({ error: err.message });
+        }
+    });
+    router.post('/:id/promote-node', async (req, res) => {
+        const userId = req.user.userId;
+        const project = projectsRepo.findById(req.params.id);
+        if (!project || project.userId !== userId) {
+            res.status(404).json({ error: 'Project not found' });
+            return;
+        }
+        if (project.type === 'node') {
+            res.json({ project, alreadyNode: true });
+            return;
+        }
+        const pUser = usersRepo.findById(userId);
+        if (!pUser) {
+            res.status(404).json({ error: 'User not found' });
+            return;
+        }
+        const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, project.folderPath);
+        const pkgJsonPath = resolve(fullFolderPath, 'package.json');
+        if (!existsSync(pkgJsonPath)) {
+            res.status(400).json({ error: 'No package.json found in project folder' });
+            return;
+        }
+        try {
+            projectRouter.unmountProject(project);
+        }
+        catch (err) {
+            log.warn('Failed to unmount static/php project during promote', { projectId: project.id, error: err.message });
+        }
+        projectsRepo.updateType(project.id, 'node');
+        projectsRepo.updateStatus(project.id, 'stopped');
+        const updatedProject = projectsRepo.findById(project.id);
+        try {
+            await projectRouter.startProject(updatedProject, fullFolderPath);
+            projectsRepo.updateStatus(project.id, 'active');
+            log.info('Project promoted to Node.js', { projectId: project.id, uuid: project.uuid });
+            res.json({ project: projectsRepo.findById(project.id) });
+        }
+        catch (err) {
+            log.error('Failed to start promoted Node project', { projectId: project.id, error: err.message });
+            projectsRepo.updateStatus(project.id, 'error');
+            res.status(500).json({ error: `Failed to start Node.js project: ${err.message}` });
         }
     });
     router.delete('/:id', (req, res) => {

@@ -22,6 +22,7 @@ export declare class ProjectsRepository {
     findByUserId(userId: string): Project[];
     listAll(): Project[];
     updateStatus(id: string, status: Project['status']): void;
+    updateType(id: string, type: Project['type']): void;
     updatePort(id: string, port: number | null): void;
     updatePid(id: string, pid: number | null): void;
     delete(id: string): void;

@@ -29,6 +29,8 @@ export declare class ProjectRouter {
     unmountProject(project: Project): void;
     startProject(project: Project, fullFolderPath: string): Promise<void>;
     stopProject(uuid: string): void;
+    promoteToNode(project: Project, fullFolderPath: string): Promise<void>;
+    isNodeProjectDetected(folderPath: string): boolean;
     getActiveNodeProjects(): NodeProcessInfo[];
     shutdownAll(): void;
     getActiveProjects(): Map<string, ActiveProject>;
