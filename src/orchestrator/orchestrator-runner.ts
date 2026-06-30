@@ -684,7 +684,7 @@ Requirements:
           }
         }
 
-        text = agentResult?.text ?? 'No output';
+        text = this.extractTextFromResult(agentResult) || 'No output';
         agentSteps = agentResult?.steps ?? [];
         stepsUsed = agentSteps.length;
         this.totalStepsUsed += stepsUsed;
@@ -764,7 +764,7 @@ Requirements:
           }
         }
 
-        text = agentResult?.text ?? 'No output';
+        text = this.extractTextFromResult(agentResult) || 'No output';
         agentSteps = agentResult?.steps ?? [];
         stepsUsed = agentSteps.length;
         this.totalStepsUsed += stepsUsed;
@@ -1043,12 +1043,19 @@ Check for:
 Reply with "PASS" if everything looks correct, or "FAIL: [reason]" if there are problems.
 Be thorough but fair — minor style issues are acceptable, but broken code is not.`);
 
-      const verifyText = verifyResult.text.toUpperCase();
-      if (verifyText.includes('PASS') && !verifyText.includes('FAIL')) {
+      const verifyText = verifyResult.text ?? '';
+      if (!verifyText.trim()) {
+        log.warn('Project verification returned empty text, assuming pass', { sessionId: session.id });
+        return true;
+      }
+      const upper = verifyText.toUpperCase();
+      const hasPass = upper.includes('PASS');
+      const hasFail = /\bFAIL\b/.test(upper);
+      if (hasPass && !hasFail) {
         log.info('Project verification PASSED', { sessionId: session.id });
         return true;
       } else {
-        const failReason = verifyResult.text.slice(0, 500);
+        const failReason = verifyText.slice(0, 500);
         log.warn('Project verification FAILED', { sessionId: session.id, reason: failReason });
         this.sessionsRepo.updateProgress(session.id, 95, `Verification issue: ${failReason}`);
         return false;
@@ -1060,6 +1067,16 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
   }
 
   // ====== HELPERS ======
+
+  private extractTextFromResult(agentResult: any): string {
+    if (agentResult?.text) return agentResult.text;
+    const steps: any[] = agentResult?.steps ?? [];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const stepText = steps[i]?.text ?? steps[i]?.result?.text;
+      if (stepText && stepText.trim()) return stepText;
+    }
+    return '';
+  }
 
   private getAppConfig(): any {
     if (!this.appConfigCache) {

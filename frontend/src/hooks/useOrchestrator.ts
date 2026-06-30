@@ -10,7 +10,7 @@ export interface LogEntry {
   timestamp: string;
 }
 
-export function useOrchestrator() {
+export function useOrchestrator(sessionId?: string) {
   const [status, setStatus] = useState<OrchestratorStatusInfo | null>(null);
   const [steps, setSteps] = useState<OrchestratorStepInfo[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -88,7 +88,7 @@ export function useOrchestrator() {
         }
       }
 
-      const result = await api.orchestrator.start({ objective, mdFiles: mdPaths.length > 0 ? mdPaths : undefined });
+      const result = await api.orchestrator.start({ sessionId, objective, mdFiles: mdPaths.length > 0 ? mdPaths : undefined });
       setStatus(prev => prev ? { ...prev, isRunning: true, currentSessionId: result.session.id, session: result.session as OrchestratorSessionInfo } : null);
       addLog('orchestrator', `Started: ${objective.slice(0, 80)}${mdPaths.length > 0 ? ` with ${mdPaths.length} .md file(s)` : ''}`);
 

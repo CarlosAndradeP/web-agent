@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, basename, join, posix } from 'node:path';
 import { OrchestratorManager } from '../orchestrator/orchestrator-manager.js';
 import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository } from '../db/repositories/orchestrator.js';
@@ -32,14 +32,28 @@ export function createOrchestratorRouter(
     return req.user?.role === 'admin' || req.user?.userId === session.userId;
   };
 
-  const getWorkspaceDir = (req: any): string | null => {
+  const getWorkspaceDir = (req: any, sessionId?: string | null): string | null => {
     const userId = req.user?.userId;
     if (!userId) return null;
     const db = (sessionsRepo as any).db;
     const usersRepo = new UsersRepository(db);
     const user = usersRepo.findById(userId);
     if (!user) return null;
-    return resolve(config.workspaceBaseDir, user.username);
+    const baseDir = resolve(config.workspaceBaseDir, user.username);
+    if (sessionId) {
+      try {
+        const projectRow = db.prepare('SELECT folder_path FROM projects WHERE session_id = ?').get(sessionId) as any;
+        if (projectRow && projectRow.folder_path) {
+          const projectDir = resolve(baseDir, projectRow.folder_path);
+          mkdirSync(projectDir, { recursive: true });
+          log.info('Orchestrator using project workspace', { sessionId, folderPath: projectRow.folder_path, workspaceDir: projectDir });
+          return projectDir;
+        }
+      } catch (err: any) {
+        log.warn('Failed to resolve project workspace for orchestrator', { sessionId, error: err.message });
+      }
+    }
+    return baseDir;
   };
 
   const validateSessionId = (req: any, sessionId?: string): string | null => {
@@ -59,8 +73,8 @@ export function createOrchestratorRouter(
     }
 
     try {
-      const workspaceDir = getWorkspaceDir(req);
       const validatedSessionId = validateSessionId(req, sessionId);
+      const workspaceDir = getWorkspaceDir(req, validatedSessionId);
       const session = sessionsRepo.create(validatedSessionId, user.userId, objective, workspaceDir);
 
       if (mdFiles && Array.isArray(mdFiles) && mdFiles.length > 0) {
@@ -191,7 +205,7 @@ export function createOrchestratorRouter(
       return;
     }
 
-    const workspaceDir = getWorkspaceDir(req);
+    const workspaceDir = session.workspaceDir ?? getWorkspaceDir(req);
     if (!workspaceDir) {
       res.status(401).json({ error: 'Authentication required' });
       return;

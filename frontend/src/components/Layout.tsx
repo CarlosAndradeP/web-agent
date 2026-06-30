@@ -183,7 +183,7 @@ export default function Layout() {
             )}
           </div>
           <div className={activeTab === 'autonomous' ? 'h-full' : 'h-full hidden'}>
-            <AutonomousPanel />
+            <AutonomousPanel sessionId={effectiveSessionId} />
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">

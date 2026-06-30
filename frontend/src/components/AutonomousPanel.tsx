@@ -4,8 +4,8 @@ import OrchestratorLog from './OrchestratorLog';
 import OrchestratorControls from './OrchestratorControls';
 import { useEffect } from 'react';
 
-export default function AutonomousPanel() {
-  const { status, steps, logs, isLoading, start, stop, pause, resume, uploadMd, refresh } = useOrchestrator();
+export default function AutonomousPanel({ sessionId }: { sessionId: string }) {
+  const { status, steps, logs, isLoading, start, stop, pause, resume, uploadMd, refresh } = useOrchestrator(sessionId);
 
   useEffect(() => {
     refresh();
