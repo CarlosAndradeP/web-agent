@@ -9,5 +9,6 @@ export declare function buildToolSet(options: {
     agentType?: string;
     approvalManager?: ApprovalManager;
     userId?: string;
+    abortSignal?: AbortSignal;
 }): Record<string, any>;
 //# sourceMappingURL=index.d.ts.map

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { safeWorkspacePath } from './sanitize.js';
 import { buildSafeEnv } from './command-policy.js';
+import { logToolExecution } from '../../services/logger.js';
 const execAsync = promisify(exec);
 export function createExecuteCodeTool(workspaceDir) {
     return tool({
@@ -16,6 +17,8 @@ export function createExecuteCodeTool(workspaceDir) {
             timeout: z.number().optional().describe('Timeout in seconds (default: 30)'),
         }),
         execute: async ({ code, language, timeout = 30 }) => {
+            const startTime = Date.now();
+            logToolExecution('executeCode', undefined, 'start', { input: { language, codeLength: code.length, timeout } });
             const tmpDir = safeWorkspacePath(workspaceDir, '.tmp-exec');
             mkdirSync(tmpDir, { recursive: true });
             const ext = language === 'python' ? 'py' : language === 'typescript' ? 'ts' : 'js';
@@ -39,9 +42,18 @@ export function createExecuteCodeTool(workspaceDir) {
                     maxBuffer: 1024 * 1024 * 10,
                     env: buildSafeEnv(),
                 });
+                logToolExecution('executeCode', undefined, 'success', {
+                    output: { exitCode: 0, language, stdoutLength: stdout?.length ?? 0 },
+                    durationMs: Date.now() - startTime,
+                });
                 return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
             }
             catch (err) {
+                logToolExecution('executeCode', undefined, 'error', {
+                    error: err.message ?? err.code ?? 'Unknown error',
+                    input: { language },
+                    durationMs: Date.now() - startTime,
+                });
                 return {
                     stdout: err.stdout ?? '',
                     stderr: err.stderr ?? err.message,

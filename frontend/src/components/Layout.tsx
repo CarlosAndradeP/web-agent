@@ -6,6 +6,7 @@ import ConfigPanel from './ConfigPanel';
 import AdminPanel from './AdminPanel';
 import UserPanel from './UserPanel';
 import Header from './Header';
+import AutonomousPanel from './AutonomousPanel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -17,7 +18,7 @@ import { useResizable } from '../hooks/useResizable';
 import { api } from '../lib/api';
 import type { Project } from '../types';
 
-type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
+type Tab = 'chat' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
@@ -180,6 +181,9 @@ export default function Layout() {
                 </div>
               </div>
             )}
+          </div>
+          <div className={activeTab === 'autonomous' ? 'h-full' : 'h-full hidden'}>
+            <AutonomousPanel />
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">

@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo } from '../types';
 
 const BASE = '/api';
 
@@ -246,5 +246,34 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+  },
+  orchestrator: {
+    status: () => fetchJSON<OrchestratorStatusInfo>(`${BASE}/orchestrator/status`),
+    sessionStatus: (sessionId: string) =>
+      fetchJSON<{ session: OrchestratorSessionInfo }>(`${BASE}/orchestrator/${sessionId}/status`),
+    start: (data: { sessionId?: string; objective: string; mdFiles?: string[] }) =>
+      fetchJSON<{ session: OrchestratorSessionInfo }>(`${BASE}/orchestrator/start`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    stop: (sessionId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/stop`, { method: 'POST' }),
+    pause: (sessionId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/pause`, { method: 'POST' }),
+    resume: (sessionId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/resume`, { method: 'POST' }),
+    steps: (sessionId: string, limit?: number, offset?: number) =>
+      fetchJSON<{ steps: OrchestratorStepInfo[]; total: number }>(`${BASE}/orchestrator/${sessionId}/steps?limit=${limit ?? 50}&offset=${offset ?? 0}`),
+    uploadMd: async (sessionId: string, files: File[]) => {
+      const formData = new FormData();
+      for (const file of files) formData.append('files', file);
+      const res = await fetch(`${BASE}/orchestrator/${sessionId}/upload-md`, {
+        method: 'POST',
+        headers: getAuthHeadersNoContentType(),
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+      return res.json() as Promise<{ success: boolean; mdFiles: string[] }>;
+    },
   },
 };

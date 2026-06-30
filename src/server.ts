@@ -11,6 +11,7 @@ import { ConfigRepository } from './db/repositories/config.js';
 import { UsersRepository } from './db/repositories/users.js';
 import { CreditsRepository } from './db/repositories/credits.js';
 import { SessionsRepository } from './db/repositories/sessions.js';
+import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository } from './db/repositories/orchestrator.js';
 import { createChatRouter } from './api/chat.js';
 import { createModelsRouter } from './api/models.js';
 import { createTasksRouter } from './api/tasks.js';
@@ -20,6 +21,7 @@ import { createSessionsRouter } from './api/sessions.js';
 import { createAuthRouter } from './api/auth.js';
 import { createAdminRouter } from './api/admin.js';
 import { createProjectsRouter } from './api/projects.js';
+import { createOrchestratorRouter } from './api/orchestrator.js';
 import { ProjectRouter } from './services/project-router.js';
 import { ProjectsRepository } from './db/repositories/projects.js';
 import { CreditManager } from './services/credit-manager.js';
@@ -27,6 +29,8 @@ import { TaskManager } from './services/task-manager.js';
 import { ApprovalManager } from './services/approval-manager.js';
 import { CompactionService } from './services/compaction-service.js';
 import { FileWatcher } from './services/file-watcher.js';
+import { OrchestratorManager } from './orchestrator/orchestrator-manager.js';
+import { OrchestratorHeartbeat } from './orchestrator/heartbeat.js';
 import { setupWebSocket } from './websocket/index.js';
 import { authMiddleware } from './middleware/auth.js';
 import { adminMiddleware } from './middleware/admin.js';
@@ -126,6 +130,12 @@ const taskManager = new TaskManager(db, creditManager, approvalManager);
 const compactionService = new CompactionService(db);
 const fileWatcher = new FileWatcher();
 
+const orchestratorSessionsRepo = new OrchestratorSessionsRepository(db);
+const orchestratorStepsRepo = new OrchestratorStepsRepository(db);
+const orchestratorStateRepo = new OrchestratorStateRepository(db);
+const orchestratorManager = new OrchestratorManager(db, creditManager);
+const orchestratorHeartbeat = new OrchestratorHeartbeat(orchestratorManager, db);
+
 mkdirSync(config.workspaceBaseDir, { recursive: true });
 
 const allUsers = usersRepo.list();
@@ -148,8 +158,14 @@ app.use('/api/files', authMiddleware, createFilesRouter(configRepo));
 app.use('/api/config', authMiddleware, createConfigRouter(configRepo, adminMiddleware));
 app.use('/api/sessions', authMiddleware, createSessionsRouter(db));
 app.use('/api/projects', authMiddleware, createProjectsRouter(db, projectRouter));
+app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo));
 
 app.use('/p', projectRouter.middleware());
+
+app.get('/health', (_req, res) => {
+  const state = orchestratorStateRepo.get();
+  res.json({ status: 'ok', orchestrator: { isRunning: state.isRunning, lastHeartbeat: state.lastHeartbeat } });
+});
 
 const publicDir = existsSync(join(process.cwd(), 'public'))
   ? join(process.cwd(), 'public')
@@ -168,8 +184,12 @@ if (existsSync(publicDir)) {
   log.warn('No static directory found for frontend');
 }
 
-setupWebSocket(io, approvalManager, taskManager, creditManager);
+setupWebSocket(io, approvalManager, taskManager, creditManager, orchestratorSessionsRepo);
 log.info('WebSocket setup complete');
+
+orchestratorManager.setIo(io);
+orchestratorHeartbeat.start().catch((err: any) => log.error('Heartbeat start failed', { error: err.message }));
+log.info('Orchestrator heartbeat started');
 
 fileWatcher.start(config.workspaceBaseDir, io);
 log.info('File watcher started', { dir: config.workspaceBaseDir });
@@ -202,6 +222,8 @@ httpServer.listen(config.port, () => {
 
 process.on('SIGINT', () => {
   log.info('Shutting down (SIGINT)...');
+  orchestratorHeartbeat.stop();
+  orchestratorManager.shutdownAll();
   fileWatcher.stop();
   projectRouter.shutdownAll();
   db.close();

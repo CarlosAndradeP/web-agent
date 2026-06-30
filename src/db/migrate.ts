@@ -50,6 +50,155 @@ export function migrate(db: Database.Database): void {
     log.warn('approval_mode migration skipped', { error: err.message });
   }
 
+  const orchestratorRecreate = [
+    `CREATE TABLE IF NOT EXISTS orchestrator_sessions_new (
+      id TEXT PRIMARY KEY,
+      session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+      user_id TEXT,
+      status TEXT NOT NULL DEFAULT 'idle',
+      objective TEXT NOT NULL,
+      current_step TEXT DEFAULT NULL,
+      progress_percent INTEGER DEFAULT 0,
+      error_count INTEGER DEFAULT 0,
+      auto_recover INTEGER DEFAULT 1,
+      workspace_dir TEXT DEFAULT NULL,
+      md_files TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+  ];
+
+  for (const stmt of orchestratorRecreate) {
+    try {
+      db.exec(stmt);
+    } catch (err: any) {
+      log.warn('orchestrator_sessions_new creation skipped', { error: err.message });
+    }
+  }
+
+  try {
+    const hasOldTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestrator_sessions'").get();
+    const hasNewTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestrator_sessions_new'").get();
+    if (hasOldTable && hasNewTable) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec(`
+          INSERT OR IGNORE INTO orchestrator_sessions_new (id, session_id, user_id, status, objective, current_step, progress_percent, error_count, auto_recover, workspace_dir, md_files, created_at, updated_at)
+          SELECT id, NULLIF(session_id, ''), user_id, status, objective, current_step, progress_percent, error_count, auto_recover, workspace_dir, md_files, created_at, updated_at
+          FROM orchestrator_sessions;
+          DROP TABLE IF EXISTS orchestrator_steps;
+          DROP TABLE IF EXISTS orchestrator_state;
+          DROP TABLE orchestrator_sessions;
+          ALTER TABLE orchestrator_sessions_new RENAME TO orchestrator_sessions;
+        `);
+        log.info('Migrated orchestrator_sessions: session_id now nullable');
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+  } catch (err: any) {
+    log.warn('orchestrator_sessions migration failed', { error: err.message });
+    try { db.pragma('foreign_keys = ON'); } catch {} 
+    try { db.exec('DROP TABLE IF EXISTS orchestrator_sessions_new'); } catch {}
+  }
+
+  const orchestratorTables = [
+    `CREATE TABLE IF NOT EXISTS orchestrator_sessions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+      user_id TEXT,
+      status TEXT NOT NULL DEFAULT 'idle',
+      objective TEXT NOT NULL,
+      current_step TEXT DEFAULT NULL,
+      progress_percent INTEGER DEFAULT 0,
+      error_count INTEGER DEFAULT 0,
+      auto_recover INTEGER DEFAULT 1,
+      workspace_dir TEXT DEFAULT NULL,
+      md_files TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS orchestrator_steps (
+      id TEXT PRIMARY KEY,
+      orchestrator_session_id TEXT NOT NULL REFERENCES orchestrator_sessions(id) ON DELETE CASCADE,
+      step_number INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      model TEXT NOT NULL,
+      action TEXT NOT NULL,
+      input TEXT NOT NULL,
+      output TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error_message TEXT DEFAULT NULL,
+      duration_ms INTEGER DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME DEFAULT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS orchestrator_state (
+      id TEXT PRIMARY KEY DEFAULT 'singleton',
+      is_running INTEGER DEFAULT 0,
+      last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP,
+      current_session_id TEXT DEFAULT NULL REFERENCES orchestrator_sessions(id),
+      total_steps_completed INTEGER DEFAULT 0
+    )`,
+  ];
+
+  for (const stmt of orchestratorTables) {
+    try {
+      db.exec(stmt);
+      log.info('Orchestrator table ensured');
+    } catch (err: any) {
+      log.warn('Orchestrator table creation failed', { error: err.message });
+    }
+  }
+
+  const orchestratorIndexes = [
+    'CREATE INDEX IF NOT EXISTS idx_orchestrator_sessions_user_id ON orchestrator_sessions(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_orchestrator_sessions_session_id ON orchestrator_sessions(session_id)',
+    'CREATE INDEX IF NOT EXISTS idx_orchestrator_sessions_status ON orchestrator_sessions(status)',
+    'CREATE INDEX IF NOT EXISTS idx_orchestrator_steps_session_id ON orchestrator_steps(orchestrator_session_id)',
+  ];
+
+  for (const stmt of orchestratorIndexes) {
+    try {
+      db.exec(stmt);
+    } catch (err: any) {
+      log.warn('Orchestrator index creation skipped', { statement: stmt, error: err.message });
+    }
+  }
+
+  try {
+    db.prepare("INSERT OR IGNORE INTO orchestrator_state (id, is_running, last_heartbeat, current_session_id, total_steps_completed) VALUES ('singleton', 0, datetime('now'), NULL, 0)").run();
+    log.info('Orchestrator state singleton ensured');
+  } catch (err: any) {
+    log.warn('Orchestrator state init skipped', { error: err.message });
+  }
+
+  // Add orchestrator_tasks table (new in multi-agent orchestrator refactor)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS orchestrator_tasks (
+        id TEXT PRIMARY KEY,
+        orchestrator_session_id TEXT NOT NULL REFERENCES orchestrator_sessions(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        role TEXT NOT NULL DEFAULT 'programador',
+        depends_on TEXT,
+        result_json TEXT,
+        output TEXT,
+        error_message TEXT,
+        step_number INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_orchestrator_tasks_session ON orchestrator_tasks(orchestrator_session_id)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_orchestrator_tasks_status ON orchestrator_tasks(status)");
+    log.info('orchestrator_tasks table and indexes ensured');
+  } catch (err: any) {
+    log.warn('orchestrator_tasks migration failed', { error: err.message });
+  }
+
   // Add performance indexes for existing databases
   const indexStatements = [
     'CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)',

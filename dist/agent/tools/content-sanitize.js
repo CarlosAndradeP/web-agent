@@ -1,15 +1,24 @@
+// Strict line-level patterns that indicate direct prompt injection attempts.
+// These match only when a line begins with the attack phrase.
 const INJECTION_PATTERNS = [
-    /ignore\s+previous\s+(instructions?|rules?|prompt)/gi,
-    /system\s+prompt/gi,
-    /you\s+are\s+now\s+/gi,
-    /disregard\s+(all\s+)?(previous|above|prior)/gi,
-    /new\s+instructions?\s*:/gi,
+    // "ignore previous instructions", "ignore all previous rules" etc.
+    /^ignore\s+previous\s+(instructions?|rules?|prompt)(:|[\s,!.]|$)/i,
+    // "disregard all previous", "disregard above" etc.
+    /^disregard\s+(all\s+)?(previous|above|prior)([\s,!.]|$)/i,
+    // "new instructions:" anywhere in the line
+    /new\s+instructions?\s*:/i,
 ];
 export function sanitizeForPrompt(content) {
-    let sanitized = content;
-    for (const pattern of INJECTION_PATTERNS) {
-        sanitized = sanitized.replace(pattern, '[FILTERED]');
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        for (const pattern of INJECTION_PATTERNS) {
+            if (pattern.test(trimmed)) {
+                lines[i] = '[FILTERED]';
+                break;
+            }
+        }
     }
-    return sanitized;
+    return lines.join('\n');
 }
 //# sourceMappingURL=content-sanitize.js.map

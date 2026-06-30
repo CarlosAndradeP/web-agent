@@ -2,6 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { sanitizeForPrompt } from './content-sanitize.js';
 import { resolve4, resolve6 } from 'node:dns/promises';
+import { logToolExecution } from '../../services/logger.js';
 
 const BLOCKED_HOSTS = [
   'localhost', '127.0.0.1', '0.0.0.0', '::1',
@@ -107,8 +108,12 @@ export function createWebFetchTool() {
       url: z.string().describe('URL to fetch'),
     }),
     execute: async ({ url }) => {
+      const startTime = Date.now();
+      logToolExecution('webFetch', undefined, 'start', { input: { url } });
+
       const urlCheck = await validateUrl(url);
       if (!urlCheck.allowed) {
+        logToolExecution('webFetch', undefined, 'error', { error: urlCheck.reason, input: { url }, durationMs: Date.now() - startTime });
         return { error: urlCheck.reason, status: 0 };
       }
 
@@ -116,12 +121,17 @@ export function createWebFetchTool() {
         const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
         let content = await response.text();
         content = sanitizeForPrompt(content);
+        logToolExecution('webFetch', undefined, 'success', {
+          output: { status: response.status, contentLength: content.length },
+          durationMs: Date.now() - startTime,
+        });
         return {
           content: content.slice(0, 50000),
           status: response.status,
           truncated: content.length > 50000,
         };
       } catch (err: any) {
+        logToolExecution('webFetch', undefined, 'error', { error: err.message, input: { url }, durationMs: Date.now() - startTime });
         return { error: err.message, status: 0 };
       }
     },

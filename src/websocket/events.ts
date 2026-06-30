@@ -1,11 +1,12 @@
 import type { Socket, Server } from 'socket.io';
 import type { ApprovalManager } from '../services/approval-manager.js';
 import type { TaskManager } from '../services/task-manager.js';
+import type { OrchestratorSessionsRepository } from '../db/repositories/orchestrator.js';
 import { createLogger } from '../services/logger.js';
 
 const log = createLogger('WebSocket:Events');
 
-export function registerSocketEvents(socket: Socket, io: Server, approvalManager: ApprovalManager, taskManager: TaskManager) {
+export function registerSocketEvents(socket: Socket, io: Server, approvalManager: ApprovalManager, taskManager: TaskManager, orchestratorSessionsRepo?: OrchestratorSessionsRepository) {
   const user = socket.data.user;
   const isAdmin = user?.role === 'admin';
 
@@ -52,5 +53,25 @@ export function registerSocketEvents(socket: Socket, io: Server, approvalManager
       return;
     }
     taskManager.cancelTask(data.taskId);
+  });
+
+  socket.on('orchestrator:subscribe', (data: { sessionId: string }) => {
+    if (!orchestratorSessionsRepo) return;
+    const session = orchestratorSessionsRepo.findById(data.sessionId);
+    if (!session) {
+      log.warn('Orchestrator subscribe — session not found', { sessionId: data.sessionId });
+      return;
+    }
+    if (!isAdmin && session.userId && session.userId !== user?.userId) {
+      log.warn('Orchestrator subscribe denied — not owner', { sessionId: data.sessionId, userId: user?.userId });
+      return;
+    }
+    socket.join(`orchestrator:${data.sessionId}`);
+    log.debug('Orchestrator subscribe', { socketId: socket.id, sessionId: data.sessionId });
+  });
+
+  socket.on('orchestrator:unsubscribe', (data: { sessionId: string }) => {
+    socket.leave(`orchestrator:${data.sessionId}`);
+    log.debug('Orchestrator unsubscribe', { socketId: socket.id, sessionId: data.sessionId });
   });
 }

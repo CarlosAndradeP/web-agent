@@ -129,3 +129,101 @@ export interface CreditTransaction {
   taskId: string | null;
   createdAt: string;
 }
+
+export type OrchestratorSessionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed';
+export type OrchestratorStepStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type OrchestratorRole = 'orchestrator' | 'auxiliar' | 'arquiteto' | 'programador' | 'revisor';
+export type OrchestratorAction = 'plan' | 'delegate' | 'review' | 'fix' | 'read' | 'write' | 'run';
+
+export interface OrchestratorSession {
+  id: string;
+  sessionId?: string;
+  userId?: string;
+  status: OrchestratorSessionStatus;
+  objective: string;
+  currentStep: string | null;
+  progressPercent: number;
+  errorCount: number;
+  autoRecover: boolean;
+  workspaceDir: string | null;
+  mdFiles: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrchestratorStep {
+  id: string;
+  orchestratorSessionId: string;
+  stepNumber: number;
+  role: OrchestratorRole;
+  model: string;
+  action: OrchestratorAction;
+  input: string;
+  output: string | null;
+  status: OrchestratorStepStatus;
+  errorMessage: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface OrchestratorTask {
+  id: string;
+  orchestratorSessionId: string;
+  name: string;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  role: string;
+  dependsOn: string | null;
+  resultJson: string | null;
+  output: string | null;
+  errorMessage: string | null;
+  stepNumber: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Structured result returned by sub-agents */
+export interface SubAgentResult {
+  text: string;
+  filesCreated: string[];
+  filesModified: string[];
+  commandsRun: { command: string; exitCode: number; output: string }[];
+  errors: { message: string; step: number }[];
+  stepsUsed: number;
+  success: boolean;
+}
+
+export interface OrchestratorState {
+  id: string;
+  isRunning: boolean;
+  lastHeartbeat: string;
+  currentSessionId: string | null;
+  totalStepsCompleted: number;
+}
+
+export interface TaskContext {
+  objective: string;
+  taskName: string;
+  taskDescription: string;
+  role: string;
+  planSummary: string;
+  previousResults: Array<{
+    taskName: string;
+    role: string;
+    output: string;
+    filesCreated: string[];
+    filesModified: string[];
+  }>;
+  currentFileState: string;
+  retryHistory: string | null;
+}
+
+export interface PlanTask {
+  name: string;
+  description: string;
+  role: string;
+  dependsOn: number | null;
+  targetFiles?: string[];
+  acceptanceCriteria?: string[];
+}

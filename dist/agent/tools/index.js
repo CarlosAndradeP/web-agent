@@ -51,8 +51,7 @@ export function buildToolSet(options) {
             apiBaseUrl: options.apiBaseUrl,
             apiKey: options.apiKey,
             agentType: options.agentType,
-            approvalMode: options.approvalMode,
-            approvalTools: options.approvalTools,
+            abortSignal: options.abortSignal,
         });
     }
     if (options.approvalMode === 'none' || !options.approvalManager) {

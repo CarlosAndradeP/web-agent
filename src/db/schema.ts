@@ -112,4 +112,60 @@ CREATE TABLE IF NOT EXISTS model_config (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS orchestrator_sessions (
+  id TEXT PRIMARY KEY,
+  session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+  user_id TEXT,
+  status TEXT NOT NULL DEFAULT 'idle',
+  objective TEXT NOT NULL,
+  current_step TEXT DEFAULT NULL,
+  progress_percent INTEGER DEFAULT 0,
+  error_count INTEGER DEFAULT 0,
+  auto_recover INTEGER DEFAULT 1,
+  workspace_dir TEXT DEFAULT NULL,
+  md_files TEXT DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS orchestrator_steps (
+  id TEXT PRIMARY KEY,
+  orchestrator_session_id TEXT NOT NULL REFERENCES orchestrator_sessions(id) ON DELETE CASCADE,
+  step_number INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  model TEXT NOT NULL,
+  action TEXT NOT NULL,
+  input TEXT NOT NULL,
+  output TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  error_message TEXT DEFAULT NULL,
+  duration_ms INTEGER DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME DEFAULT NULL
+);
+
+CREATE TABLE IF NOT EXISTS orchestrator_state (
+  id TEXT PRIMARY KEY DEFAULT 'singleton',
+  is_running INTEGER DEFAULT 0,
+  last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP,
+  current_session_id TEXT DEFAULT NULL REFERENCES orchestrator_sessions(id),
+  total_steps_completed INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS orchestrator_tasks (
+  id TEXT PRIMARY KEY,
+  orchestrator_session_id TEXT NOT NULL REFERENCES orchestrator_sessions(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  role TEXT NOT NULL DEFAULT 'programador',
+  depends_on TEXT,
+  result_json TEXT,
+  output TEXT,
+  error_message TEXT,
+  step_number INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `;

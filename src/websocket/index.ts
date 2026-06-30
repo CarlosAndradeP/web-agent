@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { ApprovalManager } from '../services/approval-manager.js';
 import type { TaskManager } from '../services/task-manager.js';
 import type { CreditManager } from '../services/credit-manager.js';
+import type { OrchestratorSessionsRepository } from '../db/repositories/orchestrator.js';
 import { verifyToken, type JwtPayload } from '../lib/jwt.js';
 import { registerSocketEvents } from './events.js';
 import { createLogger } from '../services/logger.js';
@@ -14,7 +15,7 @@ declare module 'socket.io' {
   }
 }
 
-export function setupWebSocket(io: Server, approvalManager: ApprovalManager, taskManager: TaskManager, creditManager: CreditManager): void {
+export function setupWebSocket(io: Server, approvalManager: ApprovalManager, taskManager: TaskManager, creditManager: CreditManager, orchestratorSessionsRepo?: OrchestratorSessionsRepository): void {
   approvalManager.setIo(io);
   taskManager.setIo(io);
   creditManager.setIo(io);
@@ -42,7 +43,7 @@ export function setupWebSocket(io: Server, approvalManager: ApprovalManager, tas
     const user = socket.data.user;
     log.info('Client connected', { socketId: socket.id, userId: user?.userId });
 
-    registerSocketEvents(socket, io, approvalManager, taskManager);
+    registerSocketEvents(socket, io, approvalManager, taskManager, orchestratorSessionsRepo);
 
     socket.on('disconnect', (reason) => {
       log.info('Client disconnected', { socketId: socket.id, userId: user?.userId, reason });

@@ -2,7 +2,7 @@ import { verifyToken } from '../lib/jwt.js';
 import { registerSocketEvents } from './events.js';
 import { createLogger } from '../services/logger.js';
 const log = createLogger('WebSocket');
-export function setupWebSocket(io, approvalManager, taskManager, creditManager) {
+export function setupWebSocket(io, approvalManager, taskManager, creditManager, orchestratorSessionsRepo) {
     approvalManager.setIo(io);
     taskManager.setIo(io);
     creditManager.setIo(io);
@@ -28,7 +28,7 @@ export function setupWebSocket(io, approvalManager, taskManager, creditManager) 
     io.on('connection', (socket) => {
         const user = socket.data.user;
         log.info('Client connected', { socketId: socket.id, userId: user?.userId });
-        registerSocketEvents(socket, io, approvalManager, taskManager);
+        registerSocketEvents(socket, io, approvalManager, taskManager, orchestratorSessionsRepo);
         socket.on('disconnect', (reason) => {
             log.info('Client disconnected', { socketId: socket.id, userId: user?.userId, reason });
         });

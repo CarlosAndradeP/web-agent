@@ -1,6 +1,6 @@
 import { createLogger } from '../services/logger.js';
 const log = createLogger('WebSocket:Events');
-export function registerSocketEvents(socket, io, approvalManager, taskManager) {
+export function registerSocketEvents(socket, io, approvalManager, taskManager, orchestratorSessionsRepo) {
     const user = socket.data.user;
     const isAdmin = user?.role === 'admin';
     socket.on('session:join', (data) => {
@@ -42,6 +42,25 @@ export function registerSocketEvents(socket, io, approvalManager, taskManager) {
             return;
         }
         taskManager.cancelTask(data.taskId);
+    });
+    socket.on('orchestrator:subscribe', (data) => {
+        if (!orchestratorSessionsRepo)
+            return;
+        const session = orchestratorSessionsRepo.findById(data.sessionId);
+        if (!session) {
+            log.warn('Orchestrator subscribe — session not found', { sessionId: data.sessionId });
+            return;
+        }
+        if (!isAdmin && session.userId && session.userId !== user?.userId) {
+            log.warn('Orchestrator subscribe denied — not owner', { sessionId: data.sessionId, userId: user?.userId });
+            return;
+        }
+        socket.join(`orchestrator:${data.sessionId}`);
+        log.debug('Orchestrator subscribe', { socketId: socket.id, sessionId: data.sessionId });
+    });
+    socket.on('orchestrator:unsubscribe', (data) => {
+        socket.leave(`orchestrator:${data.sessionId}`);
+        log.debug('Orchestrator unsubscribe', { socketId: socket.id, sessionId: data.sessionId });
     });
 }
 //# sourceMappingURL=events.js.map

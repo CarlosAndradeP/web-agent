@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolve, relative } from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 import { safeWorkspacePath } from './sanitize.js';
+import { logToolExecution } from '../../services/logger.js';
 export function createSearchFilesTool(workspaceDir) {
     return tool({
         description: 'Search for patterns in files within the workspace',
@@ -12,15 +13,19 @@ export function createSearchFilesTool(workspaceDir) {
             include: z.string().optional().describe('File glob to include (e.g., "*.ts")'),
         }),
         execute: async ({ pattern, path = '.', include }) => {
+            const startTime = Date.now();
+            logToolExecution('searchFiles', undefined, 'start', { input: { pattern, path, include } });
             try {
                 const searchDir = safeWorkspacePath(workspaceDir, path);
                 const regex = new RegExp(pattern, 'i');
                 const includeRegex = include ? globToRegex(include) : null;
                 const matches = [];
                 searchDirRecursive(searchDir, regex, includeRegex, matches, workspaceDir, 100);
+                logToolExecution('searchFiles', undefined, 'success', { output: { matchCount: matches.length }, durationMs: Date.now() - startTime });
                 return { matches, total: matches.length };
             }
             catch (err) {
+                logToolExecution('searchFiles', undefined, 'error', { error: err.message, input: { pattern }, durationMs: Date.now() - startTime });
                 return { matches: [], total: 0, error: err.message };
             }
         },

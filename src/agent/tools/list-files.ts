@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { safeWorkspacePath } from './sanitize.js';
+import { logToolExecution } from '../../services/logger.js';
 
 export function createListFilesTool(workspaceDir: string) {
   return tool({
@@ -12,11 +13,15 @@ export function createListFilesTool(workspaceDir: string) {
       recursive: z.boolean().optional().describe('List recursively (default: false)'),
     }),
     execute: async ({ path = '.', recursive = false }) => {
+      const startTime = Date.now();
+      logToolExecution('listFiles', undefined, 'start', { input: { path, recursive } });
       try {
         const fullPath = safeWorkspacePath(workspaceDir, path);
         const entries = listDir(fullPath, recursive);
+        logToolExecution('listFiles', undefined, 'success', { output: { entryCount: entries.length }, durationMs: Date.now() - startTime });
         return { entries, path };
       } catch (err: any) {
+        logToolExecution('listFiles', undefined, 'error', { error: err.message, input: { path }, durationMs: Date.now() - startTime });
         return { error: err.message, path };
       }
     },
