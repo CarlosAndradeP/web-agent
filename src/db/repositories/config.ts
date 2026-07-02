@@ -15,7 +15,7 @@ const DEFAULTS: Record<string, string> = {
 };
 
 const LEGACY_MODEL_MAP: Record<string, string> = {
-  'meta/llama-3.1-405b-instruct': 'z-ai/glm-5.1',
+  'meta/llama-3.1-405b-instruct': 'z-ai/glm-5.2',
 };
 
 export class ConfigRepository {

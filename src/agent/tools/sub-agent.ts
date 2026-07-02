@@ -46,7 +46,7 @@ export function createInvokeSubAgentTool(options: {
           runCommand: createRunCommandTool(options.workspaceDir),
         };
 
-        const model = provider.chatModel('z-ai/glm-5.1') as any;
+        const model = provider.chatModel('z-ai/glm-5.2') as any;
 
         const subAgent = new ToolLoopAgent({
           model,

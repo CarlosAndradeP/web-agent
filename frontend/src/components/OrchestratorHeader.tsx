@@ -21,7 +21,7 @@ export default function OrchestratorHeader({ status, isLoading }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-zinc-100">Autonomous Agent</span>
-            <span className="text-[10px] text-zinc-500 font-mono">kimi-k2.6</span>
+            <span className="text-[10px] text-zinc-500 font-mono">z-ai/glm-5.2</span>
             <div className={`h-1.5 w-1.5 rounded-full shrink-0 ${isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
           </div>
           {session && (

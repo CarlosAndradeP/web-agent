@@ -660,7 +660,7 @@ for (const p of allProjects) {
 | `WORKSPACE_BASE_DIR` | `./workspace` | Base dir para workspaces per-user |
 | `DATA_DIR` | `./data` | Diretório do SQLite |
 | `MAX_STEPS` | `100` | Limite de steps |
-| `DEFAULT_MODEL` | `z-ai/glm-5.1` | Modelo padrão |
+| `DEFAULT_MODEL` | `z-ai/glm-5.2` | Modelo padrão |
 | `AGENT_TYPE` | `none` | Tipo de agente |
 | `JWT_SECRET` | `web-agent-jwt-secret-...` | Secret para assinar JWTs |
 | `ADMIN_PASSWORD` | `admin123` | Senha do admin bootstrap |

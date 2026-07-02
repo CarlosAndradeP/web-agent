@@ -5,7 +5,7 @@ import { createListFilesTool } from '../../agent/tools/list-files.js';
 import { createSearchFilesTool } from '../../agent/tools/search-files.js';
 import { buildArquitetoPrompt } from '../prompts/arquiteto-prompt.js';
 
-const DEFAULT_MODEL = 'z-ai/glm-5.1';
+const DEFAULT_MODEL = 'z-ai/glm-5.2';
 
 export function createArquitetoAgent(workspaceDir: string, apiBaseUrl: string, apiKey: string, projectType?: string, objective?: string, modelOverride?: string) {
   const provider = createProvider(apiBaseUrl, apiKey, 'sub');

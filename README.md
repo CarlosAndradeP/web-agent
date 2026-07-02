@@ -132,7 +132,7 @@ npm run dev:frontend
 | `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory |
 | `DATA_DIR` | `./data` | SQLite database directory |
 | `MAX_STEPS` | `100` | Max agent steps per task |
-| `DEFAULT_MODEL` | `z-ai/glm-5.1` | Default LLM model |
+| `DEFAULT_MODEL` | `z-ai/glm-5.2` | Default LLM model |
 | `JWT_SECRET` | *(required in production)* | JWT signing secret |
 | `ADMIN_PASSWORD` | *(required in production)* | Admin bootstrap password |
 | `INITIAL_CREDITS` | `100` | Credits for new users |
@@ -314,7 +314,7 @@ See full details in [`CHANGELOG.md`](CHANGELOG.md).
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | Internal UUID |
-| `model_id` | TEXT UNIQUE | Model ID (e.g. `z-ai/glm-5.1`) |
+| `model_id` | TEXT UNIQUE | Model ID (e.g. `z-ai/glm-5.2`) |
 | `enabled` | INTEGER | 1=enabled, 0=disabled (default 1) |
 | `cost_per_step` | REAL | Credits per step (default 1) |
 | `display_name` | TEXT | Custom display name |

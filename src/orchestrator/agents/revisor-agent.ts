@@ -5,7 +5,7 @@ import { createListFilesTool } from '../../agent/tools/list-files.js';
 import { createSearchFilesTool } from '../../agent/tools/search-files.js';
 import { buildRevisorPrompt } from '../prompts/revisor-prompt.js';
 
-const DEFAULT_MODEL = 'moonshotai/kimi-k2.6';
+const DEFAULT_MODEL = 'z-ai/glm-5.2';
 
 export function createRevisorAgent(workspaceDir: string, apiBaseUrl: string, apiKey: string, projectType?: string, objective?: string, modelOverride?: string) {
   const provider = createProvider(apiBaseUrl, apiKey, 'sub');

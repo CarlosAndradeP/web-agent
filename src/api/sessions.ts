@@ -34,7 +34,7 @@ export function createSessionsRouter(db: Database.Database) {
       res.status(400).json({ error: 'name is required' });
       return;
     }
-    const session = sessionsRepo.create(name, model ?? 'z-ai/glm-5.1');
+    const session = sessionsRepo.create(name, model ?? 'z-ai/glm-5.2');
     if (userId) {
       try {
         db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);

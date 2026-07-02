@@ -16,11 +16,11 @@ interface Props {
 }
 
 const AGENT_BADGES = [
-  { role: 'orchestrator', label: 'GLM-5.1', icon: BrainCircuit, color: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
+  { role: 'orchestrator', label: 'GLM-5.2', icon: BrainCircuit, color: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
   { role: 'auxiliar', label: 'Nemotron', icon: Shield, color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
-  { role: 'arquiteto', label: 'GLM-5.1', icon: FileCode, color: 'text-amber-400 bg-amber-400/10 border-amber-400/20' },
+  { role: 'arquiteto', label: 'GLM-5.2', icon: FileCode, color: 'text-amber-400 bg-amber-400/10 border-amber-400/20' },
   { role: 'programador', label: 'DeepSeek', icon: Code, color: 'text-purple-400 bg-purple-400/10 border-purple-400/20' },
-  { role: 'revisor', label: 'Kimi K2.6', icon: Eye, color: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20' },
+  { role: 'revisor', label: 'GLM-5.2', icon: Eye, color: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20' },
 ];
 
 export default function OrchestratorControls({ status, isLoading, onStart, onStop, onPause, onResume, onUploadMd }: Props) {

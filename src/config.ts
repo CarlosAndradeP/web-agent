@@ -57,7 +57,7 @@ export const config = {
   workspaceBaseDir: process.env.WORKSPACE_BASE_DIR || './workspace',
   dataDir: process.env.DATA_DIR || './data',
   maxSteps: parseInt(process.env.MAX_STEPS || '100', 10),
-  defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.1',
+  defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.2',
   agentType: (process.env.AGENT_TYPE || 'none') as 'main' | 'sub' | 'none',
   jwtSecret: jwtSecret || 'web-agent-jwt-secret-insecure-default-dev-only',
   adminPassword: adminPassword || 'admin123',

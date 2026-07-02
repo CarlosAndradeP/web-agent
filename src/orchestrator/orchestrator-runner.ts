@@ -244,7 +244,7 @@ export class OrchestratorRunner {
 
   private async planWithArquiteto(session: OrchestratorSession, mdContent: string, architectureReport: string): Promise<PlanTask[]> {
     const appConfig = this.getAppConfig();
-    const step = this.recordStep('orchestrator', 'z-ai/glm-5.1', 'plan', 'Generate project plan from specs + codebase scan');
+    const step = this.recordStep('orchestrator', 'z-ai/glm-5.2', 'plan', 'Generate project plan from specs + codebase scan');
 
     const prompt = `You are a software architect. Analyze the project specification and codebase scan, then produce a structured implementation plan.
 
@@ -274,7 +274,7 @@ Requirements:
     let planText = '';
     try {
       const provider = this.getOrCreateProvider(appConfig.apiBaseUrl, appConfig.apiKey, 'orchestrator');
-      const model = provider.chatModel('z-ai/glm-5.1');
+      const model = provider.chatModel('z-ai/glm-5.2');
 
       const result = await generateText({
         model,
@@ -1153,9 +1153,9 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
   private getModelForRole(role: OrchestratorRole): string {
     switch (role) {
       case 'auxiliar': return 'nvidia/nemotron-3-ultra-550b-a55b';
-      case 'arquiteto': return 'z-ai/glm-5.1';
+      case 'arquiteto': return 'z-ai/glm-5.2';
       case 'programador': return 'deepseek-ai/deepseek-v4-pro';
-      case 'revisor': return 'moonshotai/kimi-k2.6';
+      case 'revisor': return 'z-ai/glm-5.2';
       default: return 'deepseek-ai/deepseek-v4-pro';
     }
   }
