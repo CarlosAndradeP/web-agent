@@ -43,10 +43,10 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
     }
 
     const session = sessionsRepo.create(name, config.defaultModel);
-    // Best-effort ownership stamp. If it fails we surface an error and delete
-    // the unowned session rather than risk it being adopted by another user
-    // later — sessions.user_id NULL is treated as admin/orphan in ownership
-    // checks elsewhere.
+    // Stamp ownership and project_id together atomically. If either fails we
+    // delete the unowned session rather than risk it being adopted by another
+    // user later — sessions.user_id NULL is treated as admin/orphan in
+    // ownership checks elsewhere.
     if (userId) {
       try {
         db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
@@ -65,15 +65,24 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
 
     const project = projectsRepo.create(userId, name, folderPath, type, session.id, type === 'node' ? 'stopped' : 'active');
 
-    // Link the session back to the project in a transaction. project_id is the
-    // internal project id (not the uuid). This is the second leg of the 1:1
-    // link; if it fails we keep the just-created session attached to the new
-    // project via project.sessionId regardless, but we surface the failure to
-    // avoid a silently dangling cross-reference.
+    // Link the session back to the project. project_id is the internal project
+    // id (not the uuid). If this fails we surface the error and roll back the
+    // session + project so a half-linked cross-reference is never persisted.
     try {
-      db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
+      const tx = db.transaction(() => {
+        db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
+      });
+      tx();
     } catch (err: any) {
-      log.warn('Failed to set session.project_id', { sessionId: session.id, projectId: project.id, error: err.message });
+      log.error('Failed to set session.project_id, rolling back', { sessionId: session.id, projectId: project.id, error: err.message });
+      try {
+        projectsRepo.delete(project.id);
+        sessionsRepo.delete(session.id);
+      } catch (cleanupErr: any) {
+        log.error('Rollback failed after project_id link failure', { error: cleanupErr.message });
+      }
+      res.status(500).json({ error: 'Failed to link project session' });
+      return;
     }
 
     if (project.type === 'node') {

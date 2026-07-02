@@ -103,11 +103,12 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
         }
       } else {
         // Ownership check: a non-admin may only chat in their own session.
-        // Sessions with user_id NULL (legacy) are treated as admin-only / orphan
-        // and cannot be addressed by another user even if they know the id.
+        // Sessions with user_id NULL (legacy/orphan) are admin-only — a non-admin
+        // cannot address them even if they know the id, since we cannot verify
+        // ownership.
         const isAdmin = req.user?.role === 'admin';
-        if (!isAdmin && existing.userId && existing.userId !== userId) {
-          log.warn('Chat denied — session owned by another user', { sessionId: effectiveSessionId, userId, ownerId: existing.userId });
+        if (!isAdmin && existing.userId !== userId) {
+          log.warn('Chat denied — session not owned by user', { sessionId: effectiveSessionId, userId, ownerId: existing.userId });
           res.status(403).json({ error: 'Access denied' });
           return;
         }

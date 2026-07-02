@@ -1,4 +1,4 @@
-import { resolve, sep, relative, isAbsolute } from 'node:path';
+import { resolve, sep, relative } from 'node:path';
 
 export function safeWorkspacePath(workspaceDir: string, relativePath: string): string {
   const fullPath = resolve(workspaceDir, relativePath);

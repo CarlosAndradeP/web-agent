@@ -39,10 +39,13 @@ function isBlockedIP(ip: string): boolean {
   // Check decimal IPs (2130706433 = 127.0.0.1)
   if (/^\d{8,10}$/.test(ip)) return true;
 
-  // IPv6 loopback and mapped
+  // IPv6 loopback, mapped, link-local, and unique-local ranges
   if (ip === '::1' || ip === '::' || ip === '0:0:0:0:0:0:0:1' || ip === '0:0:0:0:0:ffff:7f00:1') return true;
   if (/^::ffff:/i.test(ip)) return true;
   if (/^0000:0000:0000:0000:0000:ffff:/i.test(ip)) return true;
+  // IPv6 link-local fe80::/10 and unique-local fc00::/7 (private ranges)
+  if (/^fe[89ab][0-9a-f]{2}:/i.test(ip)) return true;
+  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
 
   return false;
 }
