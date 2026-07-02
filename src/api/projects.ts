@@ -43,9 +43,20 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
     }
 
     const session = sessionsRepo.create(name, config.defaultModel);
-    try {
-      db.prepare('UPDATE sessions SET user_id = ?, project_id = ? WHERE id = ?').run(userId, null, session.id);
-    } catch {}
+    // Best-effort ownership stamp. If it fails we surface an error and delete
+    // the unowned session rather than risk it being adopted by another user
+    // later — sessions.user_id NULL is treated as admin/orphan in ownership
+    // checks elsewhere.
+    if (userId) {
+      try {
+        db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
+      } catch (err: any) {
+        log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+        sessionsRepo.delete(session.id);
+        res.status(500).json({ error: 'Failed to create project session' });
+        return;
+      }
+    }
 
     const workspaceDir = resolve(config.workspaceBaseDir, user.username);
     mkdirSync(workspaceDir, { recursive: true });
@@ -54,9 +65,16 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
 
     const project = projectsRepo.create(userId, name, folderPath, type, session.id, type === 'node' ? 'stopped' : 'active');
 
+    // Link the session back to the project in a transaction. project_id is the
+    // internal project id (not the uuid). This is the second leg of the 1:1
+    // link; if it fails we keep the just-created session attached to the new
+    // project via project.sessionId regardless, but we surface the failure to
+    // avoid a silently dangling cross-reference.
     try {
       db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
-    } catch {}
+    } catch (err: any) {
+      log.warn('Failed to set session.project_id', { sessionId: session.id, projectId: project.id, error: err.message });
+    }
 
     if (project.type === 'node') {
       log.info('Node project created in stopped state', { projectId: project.id, uuid: project.uuid });
@@ -203,7 +221,11 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
     if (project.sessionId) {
       try {
         sessionsRepo.delete(project.sessionId);
-      } catch {}
+      } catch (err: any) {
+        // The project is still removed below; leave the orphaned session in
+        // place rather than masking the project-delete error path.
+        log.warn('Failed to delete linked session during project delete', { sessionId: project.sessionId, projectId: project.id, error: err.message });
+      }
     }
 
     projectsRepo.delete(project.id);

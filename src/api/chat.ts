@@ -72,7 +72,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     if (!effectiveSessionId) {
       let sessions = sessionsRepo.list();
       if (userId) {
-        sessions = sessions.filter(s => (s as any).user_id === userId);
+        sessions = sessions.filter(s => s.userId === userId);
       }
       if (sessions.length === 0) {
         const session = sessionsRepo.create('Default Session', config.defaultModel);
@@ -80,7 +80,9 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
         if (userId) {
           try {
             db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
-          } catch {}
+          } catch (err: any) {
+            log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+          }
         }
       } else {
         effectiveSessionId = sessions[0].id;
@@ -95,7 +97,19 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
         if (userId) {
           try {
             db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
-          } catch {}
+          } catch (err: any) {
+            log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+          }
+        }
+      } else {
+        // Ownership check: a non-admin may only chat in their own session.
+        // Sessions with user_id NULL (legacy) are treated as admin-only / orphan
+        // and cannot be addressed by another user even if they know the id.
+        const isAdmin = req.user?.role === 'admin';
+        if (!isAdmin && existing.userId && existing.userId !== userId) {
+          log.warn('Chat denied — session owned by another user', { sessionId: effectiveSessionId, userId, ownerId: existing.userId });
+          res.status(403).json({ error: 'Access denied' });
+          return;
         }
       }
     }
@@ -135,8 +149,16 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       }
     }
 
-    // Persist incoming messages to the database
+    // Persist incoming messages to the database. Only user/assistant/tool roles
+    // are accepted from the client; `system` messages are reserved for internal
+    // summary injection and must never come from a request body.
+    const allowedRoles = new Set(['user', 'assistant', 'tool']);
     for (const msg of messages) {
+      if (!allowedRoles.has(msg.role)) {
+        log.warn('Chat rejected — invalid message role', { role: msg.role });
+        res.status(400).json({ error: `Invalid message role: ${msg.role}` });
+        return;
+      }
       messagesRepo.create(effectiveSessionId, msg.role, msg.content);
     }
 
