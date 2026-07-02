@@ -118,6 +118,26 @@ export function createWebFetchTool() {
       }
 
       try {
+        // Defense in depth against DNS rebinding (TOCTOU): re-resolve the
+        // hostname immediately before fetch and reject if the resolved IP is
+        // private/internal. Combined with the earlier lookup this narrows the
+        // TOCTOU window, though fetch() may still re-resolve internally.
+        const parsed = new URL(url);
+        const hostname = parsed.hostname.replace(/^\[(.+)\]$/, '$1');
+        const isDirectIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname);
+        if (!isDirectIP) {
+          let resolvedBlocked = false;
+          try {
+            const addrs = (await import('node:dns/promises')).lookup(hostname, { all: true });
+            const list = await addrs;
+            for (const a of list) {
+              if (isBlockedIP(a.address)) { resolvedBlocked = true; break; }
+            }
+          } catch {}
+          if (resolvedBlocked) {
+            return { error: 'Domain re-resolved to private/internal IP', status: 0 };
+          }
+        }
         const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
         let content = await response.text();
         content = sanitizeForPrompt(content);

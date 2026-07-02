@@ -41,6 +41,28 @@ process.on('exit', () => {
   }
 });
 
+// Prune stale write streams to avoid unbounded growth of the streamCache map.
+// Streams for dates older than `maxAgeDays` are closed and evicted.
+const STREAM_CACHE_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
+
+function pruneStaleStreams(): void {
+  const now = Date.now();
+  for (const [key, stream] of streamCache) {
+    const dateStr = key.split(':').slice(-1)[0];
+    const streamTime = Date.parse(`${dateStr}T00:00:00Z`);
+    if (Number.isFinite(streamTime) && (now - streamTime) > STREAM_CACHE_MAX_AGE_MS) {
+      if (!stream.destroyed) stream.end();
+      streamCache.delete(key);
+    } else if (stream.destroyed) {
+      streamCache.delete(key);
+    }
+  }
+}
+
+// Run prune periodically (every hour) to evict streams for past days.
+setInterval(pruneStaleStreams, 60 * 60 * 1000).unref();
+pruneStaleStreams();
+
 export class Logger {
   private context: string;
   private logDir: string;

@@ -30,12 +30,13 @@ export function createExecuteCodeTool(workspaceDir: string) {
       writeFileSync(filePath, code, 'utf-8');
 
       let command: string;
+      const quotedPath = `"${filePath}"`;
       if (language === 'python') {
-        command = `python ${filePath}`;
+        command = `python ${quotedPath}`;
       } else if (language === 'typescript') {
-        command = `npx tsx ${filePath}`;
+        command = `npx tsx ${quotedPath}`;
       } else {
-        command = `node ${filePath}`;
+        command = `node ${quotedPath}`;
       }
 
       try {

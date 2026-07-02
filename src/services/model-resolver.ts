@@ -32,6 +32,12 @@ async function fetchWithRetry(url: string, retries = 2, delay = 3000): Promise<R
   throw lastErr;
 }
 
+export function invalidateModelCache(): void {
+  cachedModels = null;
+  cacheTime = 0;
+  log.debug('Model cache invalidated');
+}
+
 export async function resolveModels(apiBaseUrl: string, _apiKey?: string): Promise<ModelInfo[]> {
   const now = Date.now();
   if (cachedModels && now - cacheTime < CACHE_TTL) {

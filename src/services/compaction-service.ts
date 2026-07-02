@@ -57,10 +57,17 @@ export class CompactionService {
       return 'No messages to compact.';
     }
 
-    // Build conversation text for summarization
-    const conversationText = messages
-      .map(m => `[${m.role}]: ${m.content || '(empty)'}`)
-      .join('\n\n');
+    // Build conversation text for summarization — include the previous summary
+    // (if any) so the new summary preserves long-term context across multiple
+    // compactions instead of discarding it.
+    const previousSummary = this.sessionsRepo.getSummary(sessionId);
+    let conversationText: string;
+    if (previousSummary) {
+      conversationText = `[Previous conversation summary]:\n${previousSummary}\n\n--- Newer messages ---\n` +
+        messages.map(m => `[${m.role}]: ${m.content || '(empty)'}`).join('\n\n');
+    } else {
+      conversationText = messages.map(m => `[${m.role}]: ${m.content || '(empty)'}`).join('\n\n');
+    }
 
     // Call the LLM to generate a summary
     const summary = await this.generateSummary(conversationText);
