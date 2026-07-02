@@ -9,7 +9,9 @@ import type { FileEntry } from '../types/index.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { config } from '../config.js';
 import { safeWorkspacePath } from '../agent/tools/sanitize.js';
+import { createLogger } from '../services/logger.js';
 
+const log = createLogger('FilesAPI');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 export function createFilesRouter(configRepo: ConfigRepository) {
@@ -268,6 +270,17 @@ export function createFilesRouter(configRepo: ConfigRepository) {
       res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(folderName)}.zip"`);
       res.setHeader('Content-Type', 'application/zip');
       const archive = new ArchiverZip({ zlib: { level: 6 } });
+      // Without an 'error' listener, an archiver failure (read error mid-stream)
+      // raises an unhandled 'error' event on the stream and crashes the Node
+      // process. Forward the error to the client if we still can.
+      archive.on('error', (err: any) => {
+        log.error('ZIP archive error', { path: req.query.path, error: err.message });
+        if (!res.headersSent) {
+          res.status(500).json({ error: `ZIP archive error: ${err.message}` });
+        } else {
+          try { res.end(); } catch {}
+        }
+      });
       archive.pipe(res);
       archive.directory(fullPath, folderName);
       archive.finalize();

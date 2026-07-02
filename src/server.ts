@@ -38,21 +38,39 @@ import { createLogger } from './services/logger.js';
 
 const log = createLogger('Server');
 
-// Simple in-memory rate limiter
+// Simple in-memory rate limiter. The cleanup interval is captured so it can be
+// unref'd (so it doesn't keep the event loop alive) and the Map is capped to
+// avoid unbounded growth under a flood of distinct IPs within a tick window.
 function createRateLimiter(windowMs: number, maxRequests: number) {
   const hits = new Map<string, { count: number; resetAt: number }>();
+  const MAX_KEYS = 10000;
 
-  // Cleanup expired entries every minute
-  setInterval(() => {
+  const cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of hits) {
       if (now > entry.resetAt) hits.delete(key);
     }
-  }, 60000).unref?.();
+  }, 60000);
+  cleanupTimer.unref?.();
 
   return (req: any, res: any, next: any) => {
-    const ip = req.ip ?? req.connection?.remoteAddress ?? 'unknown';
+    // Combine req.ip (respects trust proxy if configured) with the socket's
+    // remote address to avoid sharing one bucket when req.ip is undefined.
+    const ip = req.ip ?? req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? 'unknown';
     const now = Date.now();
+    if (hits.size >= MAX_KEYS) {
+      // Drop the oldest ~10% to bound memory under flood.
+      const dropCount = Math.ceil(MAX_KEYS / 10);
+      let dropped = 0;
+      for (const [key, entry] of hits) {
+        if (dropped >= dropCount) break;
+        if (now > entry.resetAt) {
+          hits.delete(key);
+          dropped++;
+        }
+      }
+      if (hits.size >= MAX_KEYS) hits.clear();
+    }
     let entry = hits.get(ip);
     if (!entry || now > entry.resetAt) {
       entry = { count: 0, resetAt: now + windowMs };
@@ -191,7 +209,7 @@ orchestratorManager.setIo(io);
 orchestratorHeartbeat.start().catch((err: any) => log.error('Heartbeat start failed', { error: err.message }));
 log.info('Orchestrator heartbeat started');
 
-fileWatcher.start(config.workspaceBaseDir, io);
+fileWatcher.start(config.workspaceBaseDir, io, usersRepo);
 log.info('File watcher started', { dir: config.workspaceBaseDir });
 
 const projectsRepo = new ProjectsRepository(db);
@@ -220,15 +238,22 @@ httpServer.listen(config.port, () => {
   log.info('Available routes: /api/auth, /api/admin, /api/chat, /api/models, /api/tasks, /api/files, /api/config, /api/sessions, /api/projects');
 });
 
-process.on('SIGINT', () => {
-  log.info('Shutting down (SIGINT)...');
-  orchestratorHeartbeat.stop();
-  orchestratorManager.shutdownAll();
-  fileWatcher.stop();
-  projectRouter.shutdownAll();
-  db.close();
+// Graceful shutdown handler shared by SIGINT and SIGTERM. Docker sends SIGTERM
+// on `docker stop`; without a handler the process is force-killed after the
+// grace period and the DB close / child-process kill / port release / symlink
+// cleanup are skipped, leaving resources pinned and WAL state unflushed.
+function gracefulShutdown(signal: string) {
+  log.info(`Shutting down (${signal})...`);
+  try { orchestratorHeartbeat.stop(); } catch (err: any) { log.warn('Heartbeat stop error', { error: err.message }); }
+  try { orchestratorManager.shutdownAll(); } catch (err: any) { log.warn('Orchestrator shutdown error', { error: err.message }); }
+  try { fileWatcher.stop(); } catch (err: any) { log.warn('FileWatcher stop error', { error: err.message }); }
+  try { projectRouter.shutdownAll(); } catch (err: any) { log.warn('ProjectRouter shutdown error', { error: err.message }); }
+  try { db.close(); } catch (err: any) { log.warn('DB close error', { error: err.message }); }
   process.exit(0);
-});
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 process.on('uncaughtException', (err) => {
   log.error('Uncaught exception', { error: err.message, stack: err.stack });

@@ -3,7 +3,8 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve, join, dirname, extname } from 'node:path';
 import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import http from 'node:http';
 import { Transform, type TransformCallback } from 'node:stream';
 import type { Project } from '../db/repositories/projects.js';
@@ -11,6 +12,11 @@ import { createLogger } from '../services/logger.js';
 import { buildSafeEnv } from '../agent/tools/command-policy.js';
 
 const log = createLogger('ProjectRouter');
+
+// createRequire lets us dynamically load a project's package.json from an ESM
+// module. Using `require(...)` directly throws ReferenceError in ESM, which
+// silently broke script/main detection (it always fell back to index.js).
+const projectRequire = createRequire(import.meta.url);
 
 const PORT_MIN = 9000;
 const PORT_MAX = 65535;
@@ -41,6 +47,7 @@ interface ActiveProject {
   port?: number;
   symlinkPath?: string;
   restartCount: number;
+  restartTimer?: ReturnType<typeof setTimeout>;
   stopped: boolean;
 }
 
@@ -268,6 +275,14 @@ export class ProjectRouter {
 
     active.stopped = true;
 
+    // Cancel any pending restart timer so it does not live up to 30s in the
+    // event loop after the project is unmounted (which would delay a clean
+    // server shutdown by up to the max backoff).
+    if (active.restartTimer) {
+      clearTimeout(active.restartTimer);
+      active.restartTimer = undefined;
+    }
+
     if (active.process) {
       try {
         active.process.kill('SIGTERM');
@@ -346,6 +361,10 @@ export class ProjectRouter {
     }
 
     active.stopped = true;
+    if (active.restartTimer) {
+      clearTimeout(active.restartTimer);
+      active.restartTimer = undefined;
+    }
     try {
       active.process.kill('SIGTERM');
       log.info('Node process stopped by admin', { uuid, pid: active.process.pid });
@@ -363,7 +382,10 @@ export class ProjectRouter {
   async promoteToNode(project: Project, fullFolderPath: string): Promise<void> {
     this.unmountProject(project);
 
-    const port = nextNodePort++;
+    // Use allocatePort() so the promote path reuses released ports and
+    // respects the wraparound/PORT_MAX bounds. Directly mutating nextNodePort
+    // was bypassing the released-ports pool and could yield port 65536.
+    const port = allocatePort();
     const middleware = createProxyMiddleware({
       target: `http://localhost:${port}`,
       changeOrigin: true,
@@ -419,6 +441,10 @@ export class ProjectRouter {
   shutdownAll(): void {
     for (const [uuid, active] of this.activeProjects) {
       active.stopped = true;
+      if (active.restartTimer) {
+        clearTimeout(active.restartTimer);
+        active.restartTimer = undefined;
+      }
       if (active.process) {
         try {
           active.process.kill('SIGTERM');
@@ -480,7 +506,8 @@ export class ProjectRouter {
         active.restartCount++;
         const delay = Math.min(1000 * Math.pow(2, active.restartCount - 1), 30000);
         log.info('Restarting Node project after crash', { uuid: project.uuid, restartCount: active.restartCount, delayMs: delay });
-        setTimeout(() => {
+        active.restartTimer = setTimeout(() => {
+          active.restartTimer = undefined;
           if (!active.stopped && this.activeProjects.has(project.uuid)) {
             this.spawnAndWatch(project, fullFolderPath, port);
           }
@@ -501,7 +528,7 @@ export class ProjectRouter {
 
     if (existsSync(pkgJsonPath)) {
       try {
-        const pkgJson = require(pkgJsonPath);
+        const pkgJson = projectRequire(pkgJsonPath);
         if (pkgJson.scripts?.start) {
           startCmd = 'npm';
           startArgs = ['start'];
@@ -510,7 +537,9 @@ export class ProjectRouter {
           startArgs = [pkgJson.main];
           entryFile = pkgJson.main;
         }
-      } catch {}
+      } catch (err: any) {
+        log.warn('Failed to parse package.json, falling back to index.js', { uuid, folderPath, error: err.message });
+      }
     }
 
     if (startCmd === 'node' && entryFile && !existsSync(resolve(folderPath, entryFile))) {
