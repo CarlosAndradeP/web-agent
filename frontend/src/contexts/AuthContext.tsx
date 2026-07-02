@@ -164,20 +164,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [accessToken, refreshToken]);
 
-  // Socket.IO connection using singleton — managed by AuthContext lifecycle
+  // Socket.IO connection using singleton — managed by AuthContext lifecycle.
+  // Re-connect whenever the access token changes so the socket handshake uses
+  // a fresh token (the previous one may have expired after a refresh).
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !accessToken) {
       disconnectSocket();
       socketRef.current = null;
       return;
     }
 
-    const token = accessTokenRef.current;
-    if (!token) return;
-
-    const socket = connectWithAuth(token);
+    const socket = connectWithAuth(accessToken);
     socketRef.current = socket;
 
     const joinRoom = () => {
@@ -206,7 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       disconnectSocket();
       socketRef.current = null;
     };
-  }, [user?.id]);
+  }, [user?.id, accessToken, updateCredits]);
 
   return (
     <AuthContext.Provider value={{

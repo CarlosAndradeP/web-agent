@@ -106,11 +106,14 @@ export default function OrchestratorLog({ steps, logs }: Props) {
         </div>
       ) : (
         <div className="divide-y divide-zinc-800/30">
-          {allEntries.map((entry, i) =>
-            entry.type === 'step'
-              ? <StepEntry key={`step-${i}`} step={entry.data} />
-              : <LogEntryRow key={`log-${i}`} entry={entry.data} />
-          )}
+          {allEntries.map((entry, i) => {
+            const key = entry.type === 'step'
+              ? `step-${entry.data.id ?? entry.data.stepNumber ?? i}`
+              : `log-${entry.data.timestamp ?? i}`;
+            return entry.type === 'step'
+              ? <StepEntry key={key} step={entry.data} />
+              : <LogEntryRow key={key} entry={entry.data} />;
+          })}
         </div>
       )}
     </div>

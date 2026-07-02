@@ -77,7 +77,7 @@ export function useChat(sessionId: string) {
     abortRef.current = controller;
 
     try {
-      const response = await api.chat.stream(sessionId, model, allMessages, maxSteps);
+      const response = await api.chat.stream(sessionId, model, allMessages, maxSteps, controller.signal);
 
       if (!response.ok) {
         if (response.status === 402) {

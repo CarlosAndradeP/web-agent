@@ -157,7 +157,7 @@ export const api = {
       }),
   },
   chat: {
-    stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number) => {
+    stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number, signal?: AbortSignal) => {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       const token = localStorage.getItem('webagent_access_token');
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -165,6 +165,7 @@ export const api = {
         method: 'POST',
         headers,
         body: JSON.stringify({ sessionId, model, messages, maxSteps }),
+        signal,
       });
     },
     compact: (sessionId: string) =>

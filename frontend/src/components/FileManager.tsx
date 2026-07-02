@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFiles } from '../hooks/useFiles';
 import { useResizable } from '../hooks/useResizable';
 import { api } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 import type { FileEntry, Project } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -140,6 +141,7 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
 export default function FileManager({ basePath = '.' }: { basePath?: string }) {
   const [currentPath, setCurrentPath] = useState<string>(basePath);
   const { tree, loading, refresh } = useFiles(currentPath);
+  const { authFetch } = useAuth();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('view');
@@ -291,9 +293,8 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
         formData.append('destination', currentPath);
       }
       try {
-        await fetch('/api/files/upload', {
+        await authFetch('/api/files/upload', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('webagent_access_token')}` },
           body: formData,
         });
       } catch {}
