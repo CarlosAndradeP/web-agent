@@ -93,6 +93,9 @@ export class OrchestratorRunner {
     log.info('Resuming orchestrator', { sessionId });
     this.running = true;
     this.currentSessionId = sessionId;
+    this.totalStepsUsed = 0;
+    this.taskRetryCount.clear();
+    this.replanCount.clear();
     this.appConfigCache = null;
     this.abortController = new AbortController();
     this.sessionsRepo.updateStatus(sessionId, 'running');
@@ -448,7 +451,7 @@ Requirements:
         default: result = await this.callSubAgentWithContext(session, 'programador', context); break;
       }
 
-      this.deductCreditsForTask(session.userId, task.role, result.stepsUsed);
+      this.deductCreditsForTask(session.userId, task.role, result);
 
       if (result.success) {
         this.tasksRepo.updateResult(task.id, result.text, 'completed', null, JSON.stringify(result));
@@ -604,7 +607,7 @@ Requirements:
             suggestions.push({
               name: String(item.name ?? `Replacement task`),
               description: String(item.description ?? ''),
-              role: ['arquiteto', 'programador', 'auxiliar'].includes(item.role) ? item.role : 'programador',
+              role: ['arquiteto', 'programador', 'auxiliar', 'revisor'].includes(item.role) ? item.role : 'programador',
             });
           }
         }
@@ -690,7 +693,7 @@ Requirements:
         this.totalStepsUsed += stepsUsed;
         log.info('Sub-agent completed', { role, modelId, stepsUsed, totalStepsUsed: this.totalStepsUsed, wasFallback: !isPrimary });
 
-        return this.buildSubAgentResult(text, agentSteps, stepsUsed, shouldScan, workspaceDir, beforeFiles);
+        return this.buildSubAgentResult(text, agentSteps, stepsUsed, shouldScan, workspaceDir, beforeFiles, modelId);
       } catch (err: any) {
         const isRateLimit = this.isRateLimitError(err);
         const isLastModel = modelId === modelChain[modelChain.length - 1];
@@ -702,15 +705,15 @@ Requirements:
 
         if (!isRateLimit) {
           log.error('Sub-agent call failed (non-rate-limit)', { role, modelId, error: err.message, sessionId: session.id });
-          return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: err.message, step: 0 }], stepsUsed: 0, success: false };
+          return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: err.message, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
         }
 
         log.error('Sub-agent call failed — all fallback models rate-limited', { role, error: err.message, sessionId: session.id });
-        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All models rate-limited. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false };
+        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All models rate-limited. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
       }
     }
 
-    return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: 'No models available', step: 0 }], stepsUsed: 0, success: false };
+    return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: 'No models available', step: 0 }], stepsUsed: 0, success: false, modelUsed: primaryModelId };
   }
 
   private async callSubAgent(session: OrchestratorSession, role: string, taskDescription: string): Promise<SubAgentResult> {
@@ -770,7 +773,7 @@ Requirements:
         this.totalStepsUsed += stepsUsed;
         log.info('Sub-agent completed', { role, modelId, stepsUsed, wasFallback: !isPrimary });
 
-        return this.buildSubAgentResult(text, agentSteps, stepsUsed, shouldScan, workspaceDir, beforeFiles);
+        return this.buildSubAgentResult(text, agentSteps, stepsUsed, shouldScan, workspaceDir, beforeFiles, modelId);
       } catch (err: any) {
         const isRateLimit = this.isRateLimitError(err);
         const isLastModel = modelId === modelChain[modelChain.length - 1];
@@ -782,15 +785,15 @@ Requirements:
 
         if (!isRateLimit) {
           log.error('Sub-agent call failed (non-rate-limit)', { role, modelId, error: err.message, sessionId: session.id });
-          return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: err.message, step: 0 }], stepsUsed: 0, success: false };
+          return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: err.message, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
         }
 
         log.error('Sub-agent call failed — all fallback models rate-limited', { role, error: err.message, sessionId: session.id });
-        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All models rate-limited. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false };
+        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All models rate-limited. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
       }
     }
 
-    return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: 'No models available', step: 0 }], stepsUsed: 0, success: false };
+    return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: 'No models available', step: 0 }], stepsUsed: 0, success: false, modelUsed: primaryModelId };
   }
 
   private getFallbackChain(role: string): string[] {
@@ -807,7 +810,7 @@ Requirements:
     return chain;
   }
 
-  private async buildSubAgentResult(text: string, agentSteps: any[], stepsUsed: number, shouldScan: boolean, workspaceDir: string, beforeFiles: Map<string, { size: number; mtime: number }>): Promise<SubAgentResult> {
+  private async buildSubAgentResult(text: string, agentSteps: any[], stepsUsed: number, shouldScan: boolean, workspaceDir: string, beforeFiles: Map<string, { size: number; mtime: number }>, modelUsed: string): Promise<SubAgentResult> {
     let created: string[] = [];
     let modified: string[] = [];
     if (shouldScan) {
@@ -834,6 +837,7 @@ Requirements:
       errors: [],
       stepsUsed,
       success: true,
+      modelUsed,
     };
   }
 
@@ -967,7 +971,7 @@ Requirements:
     }
 
     if (msg.includes('this operation was aborted') || msg.includes('was terminated') || msg.includes('timeout exceeded')) {
-      return { type: 'permanent', reason: 'Sub-agent operation timed out' };
+      return { type: 'transient', reason: 'Sub-agent operation timed out' };
     }
 
     if (status === 400 || status === 422) {
@@ -1045,8 +1049,8 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
 
       const verifyText = verifyResult.text ?? '';
       if (!verifyText.trim()) {
-        log.warn('Project verification returned empty text, assuming pass', { sessionId: session.id });
-        return true;
+        log.warn('Project verification returned empty text, treating as failed (no positive confirmation)', { sessionId: session.id });
+        return false;
       }
       const upper = verifyText.toUpperCase();
       const hasPass = upper.includes('PASS');
@@ -1061,8 +1065,8 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
         return false;
       }
     } catch (err: any) {
-      log.warn('Verification call failed, assuming pass', { error: err.message });
-      return true;
+      log.warn('Verification call failed, treating as failed (no positive confirmation)', { error: err.message });
+      return false;
     }
   }
 
@@ -1134,14 +1138,15 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
     return Math.round((completed / all.length) * 100);
   }
 
-  private deductCreditsForTask(userId: string | undefined, role: string, stepsUsed: number): void {
+  private deductCreditsForTask(userId: string | undefined, role: string, result: SubAgentResult): void {
     if (!userId || !this.currentSessionId) return;
     const user = this.usersRepo.findById(userId);
     if (user?.role === 'admin') return;
-    if (stepsUsed <= 0) return;
+    if (result.stepsUsed <= 0) return;
     try {
-      const costPerStep = this.creditManager.getCostPerStep(this.getModelForRole(role as OrchestratorRole));
-      const totalCost = stepsUsed * costPerStep;
+      const model = result.modelUsed ?? this.getModelForRole(role as OrchestratorRole);
+      const costPerStep = this.creditManager.getCostPerStep(model);
+      const totalCost = result.stepsUsed * costPerStep;
       this.creditManager.deductCredit(userId, `orchestrator:${this.currentSessionId}`, totalCost);
     } catch (err: any) {
       if (err.message?.includes('Insufficient') || err.message?.includes('exhausted')) {

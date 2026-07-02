@@ -192,6 +192,7 @@ export interface SubAgentResult {
   errors: { message: string; step: number }[];
   stepsUsed: number;
   success: boolean;
+  modelUsed: string;
 }
 
 export interface OrchestratorState {
