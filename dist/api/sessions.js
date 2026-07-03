@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { SessionsRepository } from '../db/repositories/sessions.js';
 import { MessagesRepository } from '../db/repositories/messages.js';
+import { config } from '../config.js';
+import { createLogger } from '../services/logger.js';
+const log = createLogger('SessionsAPI');
 export function createSessionsRouter(db) {
     const router = Router();
     const sessionsRepo = new SessionsRepository(db);
@@ -29,12 +32,23 @@ export function createSessionsRouter(db) {
             res.status(400).json({ error: 'name is required' });
             return;
         }
-        const session = sessionsRepo.create(name, model ?? 'z-ai/glm-5.1');
+        const session = sessionsRepo.create(name, model ?? config.defaultModel);
         if (userId) {
-            try {
+            // Wrap in a transaction so a failure leaves both the INSERT and the
+            // ownership UPDATE either fully applied or rolled back, instead of an
+            // unowned row that any non-admin could later read/delete.
+            const tx = db.transaction(() => {
                 db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
+            });
+            try {
+                tx();
             }
-            catch { }
+            catch (err) {
+                log.error('Failed to assign session owner — leaving session deleted', { sessionId: session.id, userId, error: err.message });
+                sessionsRepo.delete(session.id);
+                res.status(500).json({ error: 'Failed to create session' });
+                return;
+            }
         }
         res.status(201).json({ session });
     });

@@ -10,6 +10,11 @@ import { cn } from '../lib/utils';
 
 type AccountTab = 'account' | 'security' | 'credits';
 
+const roleLabels: Record<string, string> = {
+  admin: 'Administrador',
+  user: 'Usuário',
+};
+
 export default function UserPanel() {
   const { user, accessToken, updateCredits, updateUser } = useAuth();
   const [tab, setTab] = useState<AccountTab>('account');
@@ -46,15 +51,15 @@ export default function UserPanel() {
     setPasswordError('');
     setPasswordSuccess(false);
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setPasswordError('All fields are required');
+      setPasswordError('Preencha todos os campos');
       return;
     }
     if (newPassword.length < 6) {
-      setPasswordError('New password must be at least 6 characters');
+      setPasswordError('A nova senha deve ter pelo menos 6 caracteres');
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPasswordError('New passwords do not match');
+      setPasswordError('As novas senhas não conferem');
       return;
     }
     try {
@@ -66,9 +71,9 @@ export default function UserPanel() {
       setConfirmPassword('');
     } catch (err: any) {
       if (err.message?.includes('incorrect')) {
-        setPasswordError('Current password is incorrect');
+        setPasswordError('A senha atual está incorreta');
       } else {
-        setPasswordError('Failed to change password');
+        setPasswordError('Não foi possível alterar a senha');
       }
     }
   };
@@ -88,9 +93,9 @@ export default function UserPanel() {
   if (!user) return null;
 
   const tabs: { id: AccountTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'account', label: 'Account', icon: User },
-    { id: 'security', label: 'Security', icon: Lock },
-    { id: 'credits', label: 'Credits', icon: CreditCard },
+    { id: 'account', label: 'Conta', icon: User },
+    { id: 'security', label: 'Segurança', icon: Lock },
+    { id: 'credits', label: 'Créditos', icon: CreditCard },
   ];
 
   return (
@@ -119,18 +124,18 @@ export default function UserPanel() {
       <div className="flex-1 overflow-hidden">
         {tab === 'account' && (
           <ScrollArea className="h-full p-6">
-            <h2 className="text-sm font-semibold mb-4">Account Information</h2>
+            <h2 className="text-sm font-semibold mb-4">Informações da conta</h2>
             <div className="max-w-md space-y-4">
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Username</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Usuário</label>
                 <div className="text-sm text-zinc-300 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2">{user.username}</div>
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Role</label>
-                <div className="text-sm text-zinc-300 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 capitalize">{user.role}</div>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Perfil</label>
+                <div className="text-sm text-zinc-300 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2">{roleLabels[user.role] || user.role}</div>
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Email</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">E-mail</label>
                 <Input
                   type="email"
                   value={email}
@@ -140,16 +145,16 @@ export default function UserPanel() {
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Created</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Criada em</label>
                 <div className="text-sm text-zinc-300 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2">
-                  {new Date(user.createdAt).toLocaleDateString()}
+                  {new Date(user.createdAt).toLocaleDateString('pt-BR')}
                 </div>
               </div>
               <Button size="sm" onClick={handleUpdateProfile} className="text-xs gap-1">
-                <Save className="h-3 w-3" /> Save Email
+                <Save className="h-3 w-3" /> Salvar e-mail
               </Button>
               {profileSuccess && (
-                <p className="text-xs text-emerald-400">Profile updated successfully</p>
+                <p className="text-xs text-emerald-400">Perfil atualizado com sucesso</p>
               )}
             </div>
           </ScrollArea>
@@ -157,36 +162,36 @@ export default function UserPanel() {
 
         {tab === 'security' && (
           <ScrollArea className="h-full p-6">
-            <h2 className="text-sm font-semibold mb-4">Change Password</h2>
+            <h2 className="text-sm font-semibold mb-4">Alterar senha</h2>
             <div className="max-w-md space-y-4">
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Current Password</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Senha atual</label>
                 <Input
                   type="password"
                   value={currentPassword}
                   onChange={e => { setCurrentPassword(e.target.value); setPasswordError(''); }}
                   className="text-xs"
-                  placeholder="Enter current password"
+                  placeholder="Digite a senha atual"
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">New Password</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Nova senha</label>
                 <Input
                   type="password"
                   value={newPassword}
                   onChange={e => { setNewPassword(e.target.value); setPasswordError(''); }}
                   className="text-xs"
-                  placeholder="At least 6 characters"
+                  placeholder="Pelo menos 6 caracteres"
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Confirm New Password</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-1">Confirmar nova senha</label>
                 <Input
                   type="password"
                   value={confirmPassword}
                   onChange={e => { setConfirmPassword(e.target.value); setPasswordError(''); }}
                   className="text-xs"
-                  placeholder="Repeat new password"
+                  placeholder="Repita a nova senha"
                   onKeyDown={e => e.key === 'Enter' && handleChangePassword()}
                 />
               </div>
@@ -197,10 +202,10 @@ export default function UserPanel() {
                 </div>
               )}
               {passwordSuccess && (
-                <p className="text-xs text-emerald-400">Password changed successfully</p>
+                <p className="text-xs text-emerald-400">Senha alterada com sucesso</p>
               )}
               <Button size="sm" onClick={handleChangePassword} className="text-xs gap-1">
-                <Lock className="h-3 w-3" /> Change Password
+                <Lock className="h-3 w-3" /> Alterar senha
               </Button>
             </div>
           </ScrollArea>
@@ -208,18 +213,18 @@ export default function UserPanel() {
 
         {tab === 'credits' && (
           <ScrollArea className="h-full p-6">
-            <h2 className="text-sm font-semibold mb-4">Credits</h2>
+            <h2 className="text-sm font-semibold mb-4">Créditos</h2>
             <div className="max-w-md space-y-4">
               <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Current Balance</div>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Saldo atual</div>
                 <div className="text-2xl font-bold text-zinc-100 mt-1">{creditBalance.toLocaleString()}</div>
-                <div className="text-[10px] text-zinc-500 mt-1">credits</div>
+                <div className="text-[10px] text-zinc-500 mt-1">créditos</div>
               </div>
 
               <Separator />
 
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-2">Transaction History</label>
+                <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium block mb-2">Histórico de transações</label>
                 <div className="space-y-1 max-h-64 overflow-y-auto">
                   {creditHistory.map(tx => (
                     <div key={tx.id} className="flex justify-between items-center text-xs py-1.5 px-2 rounded hover:bg-zinc-800/50">
@@ -234,13 +239,13 @@ export default function UserPanel() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-zinc-500">{tx.description || '—'}</span>
-                        <span className="text-zinc-600 text-[10px]">{new Date(tx.createdAt).toLocaleDateString()}</span>
+                        <span className="text-zinc-600 text-[10px]">{new Date(tx.createdAt).toLocaleDateString('pt-BR')}</span>
                       </div>
                       <span className="text-zinc-400 font-mono text-[10px]">{tx.balanceAfter}</span>
                     </div>
                   ))}
                   {creditHistory.length === 0 && (
-                    <p className="text-[10px] text-zinc-600 py-2">No transactions yet</p>
+                    <p className="text-[10px] text-zinc-600 py-2">Nenhuma transação ainda</p>
                   )}
                 </div>
               </div>

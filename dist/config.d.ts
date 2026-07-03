@@ -12,6 +12,8 @@ export declare const config: {
     defaultModel: string;
     agentType: "main" | "sub" | "none";
     jwtSecret: string;
+    accessTokenSecret: string;
+    refreshTokenSecret: string;
     adminPassword: string;
     initialCredits: number;
     publicBaseUrl: string;

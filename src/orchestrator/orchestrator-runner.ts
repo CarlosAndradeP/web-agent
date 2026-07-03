@@ -1,8 +1,11 @@
 import type Database from 'better-sqlite3';
 import type { Server } from 'socket.io';
 import { generateText } from 'ai';
+import { relative } from 'node:path';
 import type { OrchestratorSession, OrchestratorRole, SubAgentResult, TaskContext, PlanTask } from '../types/index.js';
 import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository, OrchestratorTasksRepository } from '../db/repositories/orchestrator.js';
+import type { ProjectRouter } from '../services/project-router.js';
+import type { Project, ProjectsRepository } from '../db/repositories/projects.js';
 import { createAuxiliarAgent, AUXILIAR_DEFAULT_MODEL } from './agents/auxiliar-agent.js';
 import { createArquitetoAgent, ARQUITETO_DEFAULT_MODEL } from './agents/arquiteto-agent.js';
 import { createProgramadorAgent, PROGRAMADOR_DEFAULT_MODEL } from './agents/programador-agent.js';
@@ -11,6 +14,8 @@ import { CreditManager } from '../services/credit-manager.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { createProvider } from '../agent/provider.js';
+import { safeWorkspacePath } from '../agent/tools/sanitize.js';
+import { getUserWorkspaceDir } from '../lib/workspace-paths.js';
 import { createLogger, logSubAgentEvent } from '../services/logger.js';
 
 const log = createLogger('OrchestratorRunner');
@@ -46,13 +51,16 @@ export class OrchestratorRunner {
   constructor(
     private db: Database.Database,
     private creditManagerRef: CreditManager,
+    private projectRouter: ProjectRouter,
+    private projectsRepo: ProjectsRepository,
+    private usersRepository: UsersRepository,
   ) {
     this.sessionsRepo = new OrchestratorSessionsRepository(db);
     this.stepsRepo = new OrchestratorStepsRepository(db);
     this.stateRepo = new OrchestratorStateRepository(db);
     this.tasksRepo = new OrchestratorTasksRepository(db);
     this.configRepo = new ConfigRepository(db);
-    this.usersRepo = new UsersRepository(db);
+    this.usersRepo = usersRepository;
     this.creditManager = creditManagerRef;
   }
 
@@ -185,8 +193,7 @@ export class OrchestratorRunner {
 
   private async createPlan(session: OrchestratorSession): Promise<void> {
     log.info('Creating plan from .md files + codebase scan', { sessionId: session.id });
-    const appConfig = this.getAppConfig();
-    const workspaceDir = session.workspaceDir ?? appConfig.workspaceDir;
+    const workspaceDir = await this.resolveSessionWorkspaceDir(session);
 
     let mdContent = '';
     if (session.mdFiles) {
@@ -238,10 +245,13 @@ export class OrchestratorRunner {
         dependsOn: dependsOnName,
         stepNumber: i + 1,
       });
+
+      this.emitTaskEvent(`plan-${i}`, session.id, 'pending', t.name, t.role ?? 'programador', enrichedDescription, dependsOnName);
     }
 
     this.sessionsRepo.updateProgress(session.id, 5, `Plan created: ${plan.length} tasks`);
     this.emitEvent('orchestrator:progress', { sessionId: session.id, progressPercent: 5, currentStep: `Plan created: ${plan.length} tasks` });
+    this.emitEvent('orchestrator:plan', { sessionId: session.id, taskCount: plan.length });
     log.info('Plan created', { sessionId: session.id, taskCount: plan.length });
   }
 
@@ -389,6 +399,7 @@ Requirements:
         const remainingPending = this.tasksRepo.findPending(session.id);
         for (const t of remainingPending) {
           this.tasksRepo.updateResult(t.id, '', 'failed', 'Credits exhausted — task could not run', null);
+          this.emitTaskEvent(t.id, session.id, 'failed', t.name, t.role, t.description, t.dependsOn, 'Credits exhausted');
         }
         this.handleFatalError(session.id, 'Credits exhausted');
         return;
@@ -405,9 +416,10 @@ Requirements:
         );
         if (allBlocked) {
           log.error('All remaining tasks have unresolvable dependencies', { sessionId: session.id, blockedCount: remainingPending.length });
-          for (const t of remainingPending) {
-            this.tasksRepo.updateResult(t.id, '', 'failed', `Dependency "${t.dependsOn}" never completed`, null);
-          }
+        for (const t of remainingPending) {
+          this.tasksRepo.updateResult(t.id, '', 'failed', `Dependency "${t.dependsOn}" never completed`, null);
+          this.emitTaskEvent(t.id, session.id, 'failed', t.name, t.role, t.description, t.dependsOn, `Dependency "${t.dependsOn}" never completed`);
+        }
           break;
         }
       }
@@ -436,6 +448,7 @@ Requirements:
 
   private async executeTask(session: OrchestratorSession, task: any): Promise<void> {
     this.tasksRepo.updateStatus(task.id, 'running');
+    this.emitTaskEvent(task.id, session.id, 'running', task.name, task.role, task.description, task.dependsOn);
     this.sessionsRepo.updateProgress(session.id, this.getCurrentProgress(), `Running: ${task.name}`);
     const startTime = Date.now();
 
@@ -455,6 +468,7 @@ Requirements:
 
       if (result.success) {
         this.tasksRepo.updateResult(task.id, result.text, 'completed', null, JSON.stringify(result));
+        this.emitTaskEvent(task.id, session.id, 'completed', task.name, task.role);
         this.emitEvent('orchestrator:step', {
           sessionId: session.id, stepNumber: task.stepNumber, role: task.role, model: this.getModelForRole(task.role as any),
           action: 'delegate', input: task.description.slice(0, 500), output: result.text.slice(0, 1000), status: 'completed', durationMs: Date.now() - startTime,
@@ -465,8 +479,10 @@ Requirements:
           log.warn('Task failed, will retry with error feedback', { taskId: task.id, retry: retryCount + 1 });
           this.tasksRepo.updateResult(task.id, result.text, 'pending',
             `Failed (attempt ${retryCount + 1}): ${result.errors.map(e => e.message).join('; ') || 'Unknown error'}. Will retry with different approach.`, null);
+          this.emitTaskEvent(task.id, session.id, 'pending', task.name, task.role, task.description, task.dependsOn, 'Will retry');
         } else {
           this.tasksRepo.updateResult(task.id, result.text, 'failed', `Failed after ${TASK_MAX_RETRIES} retries`, null);
+          this.emitTaskEvent(task.id, session.id, 'failed', task.name, task.role, task.description, task.dependsOn, `Failed after ${TASK_MAX_RETRIES} retries`);
           this.sessionsRepo.incrementErrorCount(session.id);
           this.emitEvent('orchestrator:error', { sessionId: session.id, error: `Task "${task.name}" failed after ${TASK_MAX_RETRIES} retries` });
           await this.attemptReplan(session, task);
@@ -476,8 +492,10 @@ Requirements:
       if (retryCount < TASK_MAX_RETRIES) {
         this.taskRetryCount.set(task.id, retryCount + 1);
         this.tasksRepo.updateResult(task.id, '', 'pending', `Error: ${err.message} (will retry)`, null);
+        this.emitTaskEvent(task.id, session.id, 'pending', task.name, task.role, task.description, task.dependsOn, err.message);
       } else {
         this.tasksRepo.updateResult(task.id, '', 'failed', `Task threw error and exhausted retries: ${err.message}`, null);
+        this.emitTaskEvent(task.id, session.id, 'failed', task.name, task.role, task.description, task.dependsOn, err.message);
         this.sessionsRepo.incrementErrorCount(session.id);
         this.emitEvent('orchestrator:error', { sessionId: session.id, error: err.message });
         await this.attemptReplan(session, task);
@@ -581,6 +599,7 @@ Requirements:
           dependsOn: failedTask.dependsOn,
           stepNumber: maxStep + i + 1,
         });
+        this.emitTaskEvent(`replan-${maxStep + i + 1}`, session.id, 'pending', suggestions[i].name, suggestions[i].role ?? 'programador', suggestions[i].description, failedTask.dependsOn);
       }
       log.info('Replacement tasks created', { count: suggestions.length, originalTask: failedTask.name });
       this.emitEvent('orchestrator:step', {
@@ -638,7 +657,7 @@ Requirements:
   private async callSubAgentWithContext(session: OrchestratorSession, role: string, context: TaskContext): Promise<SubAgentResult> {
     const enrichedPrompt = this.formatContextPrompt(context);
     const appConfig = this.getAppConfig();
-    const workspaceDir = session.workspaceDir ?? appConfig.workspaceDir;
+    const workspaceDir = await this.resolveSessionWorkspaceDir(session);
     const projectType = await this.detectProjectType(workspaceDir);
     const objective = session.objective;
     const primaryModelId = this.getModelForRole(role as OrchestratorRole);
@@ -718,7 +737,7 @@ Requirements:
 
   private async callSubAgent(session: OrchestratorSession, role: string, taskDescription: string): Promise<SubAgentResult> {
     const appConfig = this.getAppConfig();
-    const workspaceDir = session.workspaceDir ?? appConfig.workspaceDir;
+    const workspaceDir = await this.resolveSessionWorkspaceDir(session);
     const projectType = await this.detectProjectType(workspaceDir);
     const objective = session.objective;
     const primaryModelId = this.getModelForRole(role as OrchestratorRole);
@@ -881,15 +900,79 @@ Requirements:
   }
 
   private async readFileSafe(workspaceDir: string, filePath: string): Promise<string> {
-    const path = await import('node:path');
     const fs = await import('node:fs/promises');
-    const fullPath = path.resolve(workspaceDir, filePath);
-    const normalized = path.resolve(workspaceDir);
-    const safePrefix = normalized.endsWith(path.sep) ? normalized : normalized + path.sep;
-    if (fullPath !== normalized && !fullPath.startsWith(safePrefix)) {
-      throw new Error('Path traversal blocked');
-    }
+    const fullPath = safeWorkspacePath(workspaceDir, filePath);
     return fs.readFile(fullPath, 'utf-8');
+  }
+
+  private async resolveSessionWorkspaceDir(session: OrchestratorSession): Promise<string> {
+    if (session.workspaceDir) return session.workspaceDir;
+    if (!session.userId) {
+      throw new Error('Orchestrator session has no workspace and no owner');
+    }
+    const user = this.usersRepo.findById(session.userId);
+    if (!user) {
+      throw new Error('Orchestrator session owner not found');
+    }
+    return getUserWorkspaceDir(user.username);
+  }
+
+  private async ensureNodeProjectPublished(session: OrchestratorSession): Promise<boolean> {
+    const workspaceDir = await this.resolveSessionWorkspaceDir(session);
+    const projectType = await this.detectProjectType(workspaceDir);
+    if (projectType !== 'node') return true;
+    if (!session.userId) throw new Error('Cannot publish Node project without session owner');
+
+    const user = this.usersRepo.findById(session.userId);
+    if (!user) throw new Error('Cannot publish Node project: owner not found');
+
+    let project = session.sessionId
+      ? this.db.prepare('SELECT * FROM projects WHERE session_id = ?').get(session.sessionId) as any
+      : null;
+
+    let mappedProject: Project | undefined = project ? this.projectsRepo.findById(project.id) : undefined;
+    if (!mappedProject) {
+      const userWorkspace = getUserWorkspaceDir(user.username);
+      const folderPath = relative(userWorkspace, workspaceDir).replace(/\\/g, '/') || '.';
+      if (folderPath.startsWith('..') || folderPath.includes('/../')) {
+        throw new Error('Cannot publish Node project outside the user workspace');
+      }
+
+      mappedProject = this.projectsRepo.create(
+        session.userId,
+        this.buildImplicitProjectName(session),
+        folderPath,
+        'node',
+        session.sessionId,
+        'stopped',
+      );
+      if (session.sessionId) {
+        this.db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(mappedProject.id, session.sessionId);
+      }
+    }
+
+    if (mappedProject.type !== 'node') {
+      this.projectsRepo.updateType(mappedProject.id, 'node');
+      mappedProject = this.projectsRepo.findById(mappedProject.id) ?? { ...mappedProject, type: 'node' };
+      await this.projectRouter.promoteToNode(mappedProject, workspaceDir);
+    } else {
+      await this.projectRouter.mountProject(mappedProject, workspaceDir);
+    }
+
+    this.projectsRepo.updateStatus(mappedProject.id, 'active');
+    this.emitEvent('orchestrator:project-mounted', {
+      sessionId: session.id,
+      projectId: mappedProject.id,
+      uuid: mappedProject.uuid,
+      url: `/p/${mappedProject.uuid}/`,
+    });
+    log.info('Orchestrator published Node project', { sessionId: session.id, projectId: mappedProject.id, uuid: mappedProject.uuid });
+    return true;
+  }
+
+  private buildImplicitProjectName(session: OrchestratorSession): string {
+    const normalized = session.objective.replace(/\s+/g, ' ').trim();
+    return normalized ? normalized.slice(0, 80) : 'Autonomous project';
   }
 
   // ====== INTELLIGENT RETRY WITH ERROR CLASSIFICATION ======
@@ -1028,6 +1111,16 @@ Requirements:
     if (anyFailed) return false;
     const allCompleted = tasks.every(t => t.status === 'completed');
     if (!allCompleted) return false;
+
+    try {
+      await this.ensureNodeProjectPublished(session);
+    } catch (err: any) {
+      const reason = `Node project publish failed: ${err.message}`;
+      log.warn(reason, { sessionId: session.id });
+      this.sessionsRepo.updateProgress(session.id, 95, reason);
+      this.emitEvent('orchestrator:error', { sessionId: session.id, error: reason, role: 'orchestrator' });
+      return false;
+    }
 
     log.info('Running intelligent project verification', { sessionId: session.id });
     try {
@@ -1170,6 +1263,14 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
     if (this.currentSessionId) this.io.to(`orchestrator:${this.currentSessionId}`).emit(event, data);
     const session = this.currentSessionId ? this.sessionsRepo.findById(this.currentSessionId) : null;
     if (session?.userId) this.io.to(`user:${session.userId}`).emit(event, data);
+  }
+
+  private emitTaskEvent(taskId: string, sessionId: string, status: string, name?: string, role?: string, description?: string, dependsOn?: string | null, errorMessage?: string | null): void {
+    if (!this.io) return;
+    const payload = { taskId, sessionId, status, name, role, description, dependsOn: dependsOn ?? null, errorMessage: errorMessage ?? null };
+    this.io.to(`orchestrator:${sessionId}`).emit('orchestrator:task', payload);
+    const session = this.sessionsRepo.findById(sessionId);
+    if (session?.userId) this.io.to(`user:${session.userId}`).emit('orchestrator:task', payload);
   }
 
   private sleep(ms: number): Promise<void> {

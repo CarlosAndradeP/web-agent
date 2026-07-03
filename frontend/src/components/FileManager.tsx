@@ -88,7 +88,7 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
           <button
             onClick={e => { e.stopPropagation(); onRename(path, entry.type); }}
             className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-            title="Rename"
+            title="Renomear"
           >
             <Pencil className="h-3 w-3 text-zinc-500" />
           </button>
@@ -96,7 +96,7 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
             <button
               onClick={e => { e.stopPropagation(); onDownload(path); }}
               className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-              title="Download"
+              title="Baixar"
             >
               <Download className="h-3 w-3 text-zinc-500" />
             </button>
@@ -105,7 +105,7 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
             <button
               onClick={e => { e.stopPropagation(); onDownloadZip(path); }}
               className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-              title="Download as ZIP"
+              title="Baixar como ZIP"
             >
               <Archive className="h-3 w-3 text-zinc-500" />
             </button>
@@ -113,7 +113,7 @@ function FileNode({ entry, path, depth, selectedPath, onSelect, onDelete, onRena
           <button
             onClick={e => { e.stopPropagation(); onDelete(path, entry.type); }}
             className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-            title="Delete"
+            title="Excluir"
           >
             <Trash2 className="h-3 w-3 text-zinc-500 hover:text-red-400" />
           </button>
@@ -218,7 +218,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       link.click();
       URL.revokeObjectURL(link.href);
     } catch (err) {
-      console.error('Download failed:', err);
+      console.error('Falha ao baixar:', err);
     }
   }, []);
 
@@ -232,7 +232,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       link.click();
       URL.revokeObjectURL(link.href);
     } catch (err) {
-      console.error('Download failed:', err);
+      console.error('Falha ao baixar:', err);
     }
   }, []);
 
@@ -316,7 +316,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       await api.files.extractZip(file, currentPath === '.' ? undefined : currentPath);
       refresh();
     } catch (err: any) {
-      alert(`Failed to extract zip: ${err.message}`);
+      alert(`Não foi possível extrair o ZIP: ${err.message}`);
     }
     if (zipInputRef.current) zipInputRef.current.value = '';
   };
@@ -336,7 +336,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
     }
   };
 
-  if (loading) return <div className="p-4 text-zinc-500">Loading files...</div>;
+  if (loading) return <div className="p-4 text-zinc-500">Carregando arquivos...</div>;
 
   return (
     <div className="flex h-full">
@@ -345,24 +345,24 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
         {/* Toolbar */}
         <div className="px-3 pt-3 pb-2 border-b border-zinc-800/60">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-semibold text-zinc-200">Files</h2>
+            <h2 className="text-sm font-semibold text-zinc-200">Arquivos</h2>
             <div className="flex items-center gap-0.5">
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { setCreateType('file'); setShowCreateDialog(true); }} title="New File">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { setCreateType('file'); setShowCreateDialog(true); }} title="Novo arquivo">
                 <FilePlus className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { setCreateType('folder'); setShowCreateDialog(true); }} title="New Folder">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { setCreateType('folder'); setShowCreateDialog(true); }} title="Nova pasta">
                 <FolderPlus className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { document.getElementById('file-upload')?.click(); }} title="Upload">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { document.getElementById('file-upload')?.click(); }} title="Enviar arquivos">
                 <Upload className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { zipInputRef.current?.click(); }} title="Extract ZIP">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => { zipInputRef.current?.click(); }} title="Extrair ZIP">
                 <PackageOpen className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={refresh} title="Refresh">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={refresh} title="Atualizar">
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => setShowPublishDialog(true)} title="Publish Project">
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200" onClick={() => setShowPublishDialog(true)} title="Publicar projeto">
                 <Globe className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -384,7 +384,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
 
           {/* Breadcrumb */}
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 text-zinc-600 hover:text-zinc-300" onClick={navigateUp} title="Go up" disabled={currentPath === '.'}>
+            <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0 text-zinc-600 hover:text-zinc-300" onClick={navigateUp} title="Subir um nível" disabled={currentPath === '.'}>
               <ArrowLeft className="h-3 w-3" />
             </Button>
             <div className="flex items-center gap-0.5 overflow-x-auto text-[10px] min-w-0 scrollbar-none">
@@ -395,7 +395,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
                   pathSegments.length === 0 ? 'text-zinc-200 bg-zinc-800/60' : 'text-zinc-600 hover:text-zinc-300'
                 )}
               >
-                root
+                raiz
               </button>
               {pathSegments.map((seg, i) => (
                 <span key={i} className="flex items-center gap-0.5 shrink-0">
@@ -438,7 +438,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
               />
             ))}
             {tree.length === 0 && (
-              <div className="p-6 text-center text-zinc-600 text-xs">Empty folder</div>
+              <div className="p-6 text-center text-zinc-600 text-xs">Pasta vazia</div>
             )}
           </div>
         </ScrollArea>
@@ -458,7 +458,7 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
             isDragOver ? 'border-blue-500/50 text-blue-400' : 'border-zinc-800 text-zinc-600'
           )}>
             <Upload className="h-4 w-4 mx-auto mb-1" />
-            <p className="text-[10px]">Drop files or .zip here</p>
+            <p className="text-[10px]">Solte arquivos ou .zip aqui</p>
           </div>
         </div>
       </div>
@@ -482,15 +482,15 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
               <div className="flex items-center gap-1 shrink-0">
                 {viewMode === 'view' ? (
                   <Button variant="ghost" size="sm" onClick={() => setViewMode('edit')} className="h-7 text-xs gap-1 text-zinc-500 hover:text-zinc-200">
-                    <FileEdit className="h-3 w-3" /> Edit
+                    <FileEdit className="h-3 w-3" /> Editar
                   </Button>
                 ) : (
                   <>
                     <Button variant="ghost" size="sm" onClick={handleSave} className="h-7 text-xs gap-1 text-emerald-400 hover:text-emerald-300">
-                      <Save className="h-3 w-3" /> Save
+                      <Save className="h-3 w-3" /> Salvar
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => { setViewMode('view'); setEditContent(fileContent); }} className="h-7 text-xs gap-1 text-zinc-500 hover:text-zinc-200">
-                      <X className="h-3 w-3" /> Cancel
+                      <X className="h-3 w-3" /> Cancelar
                     </Button>
                   </>
                 )}
@@ -518,9 +518,9 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center space-y-2">
               <File className="h-10 w-10 mx-auto text-zinc-800" />
-              <p className="text-sm text-zinc-600">Select a file to view</p>
-              <p className="text-[11px] text-zinc-700">Double-click a folder to navigate into it</p>
-              <p className="text-[11px] text-zinc-700">or drag & drop files / .zip to upload</p>
+              <p className="text-sm text-zinc-600">Selecione um arquivo para visualizar</p>
+              <p className="text-[11px] text-zinc-700">Dê duplo clique em uma pasta para abrir</p>
+              <p className="text-[11px] text-zinc-700">ou arraste arquivos / .zip para enviar</p>
             </div>
           </div>
         )}
@@ -530,8 +530,8 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New {createType === 'file' ? 'File' : 'Folder'}</DialogTitle>
-            <DialogDescription>Enter a name for the new {createType}</DialogDescription>
+            <DialogTitle>Novo {createType === 'file' ? 'arquivo' : 'pasta'}</DialogTitle>
+            <DialogDescription>Informe um nome para {createType === 'file' ? 'o novo arquivo' : 'a nova pasta'}</DialogDescription>
           </DialogHeader>
           <Input
             placeholder={createType === 'file' ? 'filename.ts' : 'folder-name'}
@@ -541,8 +541,8 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
             autoFocus
           />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
-            <Button onClick={handleCreate}>Create</Button>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancelar</Button>
+            <Button onClick={handleCreate}>Criar</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -550,16 +550,16 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {deleteType === 'directory' ? 'Folder' : 'File'}</DialogTitle>
+            <DialogTitle>Excluir {deleteType === 'directory' ? 'pasta' : 'arquivo'}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <span className="font-mono text-zinc-300">{deletePath}</span>?
-              {deleteType === 'directory' && ' This will delete all contents inside.'}
-              This cannot be undone.
+              Tem certeza que deseja excluir <span className="font-mono text-zinc-300">{deletePath}</span>?
+              {deleteType === 'directory' && ' Todo o conteúdo interno também será excluído.'}
+              {' '}Esta ação não pode ser desfeita.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete}>Delete</Button>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleDelete}>Excluir</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -567,8 +567,8 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
       <Dialog open={showRenameDialog} onOpenChange={setShowRenameDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename</DialogTitle>
-            <DialogDescription>Enter a new name for <span className="font-mono text-zinc-300">{renameOldPath}</span></DialogDescription>
+            <DialogTitle>Renomear</DialogTitle>
+            <DialogDescription>Informe um novo nome para <span className="font-mono text-zinc-300">{renameOldPath}</span></DialogDescription>
           </DialogHeader>
           <Input
             value={renameNewName}
@@ -577,8 +577,8 @@ export default function FileManager({ basePath = '.' }: { basePath?: string }) {
             autoFocus
           />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowRenameDialog(false)}>Cancel</Button>
-            <Button onClick={handleRename}>Rename</Button>
+            <Button variant="outline" onClick={() => setShowRenameDialog(false)}>Cancelar</Button>
+            <Button onClick={handleRename}>Renomear</Button>
           </div>
         </DialogContent>
       </Dialog>

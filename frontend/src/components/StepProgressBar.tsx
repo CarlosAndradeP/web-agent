@@ -9,23 +9,23 @@ interface Props {
 }
 
 const toolDescriptions: Record<string, string> = {
-  writeFile: 'Writing file...',
-  readFile: 'Reading file...',
-  listFiles: 'Listing files...',
-  deleteFile: 'Deleting file...',
-  runCommand: 'Running command...',
-  executeCode: 'Executing code...',
-  searchFiles: 'Searching files...',
-  webFetch: 'Fetching URL...',
-  installPackage: 'Installing package...',
-  invokeSubAgent: 'Running sub-agent...',
+  writeFile: 'Escrevendo arquivo...',
+  readFile: 'Lendo arquivo...',
+  listFiles: 'Listando arquivos...',
+  deleteFile: 'Excluindo arquivo...',
+  runCommand: 'Executando comando...',
+  executeCode: 'Executando código...',
+  searchFiles: 'Pesquisando arquivos...',
+  webFetch: 'Buscando URL...',
+  installPackage: 'Instalando pacote...',
+  invokeSubAgent: 'Executando subagente...',
 };
 
 export default function StepProgressBar({ currentStep, totalSteps, isStreaming, currentToolName }: Props) {
   if (!isStreaming && currentStep === 0) return null;
 
   const pct = totalSteps > 0 ? Math.min((currentStep / totalSteps) * 100, 100) : 0;
-  const description = currentToolName ? (toolDescriptions[currentToolName] || `Using ${currentToolName}...`) : null;
+  const description = currentToolName ? (toolDescriptions[currentToolName] || `Usando ${currentToolName}...`) : null;
 
   return (
     <div className="px-4 py-2 border-b border-zinc-800/60 bg-zinc-950/50 backdrop-blur-sm">
@@ -33,13 +33,13 @@ export default function StepProgressBar({ currentStep, totalSteps, isStreaming, 
         {isStreaming && (
           <div className="flex items-center gap-2 shrink-0">
             <div className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
-            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Working</span>
+            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Trabalhando</span>
           </div>
         )}
         {!isStreaming && currentStep > 0 && (
           <div className="flex items-center gap-2 shrink-0">
             <div className="h-2 w-2 rounded-full bg-emerald-400" />
-            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Done</span>
+            <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">Concluído</span>
           </div>
         )}
         <div className="flex-1">

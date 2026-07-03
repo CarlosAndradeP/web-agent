@@ -21,7 +21,7 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
 
   const handlePublish = async () => {
     if (!name || !folderPath) {
-      setError('Name and folder are required');
+      setError('Nome e pasta são obrigatórios');
       return;
     }
     setPublishing(true);
@@ -31,7 +31,7 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
       setPublishedProject(data.project);
       onPublished?.(data.project);
     } catch (err: any) {
-      setError(err.message || 'Failed to publish project');
+      setError(err.message || 'Não foi possível publicar o projeto');
     } finally {
       setPublishing(false);
     }
@@ -51,18 +51,18 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{publishedProject ? 'Project Published!' : 'Publish Project'}</DialogTitle>
+          <DialogTitle>{publishedProject ? 'Projeto publicado!' : 'Publicar projeto'}</DialogTitle>
           <DialogDescription>
             {publishedProject
-              ? 'Your project is now live'
-              : 'Publish a folder as a web project'}
+              ? 'Seu projeto já está disponível'
+              : 'Publique uma pasta como projeto web'}
           </DialogDescription>
         </DialogHeader>
 
         {publishedProject ? (
           <div className="space-y-3">
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
-              <div className="text-xs text-zinc-500 mb-1">Project URL</div>
+              <div className="text-xs text-zinc-500 mb-1">URL do projeto</div>
               <a
                 href={`/p/${publishedProject.uuid}/`}
                 target="_blank"
@@ -73,28 +73,28 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
               </a>
             </div>
             <div className="flex justify-between text-xs text-zinc-500">
-              <span>Type: {publishedProject.type}</span>
+              <span>Tipo: {publishedProject.type}</span>
               <span>Status: {publishedProject.status}</span>
             </div>
-            <Button onClick={handleClose} className="w-full">Done</Button>
+            <Button onClick={handleClose} className="w-full">Concluir</Button>
           </div>
         ) : (
           <div className="space-y-3">
             <Input
-              placeholder="Project name"
+              placeholder="Nome do projeto"
               value={name}
               onChange={e => setName(e.target.value)}
               autoFocus
             />
 
             <div>
-              <label className="text-xs text-zinc-500 mb-1 block">Folder</label>
+              <label className="text-xs text-zinc-500 mb-1 block">Pasta</label>
               <select
                 value={folderPath}
                 onChange={e => setFolderPath(e.target.value)}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
               >
-                <option value="">Select a folder...</option>
+                <option value="">Selecione uma pasta...</option>
                 {folders.map(f => (
                   <option key={f} value={f}>{f}</option>
                 ))}
@@ -104,9 +104,9 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
             {error && <p className="text-xs text-red-400">{error}</p>}
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={handleClose}>Cancel</Button>
+              <Button variant="outline" onClick={handleClose}>Cancelar</Button>
               <Button onClick={handlePublish} disabled={publishing || !name || !folderPath}>
-                {publishing ? 'Publishing...' : 'Publish'}
+                {publishing ? 'Publicando...' : 'Publicar'}
               </Button>
             </div>
           </div>

@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
+import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 
 const log = createLogger('ProjectsAPI');
 
@@ -58,9 +59,16 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
       }
     }
 
-    const workspaceDir = resolve(config.workspaceBaseDir, user.username);
+    const workspaceDir = getUserWorkspaceDir(user.username);
     mkdirSync(workspaceDir, { recursive: true });
-    const projectDir = resolve(workspaceDir, folderPath);
+    let projectDir: string;
+    try {
+      projectDir = resolveUserWorkspacePath(user.username, folderPath);
+    } catch (err: any) {
+      sessionsRepo.delete(session.id);
+      res.status(400).json({ error: err.message });
+      return;
+    }
     mkdirSync(projectDir, { recursive: true });
 
     const project = projectsRepo.create(userId, name, folderPath, type, session.id, type === 'node' ? 'stopped' : 'active');
@@ -89,8 +97,7 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
       log.info('Node project created in stopped state', { projectId: project.id, uuid: project.uuid });
     } else {
       try {
-        const fullFolderPath = resolve(workspaceDir, folderPath);
-        await projectRouter.mountProject(project, fullFolderPath);
+        await projectRouter.mountProject(project, projectDir);
         log.info('Project published', { projectId: project.id, uuid: project.uuid, type });
       } catch (err: any) {
         projectsRepo.updateStatus(project.id, 'error');
@@ -131,7 +138,7 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
         res.status(404).json({ error: 'User not found' });
         return;
       }
-      const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, project.folderPath);
+      const fullFolderPath = resolveUserWorkspacePath(pUser.username, project.folderPath, { allowRoot: true });
       await projectRouter.startProject(project, fullFolderPath);
       projectsRepo.updateStatus(project.id, 'active');
       log.info('Node project started', { projectId: project.id, uuid: project.uuid });
@@ -184,7 +191,7 @@ export function createProjectsRouter(db: Database.Database, projectRouter: Proje
       return;
     }
 
-    const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, project.folderPath);
+    const fullFolderPath = resolveUserWorkspacePath(pUser.username, project.folderPath, { allowRoot: true });
     const pkgJsonPath = resolve(fullFolderPath, 'package.json');
     if (!existsSync(pkgJsonPath)) {
       res.status(400).json({ error: 'No package.json found in project folder' });

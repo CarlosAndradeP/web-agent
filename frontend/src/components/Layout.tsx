@@ -60,7 +60,7 @@ export default function Layout() {
   }, [isAdmin]);
 
   const handleProjectCreate = useCallback(async () => {
-    const name = newProjectName.trim() || `Project ${projects.length + 1}`;
+    const name = newProjectName.trim() || `Projeto ${projects.length + 1}`;
     let folderPath: string;
     if (useExistingFolder && newProjectFolder) {
       folderPath = newProjectFolder;
@@ -79,12 +79,13 @@ export default function Layout() {
       setShowCreateDialog(false);
       setActiveTab('chat');
     } catch (err: any) {
-      alert(`Failed to create project: ${err.message}`);
+      alert(`Não foi possível criar o projeto: ${err.message}`);
     }
   }, [newProjectName, newProjectFolder, useExistingFolder, projects.length, createProject]);
 
   const handleProjectDelete = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
+    if (!confirm(`Excluir o projeto "${project?.name || 'sem nome'}"? Esta ação não pode ser desfeita.`)) return;
     await deleteProject(id);
     if (id === activeProjectId) {
       const remaining = projects.filter(p => p.id !== id);
@@ -109,10 +110,10 @@ export default function Layout() {
 
   const handleNewSession = useCallback(async () => {
     try {
-      const session = await createSession('New Session');
+      const session = await createSession('Nova sessão');
       setSessionId(session.id);
     } catch (err: any) {
-      console.error('Failed to create new session:', err);
+      console.error('Falha ao criar nova sessão:', err);
     }
   }, [createSession]);
 
@@ -177,7 +178,7 @@ export default function Layout() {
                   <div className="h-12 w-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center mx-auto">
                     <span className="text-lg">+</span>
                   </div>
-                  <p className="text-sm text-zinc-500">Select or create a project to start</p>
+                  <p className="text-sm text-zinc-500">Selecione ou crie um projeto para começar</p>
                 </div>
               </div>
             )}
@@ -187,7 +188,7 @@ export default function Layout() {
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">
-              <p className="text-sm text-zinc-500">Tasks are tracked per-project in the chat</p>
+              <p className="text-sm text-zinc-500">As tarefas são acompanhadas por projeto no chat</p>
             </div>
           </div>
           <div className={activeTab === 'files' ? 'h-full' : 'h-full hidden'}>
@@ -212,12 +213,12 @@ export default function Layout() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Project</DialogTitle>
-            <DialogDescription>Create a new project with a linked chat session</DialogDescription>
+            <DialogTitle>Novo projeto</DialogTitle>
+            <DialogDescription>Crie um projeto com uma sessão de chat vinculada</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <Input
-              placeholder="Project name..."
+              placeholder="Nome do projeto..."
               value={newProjectName}
               onChange={e => setNewProjectName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleProjectCreate()}
@@ -232,7 +233,7 @@ export default function Layout() {
                   onChange={e => setUseExistingFolder(e.target.checked)}
                   className="rounded border-zinc-700 bg-zinc-900"
                 />
-                <label htmlFor="use-existing" className="text-xs text-zinc-400 cursor-pointer">Use existing folder in workspace</label>
+                <label htmlFor="use-existing" className="text-xs text-zinc-400 cursor-pointer">Usar pasta existente no workspace</label>
               </div>
               {useExistingFolder ? (
                 <select
@@ -240,14 +241,14 @@ export default function Layout() {
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewProjectFolder(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
                 >
-                  <option value="">Select a folder...</option>
+                  <option value="">Selecione uma pasta...</option>
                   {existingFolders.map(f => (
                     <option key={f.path} value={f.path}>{f.name}</option>
                   ))}
                 </select>
               ) : (
                 <Input
-                  placeholder="Folder name (auto-generated from project name)"
+                  placeholder="Nome da pasta (gerado pelo nome do projeto)"
                   value={newProjectFolder}
                   onChange={e => setNewProjectFolder(e.target.value)}
                   className="text-xs"
@@ -260,8 +261,8 @@ export default function Layout() {
                 setNewProjectName('');
                 setNewProjectFolder('');
                 setUseExistingFolder(false);
-              }}>Cancel</Button>
-              <Button onClick={handleProjectCreate}>Create</Button>
+              }}>Cancelar</Button>
+              <Button onClick={handleProjectCreate}>Criar</Button>
             </div>
           </div>
         </DialogContent>

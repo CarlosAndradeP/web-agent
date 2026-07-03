@@ -10,9 +10,9 @@ import { UsersRepository } from '../db/repositories/users.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { config } from '../config.js';
-import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
+import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 
 const log = createLogger('ChatAPI');
 
@@ -61,7 +61,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     const user = userId ? usersRepo.findById(userId) : undefined;
     const username = user?.username ?? 'default';
 
-    let workspaceDir = resolve(config.workspaceBaseDir, username);
+    let workspaceDir = getUserWorkspaceDir(username);
 
     if (userId && !creditManager.hasCredits(userId)) {
       res.status(402).json({ error: 'Insufficient credits. Please contact admin to add more credits.' });
@@ -129,7 +129,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       try {
         const projectRow = db.prepare('SELECT * FROM projects WHERE session_id = ?').get(effectiveSessionId) as any;
         if (projectRow && projectRow.folder_path) {
-          const projectDir = resolve(config.workspaceBaseDir, username, projectRow.folder_path);
+          const projectDir = resolveUserWorkspacePath(username, projectRow.folder_path, { allowRoot: true });
           mkdirSync(projectDir, { recursive: true });
           workspaceDir = projectDir;
           log.info('Using project workspace directory', { sessionId: effectiveSessionId, workspaceDir });

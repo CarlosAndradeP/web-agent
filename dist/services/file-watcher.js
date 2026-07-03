@@ -1,49 +1,73 @@
 import { watch } from 'chokidar';
 import { relative, basename, dirname } from 'node:path';
-import { createLogger } from '../services/logger.js';
+import { createLogger } from './logger.js';
 const log = createLogger('FileWatcher');
 export class FileWatcher {
     watcher = null;
     workspaceDir = '';
     io = null;
-    start(workspaceDir, io) {
+    usersRepo = null;
+    // Cache username -> userId since username dirs rarely change and a DB
+    // lookup per file change is wasteful.
+    usernameToUserId = new Map();
+    start(workspaceDir, io, usersRepo) {
         this.workspaceDir = workspaceDir;
         this.io = io;
+        this.usersRepo = usersRepo;
         log.info('Starting file watcher', { workspaceDir });
         this.watcher = watch(workspaceDir, {
             ignored: /(^|[/\\])\..|node_modules/,
             persistent: true,
             ignoreInitial: true,
         });
+        const userRoomFor = (filePath) => {
+            // Socket clients join `user:<userId>` rooms (see websocket/events.ts).
+            // The old code emitted to `workspace:<username>` rooms that no client
+            // ever joined — file:changed events were silently lost.
+            if (!this.usersRepo)
+                return null;
+            const rel = relative(this.workspaceDir, filePath);
+            const parts = rel.split(/[/\\]/);
+            if (parts.length === 0 || !parts[0])
+                return null;
+            const username = parts[0];
+            let userId = this.usernameToUserId.get(username);
+            if (userId === undefined) {
+                const u = this.usersRepo.findByUsername(username);
+                userId = u ? u.id : null;
+                this.usernameToUserId.set(username, userId);
+            }
+            return userId ? `user:${userId}` : null;
+        };
+        const emitFileChanged = (filePath, type) => {
+            const room = userRoomFor(filePath);
+            const emitter = room && this.io ? this.io.to(room) : this.io;
+            if (emitter)
+                emitter.emit('file:changed', { path: filePath, type });
+        };
         this.watcher.on('add', (path) => {
             log.debug('File added', { path });
-            const room = this.pathToRoom(path, workspaceDir);
-            const emitter = room ? io.to(room) : io;
-            emitter.emit('file:changed', { path, type: 'create' });
+            emitFileChanged(path, 'create');
             if (basename(path) === 'package.json') {
-                this.checkAndEmitNodeDetected(path);
+                this.checkAndEmitNodeDetected(path, userRoomFor(path));
             }
         });
         this.watcher.on('change', (path) => {
             log.debug('File changed', { path });
-            const room = this.pathToRoom(path, workspaceDir);
-            const emitter = room ? io.to(room) : io;
-            emitter.emit('file:changed', { path, type: 'modify' });
+            emitFileChanged(path, 'modify');
             if (basename(path) === 'package.json') {
-                this.checkAndEmitNodeDetected(path);
+                this.checkAndEmitNodeDetected(path, userRoomFor(path));
             }
         });
         this.watcher.on('unlink', (path) => {
             log.debug('File deleted', { path });
-            const room = this.pathToRoom(path, workspaceDir);
-            const emitter = room ? io.to(room) : io;
-            emitter.emit('file:changed', { path, type: 'delete' });
+            emitFileChanged(path, 'delete');
         });
         this.watcher.on('error', (err) => {
             log.error('File watcher error', { error: err instanceof Error ? err.message : String(err) });
         });
     }
-    checkAndEmitNodeDetected(pkgJsonPath) {
+    checkAndEmitNodeDetected(pkgJsonPath, userRoom) {
         if (!this.io)
             return;
         const folderPath = dirname(pkgJsonPath);
@@ -52,7 +76,10 @@ export class FileWatcher {
         if (parts.length >= 2) {
             const username = parts[0];
             const projectRelPath = parts.slice(1).join('/');
-            this.io.emit('project:node-detected', {
+            // Scope the event to the owning user's room so other connected users do
+            // not see another user's project folder paths.
+            const emitter = userRoom ? this.io.to(userRoom) : this.io;
+            emitter.emit('project:node-detected', {
                 folderPath: projectRelPath,
                 username,
                 fullPath: folderPath,
@@ -60,18 +87,12 @@ export class FileWatcher {
             log.info('Node.js project detected (package.json created)', { folderPath: projectRelPath, username });
         }
     }
-    pathToRoom(filePath, workspaceDir) {
-        const rel = relative(workspaceDir, filePath);
-        const parts = rel.split(/[/\\]/);
-        if (parts.length > 0 && parts[0]) {
-            return `workspace:${parts[0]}`;
-        }
-        return null;
-    }
     stop() {
         log.info('Stopping file watcher');
         this.watcher?.close();
         this.watcher = null;
+        this.usersRepo = null;
+        this.usernameToUserId.clear();
     }
 }
 //# sourceMappingURL=file-watcher.js.map

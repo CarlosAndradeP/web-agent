@@ -19,12 +19,12 @@ interface SlashCommand {
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/clear', description: 'Clear chat messages' },
-  { name: '/new', description: 'Start a new session' },
-  { name: '/compact', description: 'Compact conversation context' },
-  { name: '/help', description: 'Show available commands' },
-  { name: '/model', description: 'Switch model', usage: '/model <name>' },
-  { name: '/steps', description: 'Set max agent steps', usage: '/steps <number>' },
+  { name: '/clear', description: 'Limpar mensagens do chat' },
+  { name: '/new', description: 'Iniciar uma nova sessão' },
+  { name: '/compact', description: 'Compactar o contexto da conversa' },
+  { name: '/help', description: 'Mostrar comandos disponíveis' },
+  { name: '/model', description: 'Trocar modelo', usage: '/model <nome>' },
+  { name: '/steps', description: 'Definir limite de etapas do agente', usage: '/steps <número>' },
 ];
 
 interface Props {
@@ -65,7 +65,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
     : [];
 
   useEffect(() => {
-    setShowCommands(filteredCommands.length > 0 && input.startsWith('/') && !input.includes(' ') === false || (input.startsWith('/') && !input.includes(' ')));
+    setShowCommands(input.startsWith('/') && !input.includes(' ') && filteredCommands.length > 0);
   }, [input]);
 
   useEffect(() => {
@@ -124,61 +124,61 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
       case '/clear':
         clearChat();
         setAttachedFiles([]);
-        addSystemMessage('🗑️ Chat cleared.');
+        addSystemMessage('Chat limpo.');
         return true;
 
       case '/new':
         onNewSession?.();
-        addSystemMessage('✨ New session started.');
+        addSystemMessage('Nova sessão iniciada.');
         return true;
 
       case '/compact':
-        addSystemMessage('🔄 Compacting conversation context...');
+        addSystemMessage('Compactando o contexto da conversa...');
         api.chat.compact(sessionId).then((result: any) => {
-          addSystemMessage(result?.summary ? `✅ Context compacted. Summary: ${result.summary.slice(0, 200)}...` : '✅ Context compacted.');
+          addSystemMessage(result?.summary ? `Contexto compactado. Resumo: ${result.summary.slice(0, 200)}...` : 'Contexto compactado.');
         }).catch((err: any) => {
-          addSystemMessage(`❌ Compaction failed: ${err.message}`);
+          addSystemMessage(`Falha ao compactar: ${err.message}`);
         });
         return true;
 
       case '/help':
         addSystemMessage(
-          '**Available Commands:**\n\n' +
-          SLASH_COMMANDS.map(c => `• \`${c.usage || c.name}\` — ${c.description}`).join('\n')
+          '**Comandos disponíveis:**\n\n' +
+          SLASH_COMMANDS.map(c => `- \`${c.usage || c.name}\`: ${c.description}`).join('\n')
         );
         return true;
 
       case '/model':
         if (args.length === 0) {
-          addSystemMessage(`Current model: \`${selectedModel}\`\n\nAvailable: ${models.map(m => `\`${m.id}\``).join(', ')}`);
+          addSystemMessage(`Modelo atual: \`${selectedModel}\`\n\nDisponíveis: ${models.map(m => `\`${m.id}\``).join(', ')}`);
           return true;
         }
         const modelQuery = args.join(' ').toLowerCase();
         const match = models.find(m => m.id.toLowerCase() === modelQuery || m.id.toLowerCase().includes(modelQuery));
         if (match) {
           setSelectedModel(match.id);
-          addSystemMessage(`🔄 Model switched to \`${match.id}\``);
+          addSystemMessage(`Modelo alterado para \`${match.id}\`.`);
         } else {
-          addSystemMessage(`❌ Model not found. Available: ${models.map(m => `\`${m.id}\``).join(', ')}`);
+          addSystemMessage(`Modelo não encontrado. Disponíveis: ${models.map(m => `\`${m.id}\``).join(', ')}`);
         }
         return true;
 
       case '/steps':
         if (args.length === 0) {
-          addSystemMessage(`Current max steps: \`${customMaxSteps ?? 'default'}\``);
+          addSystemMessage(`Limite atual de etapas: \`${customMaxSteps ?? 'padrão'}\``);
           return true;
         }
         const stepsValue = parseInt(args[0], 10);
         if (isNaN(stepsValue) || stepsValue < 1 || stepsValue > 200) {
-          addSystemMessage('❌ Steps must be a number between 1 and 200.');
+          addSystemMessage('O limite de etapas deve ser um número entre 1 e 200.');
           return true;
         }
         setCustomMaxSteps(stepsValue);
-        addSystemMessage(`⚙️ Max steps set to \`${stepsValue}\``);
+        addSystemMessage(`Limite de etapas definido como \`${stepsValue}\`.`);
         return true;
 
       default:
-        addSystemMessage(`❌ Unknown command: \`${cmd}\`. Type \`/help\` for available commands.`);
+        addSystemMessage(`Comando desconhecido: \`${cmd}\`. Digite \`/help\` para ver os comandos disponíveis.`);
         return true;
     }
   }, [clearChat, onNewSession, sessionId, addSystemMessage, selectedModel, models, customMaxSteps]);
@@ -190,9 +190,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
 
     // Check for slash commands
     if (text.startsWith('/')) {
-      const cmdPart = text.split(' ')[0];
-      const isKnownCommand = SLASH_COMMANDS.some(c => c.name === cmdPart);
-      // Execute even unknown commands (will show error)
+      // Execute even unknown commands so the user gets a helpful message.
       executeCommand(text);
       return;
     }
@@ -268,10 +266,10 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
       const result = await api.files.upload(fileArray, basePath || '.');
       if (result.uploaded && result.uploaded.length > 0) {
         setAttachedFiles(prev => [...prev, ...result.uploaded]);
-        addSystemMessage(`📎 Uploaded: ${result.uploaded.join(', ')}`);
+        addSystemMessage(`Arquivos enviados: ${result.uploaded.join(', ')}`);
       }
     } catch (err: any) {
-      addSystemMessage(`❌ Upload failed: ${err.message}`);
+      addSystemMessage(`Falha no upload: ${err.message}`);
     } finally {
       setIsUploading(false);
     }
@@ -314,7 +312,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
         <div className="absolute inset-0 z-50 bg-blue-500/10 border-2 border-dashed border-blue-400 rounded-lg flex items-center justify-center backdrop-blur-sm">
           <div className="text-center">
             <Upload className="h-10 w-10 text-blue-400 mx-auto mb-2" />
-            <p className="text-blue-300 font-medium">Drop files to upload</p>
+            <p className="text-blue-300 font-medium">Solte os arquivos para enviar</p>
           </div>
         </div>
       )}
@@ -327,11 +325,11 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
               <div className="h-14 w-14 rounded-2xl bg-zinc-800/80 border border-zinc-700/40 flex items-center justify-center mb-5">
                 <Sparkles className="h-7 w-7 text-blue-400" />
               </div>
-              <h2 className="text-lg font-semibold text-zinc-200 mb-2">Web Agent</h2>
+              <h2 className="text-lg font-semibold text-zinc-200 mb-2">O que vamos construir hoje?</h2>
               <p className="text-sm text-zinc-500 max-w-sm leading-relaxed">
-                Describe a task and the agent will execute it autonomously. It can read, write, search files, run commands, and more.
+                Descreva uma tarefa e o agente executará de forma autônoma. Ele pode ler, escrever e pesquisar arquivos, rodar comandos e revisar o resultado.
               </p>
-              <p className="text-xs text-zinc-600 mt-3">Type <code className="text-zinc-400">/help</code> for commands</p>
+              <p className="text-xs text-zinc-600 mt-3">Digite <code className="text-zinc-400">/help</code> para ver os comandos</p>
             </div>
           )}
           {messages.map((msg, i) => (
@@ -396,7 +394,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
               className="shrink-0 h-8 w-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors text-zinc-500 hover:text-zinc-300 disabled:opacity-50"
-              title="Attach file"
+              title="Anexar arquivo"
             >
               {isUploading ? (
                 <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
@@ -409,7 +407,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
               value={input}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder="Describe a task for the agent..."
+              placeholder="Descreva uma tarefa para o agente..."
               rows={1}
               className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder:text-zinc-600 min-h-[32px] max-h-[160px] py-1.5"
             />
@@ -424,7 +422,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
             >
               {models.map(m => (
                 <option key={m.id} value={m.id}>
-                  {(m.displayName || m.id.length > 25 ? (m.displayName || m.id.slice(0, 25) + '...') : m.id)} ({m.costPerStep ?? 1}cr/s)
+                  {(m.displayName || m.id.length > 25 ? (m.displayName || m.id.slice(0, 25) + '...') : m.id)} ({m.costPerStep ?? 1} cr/etapa)
                 </option>
               ))}
             </select>
@@ -466,8 +464,8 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
           {/* Custom steps indicator */}
           {customMaxSteps !== undefined && (
             <div className="flex items-center gap-1 mt-1.5 text-[10px] text-zinc-600">
-              <span>Max steps: {customMaxSteps}</span>
-              <button onClick={() => { setCustomMaxSteps(undefined); addSystemMessage('⚙️ Max steps reset to default.'); }} className="text-zinc-500 hover:text-zinc-300 ml-1">
+              <span>Limite de etapas: {customMaxSteps}</span>
+              <button onClick={() => { setCustomMaxSteps(undefined); addSystemMessage('Limite de etapas restaurado para o padrão.'); }} className="text-zinc-500 hover:text-zinc-300 ml-1">
                 <X className="h-3 w-3" />
               </button>
             </div>

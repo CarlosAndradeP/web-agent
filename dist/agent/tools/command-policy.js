@@ -1,16 +1,16 @@
 const BLOCKED_PATTERNS = [
     /rm\s+(-rf?|-fr?|--recursive).*\s+\//,
     />\s*\/(dev|etc|proc|sys|app\/data)/,
-    /cat\s+.*\.(env|key|pem)/,
-    /curl\s+.*\$(cat|echo|printenv)/,
-    /wget\s+.*\$(cat|echo|printenv)/,
-    /printenv|env(?=\s*$|\s*[;&|])/,
-    /(chmod|chown)\s+.*\s+\//,
-    /mkfifo/,
-    /nc\s+.*(-e|-c)\s+/,
+    /\bcat\s+.*\.(env|key|pem)\b/,
+    /\bcurl\b.*\$(cat|echo|printenv)/,
+    /\bwget\b.*\$(cat|echo|printenv)/,
+    /\bprintenv\b|\benv\b(?=\s*$|\s*[;&|])/,
+    /\b(chmod|chown)\b.*\s+\//,
+    /\bmkfifo\b/,
+    /\bnc\b.*(-e|-c)\s+/,
     /\/app\/(data|server\.ts|config\.ts|\.env)/,
-    /node\s+.*\/app\/(src|dist)\//,
-    /sqlite3?\s+\/app\/data/,
+    /\bnode\b.*\/app\/(src|dist)\//,
+    /\bsqlite3?\b\s+\/app\/data/,
 ];
 export function validateCommand(command) {
     for (const pattern of BLOCKED_PATTERNS) {

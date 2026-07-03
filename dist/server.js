@@ -11,7 +11,7 @@ import { ConfigRepository } from './db/repositories/config.js';
 import { UsersRepository } from './db/repositories/users.js';
 import { CreditsRepository } from './db/repositories/credits.js';
 import { SessionsRepository } from './db/repositories/sessions.js';
-import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository } from './db/repositories/orchestrator.js';
+import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository, OrchestratorTasksRepository } from './db/repositories/orchestrator.js';
 import { createChatRouter } from './api/chat.js';
 import { createModelsRouter } from './api/models.js';
 import { createTasksRouter } from './api/tasks.js';
@@ -35,21 +35,42 @@ import { setupWebSocket } from './websocket/index.js';
 import { authMiddleware } from './middleware/auth.js';
 import { adminMiddleware } from './middleware/admin.js';
 import { createLogger } from './services/logger.js';
+import { resolveUserWorkspacePath } from './lib/workspace-paths.js';
 const log = createLogger('Server');
-// Simple in-memory rate limiter
+// Simple in-memory rate limiter. The cleanup interval is captured so it can be
+// unref'd (so it doesn't keep the event loop alive) and the Map is capped to
+// avoid unbounded growth under a flood of distinct IPs within a tick window.
 function createRateLimiter(windowMs, maxRequests) {
     const hits = new Map();
-    // Cleanup expired entries every minute
-    setInterval(() => {
+    const MAX_KEYS = 10000;
+    const cleanupTimer = setInterval(() => {
         const now = Date.now();
         for (const [key, entry] of hits) {
             if (now > entry.resetAt)
                 hits.delete(key);
         }
-    }, 60000).unref?.();
+    }, 60000);
+    cleanupTimer.unref?.();
     return (req, res, next) => {
-        const ip = req.ip ?? req.connection?.remoteAddress ?? 'unknown';
+        // Combine req.ip (respects trust proxy if configured) with the socket's
+        // remote address to avoid sharing one bucket when req.ip is undefined.
+        const ip = req.ip ?? req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? 'unknown';
         const now = Date.now();
+        if (hits.size >= MAX_KEYS) {
+            // Drop the oldest ~10% to bound memory under flood.
+            const dropCount = Math.ceil(MAX_KEYS / 10);
+            let dropped = 0;
+            for (const [key, entry] of hits) {
+                if (dropped >= dropCount)
+                    break;
+                if (now > entry.resetAt) {
+                    hits.delete(key);
+                    dropped++;
+                }
+            }
+            if (hits.size >= MAX_KEYS)
+                hits.clear();
+        }
         let entry = hits.get(ip);
         if (!entry || now > entry.resetAt) {
             entry = { count: 0, resetAt: now + windowMs };
@@ -115,7 +136,8 @@ else {
     }
 }
 const creditManager = new CreditManager(db, creditsRepo, usersRepo);
-const projectRouter = new ProjectRouter(app);
+const projectsRepo = new ProjectsRepository(db);
+const projectRouter = new ProjectRouter(app, projectsRepo, usersRepo);
 const approvalManager = new ApprovalManager();
 const taskManager = new TaskManager(db, creditManager, approvalManager);
 const compactionService = new CompactionService(db);
@@ -123,7 +145,8 @@ const fileWatcher = new FileWatcher();
 const orchestratorSessionsRepo = new OrchestratorSessionsRepository(db);
 const orchestratorStepsRepo = new OrchestratorStepsRepository(db);
 const orchestratorStateRepo = new OrchestratorStateRepository(db);
-const orchestratorManager = new OrchestratorManager(db, creditManager);
+const orchestratorTasksRepo = new OrchestratorTasksRepository(db);
+const orchestratorManager = new OrchestratorManager(db, creditManager, projectRouter, projectsRepo, usersRepo);
 const orchestratorHeartbeat = new OrchestratorHeartbeat(orchestratorManager, db);
 mkdirSync(config.workspaceBaseDir, { recursive: true });
 const allUsers = usersRepo.list();
@@ -143,7 +166,7 @@ app.use('/api/files', authMiddleware, createFilesRouter(configRepo));
 app.use('/api/config', authMiddleware, createConfigRouter(configRepo, adminMiddleware));
 app.use('/api/sessions', authMiddleware, createSessionsRouter(db));
 app.use('/api/projects', authMiddleware, createProjectsRouter(db, projectRouter));
-app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo));
+app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo, orchestratorTasksRepo));
 app.use('/p', projectRouter.middleware());
 app.get('/health', (_req, res) => {
     const state = orchestratorStateRepo.get();
@@ -168,19 +191,19 @@ else {
 }
 setupWebSocket(io, approvalManager, taskManager, creditManager, orchestratorSessionsRepo);
 log.info('WebSocket setup complete');
+projectRouter.setIo(io);
 orchestratorManager.setIo(io);
 orchestratorHeartbeat.start().catch((err) => log.error('Heartbeat start failed', { error: err.message }));
 log.info('Orchestrator heartbeat started');
-fileWatcher.start(config.workspaceBaseDir, io);
+fileWatcher.start(config.workspaceBaseDir, io, usersRepo);
 log.info('File watcher started', { dir: config.workspaceBaseDir });
-const projectsRepo = new ProjectsRepository(db);
 const allProjects = projectsRepo.listAll();
 (async () => {
     for (const p of allProjects) {
         try {
             const pUser = usersRepo.findById(p.userId);
             if (pUser && p.status === 'active') {
-                const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, p.folderPath);
+                const fullFolderPath = resolveUserWorkspacePath(pUser.username, p.folderPath, { allowRoot: true });
                 await projectRouter.mountProject(p, fullFolderPath);
                 log.info('Remounted project on startup', { uuid: p.uuid, name: p.name });
             }
@@ -198,15 +221,46 @@ httpServer.listen(config.port, () => {
     log.info(`Web Agent running on http://localhost:${config.port}`);
     log.info('Available routes: /api/auth, /api/admin, /api/chat, /api/models, /api/tasks, /api/files, /api/config, /api/sessions, /api/projects');
 });
-process.on('SIGINT', () => {
-    log.info('Shutting down (SIGINT)...');
-    orchestratorHeartbeat.stop();
-    orchestratorManager.shutdownAll();
-    fileWatcher.stop();
-    projectRouter.shutdownAll();
-    db.close();
+// Graceful shutdown handler shared by SIGINT and SIGTERM. Docker sends SIGTERM
+// on `docker stop`; without a handler the process is force-killed after the
+// grace period and the DB close / child-process kill / port release / symlink
+// cleanup are skipped, leaving resources pinned and WAL state unflushed.
+function gracefulShutdown(signal) {
+    log.info(`Shutting down (${signal})...`);
+    try {
+        orchestratorHeartbeat.stop();
+    }
+    catch (err) {
+        log.warn('Heartbeat stop error', { error: err.message });
+    }
+    try {
+        orchestratorManager.shutdownAll();
+    }
+    catch (err) {
+        log.warn('Orchestrator shutdown error', { error: err.message });
+    }
+    try {
+        fileWatcher.stop();
+    }
+    catch (err) {
+        log.warn('FileWatcher stop error', { error: err.message });
+    }
+    try {
+        projectRouter.shutdownAll();
+    }
+    catch (err) {
+        log.warn('ProjectRouter shutdown error', { error: err.message });
+    }
+    try {
+        db.close();
+    }
+    catch (err) {
+        log.warn('DB close error', { error: err.message });
+    }
     process.exit(0);
-});
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('uncaughtException', (err) => {
     log.error('Uncaught exception', { error: err.message, stack: err.stack });
 });

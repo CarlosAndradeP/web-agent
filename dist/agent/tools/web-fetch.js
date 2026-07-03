@@ -36,12 +36,17 @@ function isBlockedIP(ip) {
     // Check decimal IPs (2130706433 = 127.0.0.1)
     if (/^\d{8,10}$/.test(ip))
         return true;
-    // IPv6 loopback and mapped
+    // IPv6 loopback, mapped, link-local, and unique-local ranges
     if (ip === '::1' || ip === '::' || ip === '0:0:0:0:0:0:0:1' || ip === '0:0:0:0:0:ffff:7f00:1')
         return true;
     if (/^::ffff:/i.test(ip))
         return true;
     if (/^0000:0000:0000:0000:0000:ffff:/i.test(ip))
+        return true;
+    // IPv6 link-local fe80::/10 and unique-local fc00::/7 (private ranges)
+    if (/^fe[89ab][0-9a-f]{2}:/i.test(ip))
+        return true;
+    if (/^f[cd][0-9a-f]{2}:/i.test(ip))
         return true;
     return false;
 }
@@ -112,6 +117,30 @@ export function createWebFetchTool() {
                 return { error: urlCheck.reason, status: 0 };
             }
             try {
+                // Defense in depth against DNS rebinding (TOCTOU): re-resolve the
+                // hostname immediately before fetch and reject if the resolved IP is
+                // private/internal. Combined with the earlier lookup this narrows the
+                // TOCTOU window, though fetch() may still re-resolve internally.
+                const parsed = new URL(url);
+                const hostname = parsed.hostname.replace(/^\[(.+)\]$/, '$1');
+                const isDirectIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname);
+                if (!isDirectIP) {
+                    let resolvedBlocked = false;
+                    try {
+                        const addrs = (await import('node:dns/promises')).lookup(hostname, { all: true });
+                        const list = await addrs;
+                        for (const a of list) {
+                            if (isBlockedIP(a.address)) {
+                                resolvedBlocked = true;
+                                break;
+                            }
+                        }
+                    }
+                    catch { }
+                    if (resolvedBlocked) {
+                        return { error: 'Domain re-resolved to private/internal IP', status: 0 };
+                    }
+                }
                 const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
                 let content = await response.text();
                 content = sanitizeForPrompt(content);

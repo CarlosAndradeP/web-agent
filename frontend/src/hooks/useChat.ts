@@ -81,9 +81,9 @@ export function useChat(sessionId: string) {
 
       if (!response.ok) {
         if (response.status === 402) {
-          throw new Error('Credits exhausted. Contact the administrator to add more credits.');
+          throw new Error('Créditos esgotados. Fale com um administrador para adicionar mais créditos.');
         }
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+        throw new Error(`Erro da API: ${response.status} ${response.statusText}`);
       }
 
       const reader = response.body?.getReader();
@@ -174,7 +174,7 @@ export function useChat(sessionId: string) {
                   const updated = [...prev];
                   updated[updated.length - 1] = {
                     ...updated[updated.length - 1],
-                    content: assistantContent || `Error: ${data.error}`,
+                    content: assistantContent || `Erro: ${data.error}`,
                     toolCalls: [...pendingToolCalls],
                   };
                   return updated;
@@ -192,7 +192,7 @@ export function useChat(sessionId: string) {
           const updated = [...prev];
           updated[updated.length - 1] = {
             ...updated[updated.length - 1],
-            content: 'Agent processed the task but produced no text output. Check the Tasks panel for details.',
+            content: 'O agente processou a tarefa, mas não retornou texto. Veja os detalhes no painel de tarefas.',
           };
           return updated;
         });
@@ -200,7 +200,7 @@ export function useChat(sessionId: string) {
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error('[Chat] Request error:', err);
-        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}`, isUser: false, timestamp: Date.now() }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: `Erro: ${err.message}`, isUser: false, timestamp: Date.now() }]);
       }
     } finally {
       setIsStreaming(false);

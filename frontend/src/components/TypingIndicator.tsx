@@ -5,20 +5,20 @@ interface Props {
 }
 
 const toolMessages: Record<string, string> = {
-  writeFile: 'Writing file...',
-  readFile: 'Reading file...',
-  listFiles: 'Exploring workspace...',
-  deleteFile: 'Deleting file...',
-  runCommand: 'Running command...',
-  executeCode: 'Executing code...',
-  searchFiles: 'Searching codebase...',
-  webFetch: 'Fetching web content...',
-  installPackage: 'Installing dependencies...',
-  invokeSubAgent: 'Running sub-agent...',
+  writeFile: 'Escrevendo arquivo...',
+  readFile: 'Lendo arquivo...',
+  listFiles: 'Explorando workspace...',
+  deleteFile: 'Excluindo arquivo...',
+  runCommand: 'Executando comando...',
+  executeCode: 'Executando código...',
+  searchFiles: 'Pesquisando no código...',
+  webFetch: 'Buscando conteúdo web...',
+  installPackage: 'Instalando dependências...',
+  invokeSubAgent: 'Executando subagente...',
 };
 
 export default function TypingIndicator({ toolName }: Props) {
-  const message = toolName ? (toolMessages[toolName] || `Using ${toolName}...`) : 'Agent thinking...';
+  const message = toolName ? (toolMessages[toolName] || `Usando ${toolName}...`) : 'Agente pensando...';
 
   return (
     <div className="flex items-center gap-2 px-4 py-3">

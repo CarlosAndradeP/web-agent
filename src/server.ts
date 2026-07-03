@@ -11,7 +11,7 @@ import { ConfigRepository } from './db/repositories/config.js';
 import { UsersRepository } from './db/repositories/users.js';
 import { CreditsRepository } from './db/repositories/credits.js';
 import { SessionsRepository } from './db/repositories/sessions.js';
-import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository } from './db/repositories/orchestrator.js';
+import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository, OrchestratorTasksRepository } from './db/repositories/orchestrator.js';
 import { createChatRouter } from './api/chat.js';
 import { createModelsRouter } from './api/models.js';
 import { createTasksRouter } from './api/tasks.js';
@@ -35,6 +35,7 @@ import { setupWebSocket } from './websocket/index.js';
 import { authMiddleware } from './middleware/auth.js';
 import { adminMiddleware } from './middleware/admin.js';
 import { createLogger } from './services/logger.js';
+import { resolveUserWorkspacePath } from './lib/workspace-paths.js';
 
 const log = createLogger('Server');
 
@@ -142,7 +143,8 @@ if (existingSessions.length === 0) {
 }
 
 const creditManager = new CreditManager(db, creditsRepo, usersRepo);
-const projectRouter = new ProjectRouter(app);
+const projectsRepo = new ProjectsRepository(db);
+const projectRouter = new ProjectRouter(app, projectsRepo, usersRepo);
 const approvalManager = new ApprovalManager();
 const taskManager = new TaskManager(db, creditManager, approvalManager);
 const compactionService = new CompactionService(db);
@@ -151,7 +153,8 @@ const fileWatcher = new FileWatcher();
 const orchestratorSessionsRepo = new OrchestratorSessionsRepository(db);
 const orchestratorStepsRepo = new OrchestratorStepsRepository(db);
 const orchestratorStateRepo = new OrchestratorStateRepository(db);
-const orchestratorManager = new OrchestratorManager(db, creditManager);
+const orchestratorTasksRepo = new OrchestratorTasksRepository(db);
+const orchestratorManager = new OrchestratorManager(db, creditManager, projectRouter, projectsRepo, usersRepo);
 const orchestratorHeartbeat = new OrchestratorHeartbeat(orchestratorManager, db);
 
 mkdirSync(config.workspaceBaseDir, { recursive: true });
@@ -176,7 +179,7 @@ app.use('/api/files', authMiddleware, createFilesRouter(configRepo));
 app.use('/api/config', authMiddleware, createConfigRouter(configRepo, adminMiddleware));
 app.use('/api/sessions', authMiddleware, createSessionsRouter(db));
 app.use('/api/projects', authMiddleware, createProjectsRouter(db, projectRouter));
-app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo));
+app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo, orchestratorTasksRepo));
 
 app.use('/p', projectRouter.middleware());
 
@@ -205,6 +208,7 @@ if (existsSync(publicDir)) {
 setupWebSocket(io, approvalManager, taskManager, creditManager, orchestratorSessionsRepo);
 log.info('WebSocket setup complete');
 
+projectRouter.setIo(io);
 orchestratorManager.setIo(io);
 orchestratorHeartbeat.start().catch((err: any) => log.error('Heartbeat start failed', { error: err.message }));
 log.info('Orchestrator heartbeat started');
@@ -212,7 +216,6 @@ log.info('Orchestrator heartbeat started');
 fileWatcher.start(config.workspaceBaseDir, io, usersRepo);
 log.info('File watcher started', { dir: config.workspaceBaseDir });
 
-const projectsRepo = new ProjectsRepository(db);
 const allProjects = projectsRepo.listAll();
 
 (async () => {
@@ -220,7 +223,7 @@ const allProjects = projectsRepo.listAll();
     try {
       const pUser = usersRepo.findById(p.userId);
       if (pUser && p.status === 'active') {
-        const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, p.folderPath);
+        const fullFolderPath = resolveUserWorkspacePath(pUser.username, p.folderPath, { allowRoot: true });
         await projectRouter.mountProject(p, fullFolderPath);
         log.info('Remounted project on startup', { uuid: p.uuid, name: p.name });
       }

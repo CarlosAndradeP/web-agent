@@ -3,6 +3,9 @@ import type { Server } from 'socket.io';
 import { OrchestratorRunner } from './orchestrator-runner.js';
 import { CreditManager } from '../services/credit-manager.js';
 import { createLogger } from '../services/logger.js';
+import type { ProjectRouter } from '../services/project-router.js';
+import type { ProjectsRepository } from '../db/repositories/projects.js';
+import type { UsersRepository } from '../db/repositories/users.js';
 
 const log = createLogger('OrchestratorManager');
 
@@ -18,6 +21,9 @@ export class OrchestratorManager {
   constructor(
     private db: Database.Database,
     private creditManager: CreditManager,
+    private projectRouter: ProjectRouter,
+    private projectsRepo: ProjectsRepository,
+    private usersRepo: UsersRepository,
   ) {
     this.cleanupTimer = setInterval(() => this.pruneInactive(), 60000);
     if (this.cleanupTimer.unref) this.cleanupTimer.unref();
@@ -40,7 +46,7 @@ export class OrchestratorManager {
       return;
     }
 
-    const runner = new OrchestratorRunner(this.db, this.creditManager);
+    const runner = this.createRunner();
     if (this.io) runner.setIo(this.io);
     this.runners.set(sessionId, runner);
 
@@ -63,7 +69,7 @@ export class OrchestratorManager {
       return;
     }
 
-    const runner = new OrchestratorRunner(this.db, this.creditManager);
+    const runner = this.createRunner();
     if (this.io) runner.setIo(this.io);
     this.runners.set(sessionId, runner);
     await runner.resume(sessionId);
@@ -147,7 +153,7 @@ export class OrchestratorManager {
     for (const session of running) {
       try {
         log.info('Recovering session', { sessionId: session.id });
-        const runner = new OrchestratorRunner(this.db, this.creditManager);
+        const runner = this.createRunner();
         if (this.io) runner.setIo(this.io);
         this.runners.set(session.id, runner);
         await runner.resume(session.id);
@@ -174,5 +180,15 @@ export class OrchestratorManager {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
+  }
+
+  private createRunner(): OrchestratorRunner {
+    return new OrchestratorRunner(
+      this.db,
+      this.creditManager,
+      this.projectRouter,
+      this.projectsRepo,
+      this.usersRepo,
+    );
   }
 }

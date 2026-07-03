@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, basename, join, posix } from 'node:path';
+import { basename, posix } from 'node:path';
 import { OrchestratorManager } from '../orchestrator/orchestrator-manager.js';
-import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository } from '../db/repositories/orchestrator.js';
+import { OrchestratorSessionsRepository, OrchestratorStepsRepository, OrchestratorStateRepository, OrchestratorTasksRepository } from '../db/repositories/orchestrator.js';
 import { UsersRepository } from '../db/repositories/users.js';
-import { config } from '../config.js';
 import { createLogger } from '../services/logger.js';
+import { safeWorkspacePath } from '../agent/tools/sanitize.js';
+import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 
 const log = createLogger('API:Orchestrator');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -25,6 +26,7 @@ export function createOrchestratorRouter(
   sessionsRepo: OrchestratorSessionsRepository,
   stepsRepo: OrchestratorStepsRepository,
   stateRepo: OrchestratorStateRepository,
+  tasksRepo: OrchestratorTasksRepository,
 ) {
   const router = Router();
 
@@ -39,12 +41,12 @@ export function createOrchestratorRouter(
     const usersRepo = new UsersRepository(db);
     const user = usersRepo.findById(userId);
     if (!user) return null;
-    const baseDir = resolve(config.workspaceBaseDir, user.username);
+    const baseDir = getUserWorkspaceDir(user.username);
     if (sessionId) {
       try {
         const projectRow = db.prepare('SELECT folder_path FROM projects WHERE session_id = ?').get(sessionId) as any;
         if (projectRow && projectRow.folder_path) {
-          const projectDir = resolve(baseDir, projectRow.folder_path);
+          const projectDir = resolveUserWorkspacePath(user.username, projectRow.folder_path, { allowRoot: true });
           mkdirSync(projectDir, { recursive: true });
           log.info('Orchestrator using project workspace', { sessionId, folderPath: projectRow.folder_path, workspaceDir: projectDir });
           return projectDir;
@@ -192,6 +194,28 @@ export function createOrchestratorRouter(
     res.json({ steps, total, limit, offset });
   });
 
+  router.get('/:sessionId/tasks', (req, res) => {
+    const sessionId = req.params.sessionId as string;
+    const session = sessionsRepo.findById(sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    if (!isAdminOrOwner(req, session)) {
+      res.status(403).json({ error: 'Not authorized' });
+      return;
+    }
+
+    try {
+      const tasks = tasksRepo.findBySession(sessionId).map(mapTask);
+      res.json({ tasks, total: tasks.length });
+    } catch (err: any) {
+      log.error('Failed to list orchestrator tasks', { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   router.post('/:sessionId/upload-md', upload.array('files', 20), async (req, res) => {
     const sessionId = req.params.sessionId as string;
     const session = sessionsRepo.findById(sessionId);
@@ -218,12 +242,7 @@ export function createOrchestratorRouter(
       for (const file of files) {
         if (!file.originalname.endsWith('.md')) continue;
         const safeName = sanitizeFilename(file.originalname);
-        const destPath = join(workspaceDir, safeName);
-        const resolvedDest = resolve(destPath);
-        if (!resolvedDest.startsWith(resolve(workspaceDir))) {
-          log.warn('Path traversal blocked in upload-md', { originalname: file.originalname });
-          continue;
-        }
+        const destPath = safeWorkspacePath(workspaceDir, safeName);
         writeFileSync(destPath, file.buffer);
         uploaded.push(safeName);
       }
@@ -273,5 +292,22 @@ function mapStep(row: any): any {
     durationMs: row.durationMs ?? row.duration_ms,
     createdAt: row.createdAt ?? row.created_at,
     completedAt: row.completedAt ?? row.completed_at,
+  };
+}
+
+function mapTask(row: any): any {
+  return {
+    id: row.id,
+    orchestratorSessionId: row.orchestratorSessionId ?? row.orchestrator_session_id,
+    name: row.name,
+    description: row.description,
+    status: row.status,
+    role: row.role,
+    dependsOn: row.dependsOn ?? row.depends_on,
+    output: row.output,
+    errorMessage: row.errorMessage ?? row.error_message,
+    stepNumber: row.stepNumber ?? row.step_number,
+    createdAt: row.createdAt ?? row.created_at,
+    updatedAt: row.updatedAt ?? row.updated_at,
   };
 }

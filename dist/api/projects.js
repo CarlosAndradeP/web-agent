@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { resolve } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
+import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 const log = createLogger('ProjectsAPI');
 export function createProjectsRouter(db, projectRouter) {
     const router = Router();
@@ -35,26 +36,61 @@ export function createProjectsRouter(db, projectRouter) {
             return;
         }
         const session = sessionsRepo.create(name, config.defaultModel);
-        try {
-            db.prepare('UPDATE sessions SET user_id = ?, project_id = ? WHERE id = ?').run(userId, null, session.id);
+        // Stamp ownership and project_id together atomically. If either fails we
+        // delete the unowned session rather than risk it being adopted by another
+        // user later — sessions.user_id NULL is treated as admin/orphan in
+        // ownership checks elsewhere.
+        if (userId) {
+            try {
+                db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
+            }
+            catch (err) {
+                log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+                sessionsRepo.delete(session.id);
+                res.status(500).json({ error: 'Failed to create project session' });
+                return;
+            }
         }
-        catch { }
-        const workspaceDir = resolve(config.workspaceBaseDir, user.username);
+        const workspaceDir = getUserWorkspaceDir(user.username);
         mkdirSync(workspaceDir, { recursive: true });
-        const projectDir = resolve(workspaceDir, folderPath);
+        let projectDir;
+        try {
+            projectDir = resolveUserWorkspacePath(user.username, folderPath);
+        }
+        catch (err) {
+            sessionsRepo.delete(session.id);
+            res.status(400).json({ error: err.message });
+            return;
+        }
         mkdirSync(projectDir, { recursive: true });
         const project = projectsRepo.create(userId, name, folderPath, type, session.id, type === 'node' ? 'stopped' : 'active');
+        // Link the session back to the project. project_id is the internal project
+        // id (not the uuid). If this fails we surface the error and roll back the
+        // session + project so a half-linked cross-reference is never persisted.
         try {
-            db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
+            const tx = db.transaction(() => {
+                db.prepare('UPDATE sessions SET project_id = ? WHERE id = ?').run(project.id, session.id);
+            });
+            tx();
         }
-        catch { }
+        catch (err) {
+            log.error('Failed to set session.project_id, rolling back', { sessionId: session.id, projectId: project.id, error: err.message });
+            try {
+                projectsRepo.delete(project.id);
+                sessionsRepo.delete(session.id);
+            }
+            catch (cleanupErr) {
+                log.error('Rollback failed after project_id link failure', { error: cleanupErr.message });
+            }
+            res.status(500).json({ error: 'Failed to link project session' });
+            return;
+        }
         if (project.type === 'node') {
             log.info('Node project created in stopped state', { projectId: project.id, uuid: project.uuid });
         }
         else {
             try {
-                const fullFolderPath = resolve(workspaceDir, folderPath);
-                await projectRouter.mountProject(project, fullFolderPath);
+                await projectRouter.mountProject(project, projectDir);
                 log.info('Project published', { projectId: project.id, uuid: project.uuid, type });
             }
             catch (err) {
@@ -92,7 +128,7 @@ export function createProjectsRouter(db, projectRouter) {
                 res.status(404).json({ error: 'User not found' });
                 return;
             }
-            const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, project.folderPath);
+            const fullFolderPath = resolveUserWorkspacePath(pUser.username, project.folderPath, { allowRoot: true });
             await projectRouter.startProject(project, fullFolderPath);
             projectsRepo.updateStatus(project.id, 'active');
             log.info('Node project started', { projectId: project.id, uuid: project.uuid });
@@ -142,7 +178,7 @@ export function createProjectsRouter(db, projectRouter) {
             res.status(404).json({ error: 'User not found' });
             return;
         }
-        const fullFolderPath = resolve(config.workspaceBaseDir, pUser.username, project.folderPath);
+        const fullFolderPath = resolveUserWorkspacePath(pUser.username, project.folderPath, { allowRoot: true });
         const pkgJsonPath = resolve(fullFolderPath, 'package.json');
         if (!existsSync(pkgJsonPath)) {
             res.status(400).json({ error: 'No package.json found in project folder' });
@@ -186,7 +222,11 @@ export function createProjectsRouter(db, projectRouter) {
             try {
                 sessionsRepo.delete(project.sessionId);
             }
-            catch { }
+            catch (err) {
+                // The project is still removed below; leave the orphaned session in
+                // place rather than masking the project-delete error path.
+                log.warn('Failed to delete linked session during project delete', { sessionId: project.sessionId, projectId: project.id, error: err.message });
+            }
         }
         projectsRepo.delete(project.id);
         log.info('Project deleted', { projectId: project.id, uuid: project.uuid });

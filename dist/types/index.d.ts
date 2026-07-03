@@ -185,6 +185,7 @@ export interface SubAgentResult {
     }[];
     stepsUsed: number;
     success: boolean;
+    modelUsed: string;
 }
 export interface OrchestratorState {
     id: string;

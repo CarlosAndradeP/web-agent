@@ -30,9 +30,11 @@ export default function LoginPage() {
         await register(username, password, email || undefined);
       }
     } catch (err: any) {
-      const msg = err.message || 'Authentication failed';
+      const msg = err.message || 'Falha na autenticação';
       if (msg.includes('403') || msg.includes('Registration is currently disabled')) {
-        setError('Registration is currently disabled by an administrator.');
+        setError('O cadastro está desativado por um administrador.');
+      } else if (msg.includes('Invalid credentials')) {
+        setError('Usuário ou senha inválidos.');
       } else {
         setError(msg);
       }
@@ -46,7 +48,10 @@ export default function LoginPage() {
           <div className="h-9 w-9 rounded-xl bg-zinc-800 border border-zinc-700/50 flex items-center justify-center">
             <Globe className="h-4.5 w-4.5 text-blue-400" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight">Web Agent</h1>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">Web Agent</h1>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Crie, edite e publique projetos web com IA</p>
+          </div>
         </div>
 
         <div className="flex mb-6 bg-zinc-800/80 rounded-lg p-1">
@@ -56,7 +61,7 @@ export default function LoginPage() {
               mode === 'login' ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            Login
+            Entrar
           </button>
           {registrationEnabled && (
             <button
@@ -65,14 +70,14 @@ export default function LoginPage() {
                 mode === 'register' ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'
               }`}
             >
-              Register
+              Criar conta
             </button>
           )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <Input
-            placeholder="Username"
+            placeholder="Usuário"
             value={username}
             onChange={e => setUsername(e.target.value)}
             autoFocus
@@ -80,7 +85,7 @@ export default function LoginPage() {
           />
           <Input
             type="password"
-            placeholder="Password"
+            placeholder="Senha"
             value={password}
             onChange={e => setPassword(e.target.value)}
             disabled={isLoading}
@@ -88,7 +93,7 @@ export default function LoginPage() {
           {mode === 'register' && (
             <Input
               type="email"
-              placeholder="Email (optional)"
+              placeholder="E-mail (opcional)"
               value={email}
               onChange={e => setEmail(e.target.value)}
               disabled={isLoading}
@@ -104,7 +109,7 @@ export default function LoginPage() {
             className="w-full rounded-lg"
             disabled={isLoading || !username || !password}
           >
-            {isLoading ? '...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+            {isLoading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
           </Button>
         </form>
       </div>

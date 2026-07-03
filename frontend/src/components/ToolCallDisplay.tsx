@@ -97,14 +97,14 @@ export default function ToolCallDisplay({ toolName, input, output, status = 'com
       {expanded && (
         <div className="mt-2 space-y-1.5 animate-in">
           <div>
-            <span className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold">Input</span>
+            <span className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold">Entrada</span>
             <pre className="mt-1 rounded-lg bg-zinc-900/80 border border-zinc-800/40 p-2 text-xs text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto font-mono">
               {JSON.stringify(input, null, 2)}
             </pre>
           </div>
           {hasOutput && (
             <div>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold">Output</span>
+              <span className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold">Saída</span>
               <pre className="mt-1 rounded-lg bg-zinc-900/80 border border-zinc-800/40 p-2 text-xs text-zinc-400 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
                 {formatOutput(output)}
               </pre>

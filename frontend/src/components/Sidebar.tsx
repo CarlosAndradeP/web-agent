@@ -28,12 +28,12 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
 
   const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'chat', label: 'Chat', icon: ListTodo },
-    { id: 'autonomous', label: 'Autonomous', icon: BrainCircuit },
-    { id: 'files', label: 'Files', icon: FolderOpen },
-    { id: 'config', label: 'Config', icon: Settings },
+    { id: 'autonomous', label: 'Autônomo', icon: BrainCircuit },
+    { id: 'files', label: 'Arquivos', icon: FolderOpen },
+    { id: 'config', label: 'Configuração', icon: Settings },
     ...(isAdmin
       ? [{ id: 'admin' as Tab, label: 'Admin', icon: Shield }]
-      : [{ id: 'account' as Tab, label: 'Account', icon: User }]
+      : [{ id: 'account' as Tab, label: 'Conta', icon: User }]
     ),
   ];
 
@@ -90,7 +90,7 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
 
       {/* Projects header */}
       <div className="px-4 py-1.5 flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-widest text-zinc-600 font-semibold">Projects</span>
+        <span className="text-[10px] uppercase tracking-widest text-zinc-600 font-semibold">Projetos</span>
         <Button variant="ghost" size="icon" className="h-5 w-5 text-zinc-500 hover:text-zinc-200" onClick={onProjectCreate}>
           <Plus className="h-3.5 w-3.5" />
         </Button>
@@ -130,7 +130,7 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
                     <button
                       onClick={e => { e.stopPropagation(); onProjectStop(project.id); }}
                       className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-                      title="Stop project"
+                      title="Parar projeto"
                     >
                       <Square className="h-3 w-3 text-red-400" />
                     </button>
@@ -139,7 +139,7 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
                     <button
                       onClick={e => { e.stopPropagation(); onProjectStart(project.id); }}
                       className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-                      title="Start project"
+                      title="Iniciar projeto"
                     >
                       <Play className="h-3 w-3 text-emerald-400" />
                     </button>
@@ -159,14 +159,14 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
                     className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-                    title="Open project URL"
+                    title="Abrir URL do projeto"
                   >
                     <ExternalLink className="h-3 w-3 text-zinc-500" />
                   </a>
                   <button
                     onClick={e => { e.stopPropagation(); onProjectDelete(project.id); }}
                     className="h-5 w-5 flex items-center justify-center rounded hover:bg-zinc-700/80 transition-colors"
-                    title="Delete project"
+                    title="Excluir projeto"
                   >
                     <Trash2 className="h-3 w-3 text-zinc-500 hover:text-red-400" />
                   </button>
@@ -177,8 +177,8 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
           {projects.length === 0 && (
             <div className="px-2 py-6 text-center">
               <FolderOpen className="h-8 w-8 mx-auto mb-2 text-zinc-800" />
-              <p className="text-[11px] text-zinc-600 font-medium">No projects yet</p>
-              <p className="text-[10px] text-zinc-700 mt-0.5">Click + to create one</p>
+              <p className="text-[11px] text-zinc-600 font-medium">Nenhum projeto ainda</p>
+              <p className="text-[10px] text-zinc-700 mt-0.5">Clique em + para criar</p>
             </div>
           )}
         </div>
@@ -193,12 +193,12 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[11px] font-medium text-zinc-300 truncate">{user.username}</div>
-              <div className="text-[10px] text-zinc-600">{user.credits} credits</div>
+              <div className="text-[10px] text-zinc-600">{user.credits} créditos</div>
             </div>
             <button
               onClick={logout}
               className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors"
-              title="Logout"
+              title="Sair"
             >
               <LogOut className="h-3 w-3 text-zinc-600 hover:text-red-400" />
             </button>

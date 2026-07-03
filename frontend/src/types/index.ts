@@ -180,3 +180,18 @@ export interface OrchestratorStatusInfo {
   totalStepsCompleted: number;
   session?: OrchestratorSessionInfo;
 }
+
+export interface OrchestratorTaskInfo {
+  id: string;
+  orchestratorSessionId: string;
+  name: string;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  role: string;
+  dependsOn: string | null;
+  output: string | null;
+  errorMessage: string | null;
+  stepNumber: number;
+  createdAt: string;
+  updatedAt: string;
+}

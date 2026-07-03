@@ -2,7 +2,7 @@ export const schema = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  model TEXT NOT NULL DEFAULT 'z-ai/glm-5.1',
+  model TEXT NOT NULL DEFAULT 'z-ai/glm-5.2',
   user_id TEXT,
   project_id TEXT,
   summary_text TEXT DEFAULT NULL,

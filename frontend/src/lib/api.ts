@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo, OrchestratorTaskInfo } from '../types';
 
 const BASE = '/api';
 
@@ -265,6 +265,8 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/resume`, { method: 'POST' }),
     steps: (sessionId: string, limit?: number, offset?: number) =>
       fetchJSON<{ steps: OrchestratorStepInfo[]; total: number }>(`${BASE}/orchestrator/${sessionId}/steps?limit=${limit ?? 50}&offset=${offset ?? 0}`),
+    tasks: (sessionId: string) =>
+      fetchJSON<{ tasks: OrchestratorTaskInfo[]; total: number }>(`${BASE}/orchestrator/${sessionId}/tasks`),
     uploadMd: async (sessionId: string, files: File[]) => {
       const formData = new FormData();
       for (const file of files) formData.append('files', file);

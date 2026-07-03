@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import { resolve } from 'node:path';
 import { toPublic } from '../db/repositories/users.js';
 import { ModelConfigRepository } from '../db/repositories/model-config.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { createLogger } from '../services/logger.js';
+import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 const log = createLogger('AdminAPI');
 export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter) {
     const router = Router();
@@ -264,7 +264,7 @@ export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter) {
                 res.status(404).json({ error: 'User not found' });
                 return;
             }
-            const fullFolderPath = resolve(process.env.WORKSPACE_BASE_DIR || './workspace', user.username, project.folderPath);
+            const fullFolderPath = resolveUserWorkspacePath(user.username, project.folderPath, { allowRoot: true });
             await projectRouter.startProject(project, fullFolderPath);
             projectsRepo.updateStatus(project.id, 'active');
             res.json({ success: true });

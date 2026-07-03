@@ -34,7 +34,7 @@ export function createInvokeSubAgentTool(options) {
                     searchFiles: createSearchFilesTool(options.workspaceDir),
                     runCommand: createRunCommandTool(options.workspaceDir),
                 };
-                const model = provider.chatModel('z-ai/glm-5.1');
+                const model = provider.chatModel('z-ai/glm-5.2');
                 const subAgent = new ToolLoopAgent({
                     model,
                     instructions: SUB_AGENT_SYSTEM_PROMPT,

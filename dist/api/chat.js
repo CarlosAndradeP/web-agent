@@ -6,9 +6,9 @@ import { UsersRepository } from '../db/repositories/users.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { config } from '../config.js';
-import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
+import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 const log = createLogger('ChatAPI');
 export function createChatRouter(db, taskManager, creditManager, compactionService) {
     const router = Router();
@@ -50,7 +50,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         const userId = req.user?.userId;
         const user = userId ? usersRepo.findById(userId) : undefined;
         const username = user?.username ?? 'default';
-        let workspaceDir = resolve(config.workspaceBaseDir, username);
+        let workspaceDir = getUserWorkspaceDir(username);
         if (userId && !creditManager.hasCredits(userId)) {
             res.status(402).json({ error: 'Insufficient credits. Please contact admin to add more credits.' });
             return;
@@ -59,7 +59,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         if (!effectiveSessionId) {
             let sessions = sessionsRepo.list();
             if (userId) {
-                sessions = sessions.filter(s => s.user_id === userId);
+                sessions = sessions.filter(s => s.userId === userId);
             }
             if (sessions.length === 0) {
                 const session = sessionsRepo.create('Default Session', config.defaultModel);
@@ -68,7 +68,9 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
                     try {
                         db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
                     }
-                    catch { }
+                    catch (err) {
+                        log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+                    }
                 }
             }
             else {
@@ -86,7 +88,21 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
                     try {
                         db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
                     }
-                    catch { }
+                    catch (err) {
+                        log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+                    }
+                }
+            }
+            else {
+                // Ownership check: a non-admin may only chat in their own session.
+                // Sessions with user_id NULL (legacy/orphan) are admin-only — a non-admin
+                // cannot address them even if they know the id, since we cannot verify
+                // ownership.
+                const isAdmin = req.user?.role === 'admin';
+                if (!isAdmin && existing.userId !== userId) {
+                    log.warn('Chat denied — session not owned by user', { sessionId: effectiveSessionId, userId, ownerId: existing.userId });
+                    res.status(403).json({ error: 'Access denied' });
+                    return;
                 }
             }
         }
@@ -101,7 +117,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
             try {
                 const projectRow = db.prepare('SELECT * FROM projects WHERE session_id = ?').get(effectiveSessionId);
                 if (projectRow && projectRow.folder_path) {
-                    const projectDir = resolve(config.workspaceBaseDir, username, projectRow.folder_path);
+                    const projectDir = resolveUserWorkspacePath(username, projectRow.folder_path, { allowRoot: true });
                     mkdirSync(projectDir, { recursive: true });
                     workspaceDir = projectDir;
                     log.info('Using project workspace directory', { sessionId: effectiveSessionId, workspaceDir });
@@ -121,8 +137,16 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
                 log.warn('Failed to resolve project workspace', { error: err.message });
             }
         }
-        // Persist incoming messages to the database
+        // Persist incoming messages to the database. Only user/assistant/tool roles
+        // are accepted from the client; `system` messages are reserved for internal
+        // summary injection and must never come from a request body.
+        const allowedRoles = new Set(['user', 'assistant', 'tool']);
         for (const msg of messages) {
+            if (!allowedRoles.has(msg.role)) {
+                log.warn('Chat rejected — invalid message role', { role: msg.role });
+                res.status(400).json({ error: `Invalid message role: ${msg.role}` });
+                return;
+            }
             messagesRepo.create(effectiveSessionId, msg.role, msg.content);
         }
         // Auto-compact if the conversation is getting too long

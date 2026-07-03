@@ -269,9 +269,20 @@ export class TaskManager {
                             // handled below
                         }
                     }
-                    tasksRepo.updateStatus(taskId, 'completed');
-                    emitToTaskUser(taskId, 'task:completed', { taskId });
-                    log.info('Stream completed', { taskId, totalSteps: stepNumber });
+                    // If the stream exited via abort (not natural finish), mark the task
+                    // cancelled rather than completed. Otherwise the cancelTask call and
+                    // the generator finally race, and the status ends up 'completed' for a
+                    // task the user explicitly stopped.
+                    if (abortSignal?.aborted) {
+                        tasksRepo.updateStatus(taskId, 'cancelled');
+                        emitToTaskUser(taskId, 'task:cancelled', { taskId });
+                        log.info('Stream cancelled by signal', { taskId, totalSteps: stepNumber });
+                    }
+                    else {
+                        tasksRepo.updateStatus(taskId, 'completed');
+                        emitToTaskUser(taskId, 'task:completed', { taskId });
+                        log.info('Stream completed', { taskId, totalSteps: stepNumber });
+                    }
                 }
                 catch (err) {
                     tasksRepo.updateStatus(taskId, 'failed', null, err.message);
@@ -305,10 +316,14 @@ export class TaskManager {
         const controller = this.activeControllers.get(taskId);
         if (controller) {
             controller.abort();
+            // Emit BEFORE deleting taskUserIds: emitToTaskUser looks up the userId
+            // entry to scope the broadcast to the owner's socket room. Deleting
+            // first would make the emit fall back to a global broadcast, leaking the
+            // event to every connected user.
             this.tasksRepo.updateStatus(taskId, 'cancelled');
+            this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
             this.activeControllers.delete(taskId);
             this.taskUserIds.delete(taskId);
-            this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
             log.info('Task canceled', { taskId });
         }
         else {
