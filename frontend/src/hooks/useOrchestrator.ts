@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getSocket } from '../lib/socket';
 import { api } from '../lib/api';
 import type { OrchestratorStatusInfo, OrchestratorStepInfo, OrchestratorSessionInfo, OrchestratorTaskInfo } from '../types';
 import { useSocket } from './useSocket';
@@ -24,7 +23,29 @@ export function useOrchestrator(sessionId?: string) {
   const [tasks, setTasks] = useState<OrchestratorTaskInfo[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const { socket } = useSocket();
+  const { socket, connected } = useSocket();
+
+  const addLog = useCallback((role: string, message: string) => {
+    setLogs(prev => [...prev.slice(-200), { role, message, timestamp: new Date().toISOString() }]);
+  }, []);
+
+  const refreshSessionData = useCallback(async (orchestratorSessionId: string) => {
+    const [sessionData, stepsData, tasksData] = await Promise.all([
+      api.orchestrator.sessionStatus(orchestratorSessionId),
+      api.orchestrator.steps(orchestratorSessionId, 100, 0),
+      api.orchestrator.tasks(orchestratorSessionId),
+    ]);
+
+    setStatus(prev => ({
+      isRunning: sessionData.isRunning,
+      lastHeartbeat: prev?.lastHeartbeat ?? new Date().toISOString(),
+      currentSessionId: orchestratorSessionId,
+      totalStepsCompleted: prev?.totalStepsCompleted ?? 0,
+      session: sessionData.session,
+    }));
+    setSteps(stepsData.steps);
+    setTasks(tasksData.tasks);
+  }, []);
 
   useEffect(() => {
     if (!socket) return;
@@ -83,8 +104,8 @@ export function useOrchestrator(sessionId?: string) {
       });
     };
 
-    const onPlan = () => {
-      refreshTasks();
+    const onPlan = (data: any) => {
+      if (data.sessionId) void refreshSessionData(data.sessionId);
     };
 
     const onError = (data: any) => {
@@ -94,6 +115,7 @@ export function useOrchestrator(sessionId?: string) {
     const onComplete = (data: any) => {
       setStatus(prev => prev ? { ...prev, isRunning: false, session: prev.session ? { ...prev.session, status: data.status } : prev.session } : null);
       addLog('orchestrator', `Sessão ${statusLabels[data.status] || data.status}`);
+      if (data.sessionId) void refreshSessionData(data.sessionId);
       setTasks(prevTasks => {
         if (data.status === 'completed') {
           return prevTasks.map(t => t.status === 'running' || t.status === 'pending' ? { ...t, status: 'completed' as const } : t);
@@ -119,11 +141,17 @@ export function useOrchestrator(sessionId?: string) {
       socket.off('orchestrator:error', onError);
       socket.off('orchestrator:complete', onComplete);
     };
-  }, [socket]);
+  }, [socket, addLog, refreshSessionData]);
 
-  const addLog = useCallback((role: string, message: string) => {
-    setLogs(prev => [...prev.slice(-200), { role, message, timestamp: new Date().toISOString() }]);
-  }, []);
+  useEffect(() => {
+    const orchestratorSessionId = status?.session?.id;
+    if (!socket || !connected || !orchestratorSessionId) return;
+
+    socket.emit('orchestrator:subscribe', { sessionId: orchestratorSessionId });
+    return () => {
+      socket.emit('orchestrator:unsubscribe', { sessionId: orchestratorSessionId });
+    };
+  }, [socket, connected, status?.session?.id]);
 
   const start = useCallback(async (objective: string, mdFiles?: File[]) => {
     setIsLoading(true);
@@ -138,18 +166,28 @@ export function useOrchestrator(sessionId?: string) {
       }
 
       const result = await api.orchestrator.start({ sessionId, objective, mdFiles: mdPaths.length > 0 ? mdPaths : undefined });
-      setStatus(prev => prev ? { ...prev, isRunning: true, currentSessionId: result.session.id, session: result.session as OrchestratorSessionInfo } : null);
+      const startedSession: OrchestratorSessionInfo = { ...result.session, status: 'running' };
+      setStatus(prev => ({
+        isRunning: true,
+        lastHeartbeat: prev?.lastHeartbeat ?? new Date().toISOString(),
+        currentSessionId: startedSession.id,
+        totalStepsCompleted: prev?.totalStepsCompleted ?? 0,
+        session: startedSession,
+      }));
+      setSteps([]);
+      setTasks([]);
       addLog('orchestrator', `Iniciado: ${objective.slice(0, 80)}${mdPaths.length > 0 ? ` com ${mdPaths.length} arquivo(s) .md` : ''}`);
 
-      if (socket && result.session.id) {
+      if (socket && connected && result.session.id) {
         socket.emit('orchestrator:subscribe', { sessionId: result.session.id });
       }
+      void refreshSessionData(result.session.id);
     } catch (err: any) {
       addLog('system', `Falha ao iniciar: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
-  }, [socket, status, addLog]);
+  }, [socket, connected, sessionId, addLog, refreshSessionData]);
 
   const stop = useCallback(async () => {
     if (!status?.session?.id) return;

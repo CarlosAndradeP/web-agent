@@ -251,7 +251,7 @@ export const api = {
   orchestrator: {
     status: () => fetchJSON<OrchestratorStatusInfo>(`${BASE}/orchestrator/status`),
     sessionStatus: (sessionId: string) =>
-      fetchJSON<{ session: OrchestratorSessionInfo }>(`${BASE}/orchestrator/${sessionId}/status`),
+      fetchJSON<{ session: OrchestratorSessionInfo; isRunning: boolean }>(`${BASE}/orchestrator/${sessionId}/status`),
     start: (data: { sessionId?: string; objective: string; mdFiles?: string[] }) =>
       fetchJSON<{ session: OrchestratorSessionInfo }>(`${BASE}/orchestrator/start`, {
         method: 'POST',

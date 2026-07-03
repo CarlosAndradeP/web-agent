@@ -112,7 +112,18 @@ if (!adminUser) {
     log.info('Admin user bootstrapped', { userId: adminUser.id });
 }
 else {
-    log.info('Admin user already exists');
+    // Bootstrap admin's password follows ADMIN_PASSWORD (env), which is authoritative
+    // over the persisted hash in the ./data volume — otherwise the hash is frozen at
+    // first boot and later .env changes are silently ignored. Re-syncs on mismatch;
+    // this overwrites any admin password changed via the UI, so manage the admin
+    // secret via env/secrets, not the UI.
+    if (!usersRepo.verifyPassword(adminUser, config.adminPassword)) {
+        usersRepo.updatePassword(adminUser.id, config.adminPassword);
+        log.warn('Admin password re-synced from ADMIN_PASSWORD env');
+    }
+    else {
+        log.info('Admin user already exists');
+    }
 }
 const existingSessions = sessionsRepo.list();
 if (existingSessions.length === 0) {

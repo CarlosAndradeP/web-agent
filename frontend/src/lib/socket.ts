@@ -1,6 +1,13 @@
 import { io, type Socket } from 'socket.io-client';
 
 let socketInstance: Socket | null = null;
+const socketListeners = new Set<(socket: Socket | null) => void>();
+
+function notifySocketChange(): void {
+  for (const listener of socketListeners) {
+    listener(socketInstance);
+  }
+}
 
 export function getSocket(): Socket | null {
   return socketInstance;
@@ -21,6 +28,7 @@ export function connectWithAuth(token: string): Socket {
   });
 
   socketInstance.connect();
+  notifySocketChange();
   return socketInstance;
 }
 
@@ -28,7 +36,16 @@ export function disconnectSocket(): void {
   if (socketInstance) {
     socketInstance.disconnect();
     socketInstance = null;
+    notifySocketChange();
   }
+}
+
+export function subscribeSocketChange(listener: (socket: Socket | null) => void): () => void {
+  socketListeners.add(listener);
+  listener(socketInstance);
+  return () => {
+    socketListeners.delete(listener);
+  };
 }
 
 /**

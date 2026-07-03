@@ -64,7 +64,7 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
             res.status(409).json({ error: 'Username already exists' });
             return;
         }
-        const initialCredits = 100;
+        const initialCredits = config.initialCredits;
         const user = usersRepo.create(username, password, 'user', initialCredits, email);
         creditsRepo.add(user.id, initialCredits, 'bonus', 'Initial credits');
         mkdirSync(resolve(config.workspaceBaseDir, username), { recursive: true });

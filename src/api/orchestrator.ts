@@ -86,7 +86,7 @@ export function createOrchestratorRouter(
 
       await manager.start(session.id);
 
-      res.json({ session: mapSession(session) });
+      res.json({ session: mapSession(sessionsRepo.findById(session.id) ?? session) });
     } catch (err: any) {
       log.error('Failed to start orchestrator', { error: err.message });
       res.status(500).json({ error: err.message });

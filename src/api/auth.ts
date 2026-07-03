@@ -77,7 +77,7 @@ export function createAuthRouter(db: Database.Database, authLimiter?: any, refre
       return;
     }
 
-    const initialCredits = 100;
+    const initialCredits = config.initialCredits;
     const user = usersRepo.create(username, password, 'user', initialCredits, email);
     creditsRepo.add(user.id, initialCredits, 'bonus', 'Initial credits');
 

@@ -14,7 +14,7 @@ services:
       - WORKSPACE_BASE_DIR=/app/workspace
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
-      - INITIAL_CREDITS=100
+      - INITIAL_CREDITS=${INITIAL_CREDITS:-100}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
