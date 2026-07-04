@@ -42,7 +42,7 @@ export function useChat(sessionId: string) {
     if (!sessionId) return;
     api.sessions.messages(sessionId).then(data => {
       const loaded: ChatMessage[] = data.messages
-        .filter((m: Message) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+        .filter((m: Message) => m.role === 'user' || m.role === 'assistant')
         .map((m: Message) => ({
           role: m.role,
           content: m.content || '',
@@ -70,7 +70,12 @@ export function useChat(sessionId: string) {
     setCurrentStep(0);
     setTotalSteps(maxSteps || 20);
 
-    const allMessages = [...messagesRef.current, userMsg].map(m => ({ role: m.role, content: m.content }));
+    // Only user/assistant turns are real conversation history. `system` entries
+    // here are local-only UI notices (slash commands, upload feedback) and must
+    // never be sent to the server — `chat.ts` rejects requests containing them.
+    const allMessages = [...messagesRef.current, userMsg]
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content }));
     // Replace last message content with effective content (including attached files context)
     allMessages[allMessages.length - 1].content = effectiveContent;
     const controller = new AbortController();

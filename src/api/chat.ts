@@ -151,10 +151,18 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     }
 
     // Persist incoming messages to the database. Only user/assistant/tool roles
-    // are accepted from the client; `system` messages are reserved for internal
-    // summary injection and must never come from a request body.
+    // are accepted; `system` messages are reserved for internal summary injection
+    // and never come from a legitimate client. The frontend injects `system`
+    // entries as local UI notices (slash commands, upload feedback) — strip
+    // them with a warning rather than failing the whole request, so a stray
+    // client-side notice can't brick the conversation (and `system` still never
+    // reaches the model or DB, preserving the injection guard).
     const allowedRoles = new Set(['user', 'assistant', 'tool']);
     for (const msg of messages) {
+      if (msg.role === 'system') {
+        log.warn('Stripped system message from client payload', { sessionId: effectiveSessionId });
+        continue;
+      }
       if (!allowedRoles.has(msg.role)) {
         log.warn('Chat rejected — invalid message role', { role: msg.role });
         res.status(400).json({ error: `Invalid message role: ${msg.role}` });
