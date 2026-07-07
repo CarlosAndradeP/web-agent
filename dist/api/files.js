@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { resolve, basename, normalize, sep } from 'node:path';
+import { resolve, basename, normalize, sep, posix } from 'node:path';
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, statSync, createReadStream, existsSync, renameSync } from 'node:fs';
 import multer from 'multer';
 import { ZipArchive as ArchiverZip } from 'archiver';
@@ -30,6 +30,13 @@ export function createFilesRouter(configRepo) {
     /** Sanitize filename for Content-Disposition header — strip quotes and CRLF */
     const sanitizeFilename = (name) => {
         return name.replace(/[\r\n"]/g, '').replace(/[^\w .\-]/g, '_') || 'file';
+    };
+    const sanitizeUploadName = (name) => {
+        const base = basename(name.replace(/\\/g, '/'));
+        const safe = base.replace(/[\r\n"]/g, '').replace(/[^\w .\-()[\]]/g, '_');
+        if (!safe || safe === '.' || safe === '..')
+            throw new Error('Invalid upload filename');
+        return safe;
     };
     router.get('/', (req, res) => {
         const workspaceDir = getWorkspaceDir(req);
@@ -140,14 +147,12 @@ export function createFilesRouter(configRepo) {
         try {
             const uploaded = [];
             for (const file of files) {
-                const safeDest = dest ? safeWorkspacePath(workspaceDir, dest) : workspaceDir;
-                const targetPath = resolve(safeDest, file.originalname);
-                if (!targetPath.startsWith(resolve(workspaceDir))) {
-                    throw new Error('Path traversal detected in upload destination');
-                }
+                const safeName = sanitizeUploadName(file.originalname);
+                const relativeTarget = dest ? posix.join(dest.replace(/\\/g, '/'), safeName) : safeName;
+                const targetPath = safeWorkspacePath(workspaceDir, relativeTarget);
                 mkdirSync(resolve(targetPath, '..'), { recursive: true });
                 writeFileSync(targetPath, file.buffer);
-                uploaded.push(file.originalname);
+                uploaded.push(relativeTarget);
             }
             res.json({ success: true, uploaded });
         }

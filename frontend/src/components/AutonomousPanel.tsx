@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useOrchestrator } from '../hooks/useOrchestrator';
+import { useAuth } from '../contexts/AuthContext';
 import OrchestratorHeader from './OrchestratorHeader';
 import OrchestratorLog from './OrchestratorLog';
 import OrchestratorControls from './OrchestratorControls';
@@ -15,8 +16,9 @@ interface Toast {
   message: string;
 }
 
-export default function AutonomousPanel({ sessionId }: { sessionId: string }) {
+export default function AutonomousPanel({ sessionId, onCreditsRequired }: { sessionId: string; onCreditsRequired?: () => void }) {
   const { status, steps, tasks, logs, isLoading, start, stop, pause, resume, uploadMd, refresh } = useOrchestrator(sessionId);
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('plan');
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -28,6 +30,15 @@ export default function AutonomousPanel({ sessionId }: { sessionId: string }) {
     const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, type, message }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+  };
+
+  const handleStart = (objective: string, mdFiles?: File[]) => {
+    if ((user?.credits ?? 0) <= 0) {
+      addToast('error', 'Créditos esgotados. Adicione créditos para continuar.');
+      onCreditsRequired?.();
+      return;
+    }
+    void start(objective, mdFiles);
   };
 
   const sessionStatus = status?.session?.status;
@@ -102,7 +113,7 @@ export default function AutonomousPanel({ sessionId }: { sessionId: string }) {
       <OrchestratorControls
         status={status}
         isLoading={isLoading}
-        onStart={start}
+        onStart={handleStart}
         onStop={stop}
         onPause={pause}
         onResume={resume}

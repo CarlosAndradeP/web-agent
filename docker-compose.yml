@@ -12,10 +12,16 @@ services:
       - NODE_ENV=production
       - DOCKER_CONTAINER=1
       - WORKSPACE_BASE_DIR=/app/workspace
+      - PROJECT_LINK_BASE_DIR=/app/project-links
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       - INITIAL_CREDITS=${INITIAL_CREDITS:-100}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - TRUST_PROXY=${TRUST_PROXY:-}
+      - MERCADO_PAGO_WEBHOOK_SECRET=${MERCADO_PAGO_WEBHOOK_SECRET:-}
+      - AGENT_COMMAND_UID=33
+      - AGENT_COMMAND_GID=33
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

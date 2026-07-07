@@ -2,7 +2,7 @@ import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, extname } from 'node:path';
-import { existsSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import http from 'node:http';
@@ -10,6 +10,7 @@ import net from 'node:net';
 import { createLogger } from '../services/logger.js';
 import { buildSafeEnv } from '../agent/tools/command-policy.js';
 import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
+import { config } from '../config.js';
 const log = createLogger('ProjectRouter');
 // createRequire lets us dynamically load a project's package.json from an ESM
 // module. Using `require(...)` directly throws ReferenceError in ESM, which
@@ -82,13 +83,14 @@ export class ProjectRouter {
     projectsRepo;
     usersRepo;
     activeProjects = new Map();
-    workspaceBaseDir;
+    projectLinkBaseDir;
     io = null;
     constructor(app, projectsRepo, usersRepo) {
         this.app = app;
         this.projectsRepo = projectsRepo;
         this.usersRepo = usersRepo;
-        this.workspaceBaseDir = process.env.WORKSPACE_BASE_DIR || './workspace';
+        this.projectLinkBaseDir = config.projectLinkBaseDir;
+        mkdirSync(this.projectLinkBaseDir, { recursive: true });
     }
     setIo(io) {
         this.io = io;
@@ -195,7 +197,7 @@ export class ProjectRouter {
                 });
             };
             log.info('Static project mounted (dual: express.static + Apache proxy for PHP)', { uuid: project.uuid, path: fullFolderPath });
-            const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+            const uuidLinkPath = resolve(this.projectLinkBaseDir, project.uuid);
             try {
                 if (lstatSync(uuidLinkPath).isSymbolicLink()) {
                     unlinkSync(uuidLinkPath);
@@ -212,7 +214,7 @@ export class ProjectRouter {
             }
         }
         else if (project.type === 'php') {
-            const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+            const uuidLinkPath = resolve(this.projectLinkBaseDir, project.uuid);
             try {
                 if (lstatSync(uuidLinkPath).isSymbolicLink()) {
                     unlinkSync(uuidLinkPath);

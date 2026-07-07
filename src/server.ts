@@ -22,12 +22,14 @@ import { createAuthRouter } from './api/auth.js';
 import { createAdminRouter } from './api/admin.js';
 import { createProjectsRouter } from './api/projects.js';
 import { createOrchestratorRouter } from './api/orchestrator.js';
+import { createPaymentsRouter } from './api/payments.js';
 import { ProjectRouter } from './services/project-router.js';
 import { ProjectsRepository } from './db/repositories/projects.js';
 import { CreditManager } from './services/credit-manager.js';
 import { TaskManager } from './services/task-manager.js';
 import { ApprovalManager } from './services/approval-manager.js';
 import { CompactionService } from './services/compaction-service.js';
+import { DailyCreditBonus } from './services/daily-credit-bonus.js';
 import { FileWatcher } from './services/file-watcher.js';
 import { OrchestratorManager } from './orchestrator/orchestrator-manager.js';
 import { OrchestratorHeartbeat } from './orchestrator/heartbeat.js';
@@ -38,6 +40,35 @@ import { createLogger } from './services/logger.js';
 import { resolveUserWorkspacePath } from './lib/workspace-paths.js';
 
 const log = createLogger('Server');
+const isProduction = process.env.NODE_ENV === 'production';
+
+function getAllowedOrigins(): string[] | true {
+  const origins = new Set<string>();
+  for (const origin of config.corsOrigins.split(',').map(o => o.trim()).filter(Boolean)) {
+    origins.add(origin);
+  }
+  if (config.publicBaseUrl) {
+    try { origins.add(new URL(config.publicBaseUrl).origin); } catch {}
+  }
+  if (!isProduction) {
+    origins.add('http://localhost:5173');
+    origins.add('http://127.0.0.1:5173');
+    origins.add(`http://localhost:${config.port}`);
+    origins.add(`http://127.0.0.1:${config.port}`);
+  }
+  return origins.size > 0 ? [...origins] : true;
+}
+
+const allowedOrigins = getAllowedOrigins();
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins === true || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('CORS origin denied'));
+  },
+};
 
 // Simple in-memory rate limiter. The cleanup interval is captured so it can be
 // unref'd (so it doesn't keep the event loop alive) and the Map is capped to
@@ -94,10 +125,26 @@ log.info('Starting Web Agent server...', { port: config.port, apiBaseUrl: config
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketServer(httpServer, {
-  cors: { origin: '*' },
+  cors: { origin: allowedOrigins === true ? true : allowedOrigins },
 });
 
-app.use(cors());
+if (config.trustProxy) {
+  const trustProxyValue = /^\d+$/.test(config.trustProxy) ? parseInt(config.trustProxy, 10) : config.trustProxy;
+  app.set('trust proxy', trustProxyValue);
+}
+
+app.use(cors(corsOptions));
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  if (isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  }
+  next();
+});
 app.use(express.json());
 
 app.use((req, _res, next) => {
@@ -158,6 +205,7 @@ const projectRouter = new ProjectRouter(app, projectsRepo, usersRepo);
 const approvalManager = new ApprovalManager();
 const taskManager = new TaskManager(db, creditManager, approvalManager);
 const compactionService = new CompactionService(db);
+const dailyCreditBonus = new DailyCreditBonus(db, configRepo, creditsRepo, usersRepo, io);
 const fileWatcher = new FileWatcher();
 
 const orchestratorSessionsRepo = new OrchestratorSessionsRepository(db);
@@ -190,6 +238,7 @@ app.use('/api/config', authMiddleware, createConfigRouter(configRepo, adminMiddl
 app.use('/api/sessions', authMiddleware, createSessionsRouter(db));
 app.use('/api/projects', authMiddleware, createProjectsRouter(db, projectRouter));
 app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo, orchestratorTasksRepo));
+app.use('/api/payments', createPaymentsRouter(db, usersRepo, io));
 
 app.use('/p', projectRouter.middleware());
 
@@ -220,6 +269,7 @@ log.info('WebSocket setup complete');
 
 projectRouter.setIo(io);
 orchestratorManager.setIo(io);
+dailyCreditBonus.start();
 orchestratorHeartbeat.start().catch((err: any) => log.error('Heartbeat start failed', { error: err.message }));
 log.info('Orchestrator heartbeat started');
 
@@ -258,6 +308,7 @@ httpServer.listen(config.port, () => {
 function gracefulShutdown(signal: string) {
   log.info(`Shutting down (${signal})...`);
   try { orchestratorHeartbeat.stop(); } catch (err: any) { log.warn('Heartbeat stop error', { error: err.message }); }
+  try { dailyCreditBonus.stop(); } catch (err: any) { log.warn('DailyCreditBonus stop error', { error: err.message }); }
   try { orchestratorManager.shutdownAll(); } catch (err: any) { log.warn('Orchestrator shutdown error', { error: err.message }); }
   try { fileWatcher.stop(); } catch (err: any) { log.warn('FileWatcher stop error', { error: err.message }); }
   try { projectRouter.shutdownAll(); } catch (err: any) { log.warn('ProjectRouter shutdown error', { error: err.message }); }

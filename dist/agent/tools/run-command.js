@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { validateCommand, buildSafeEnv } from './command-policy.js';
+import { validateCommand, buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
 import { logToolExecution } from '../../services/logger.js';
 const execAsync = promisify(exec);
 export function createRunCommandTool(workspaceDir) {
@@ -15,7 +15,7 @@ export function createRunCommandTool(workspaceDir) {
         execute: async ({ command, timeout = 30 }) => {
             const startTime = Date.now();
             logToolExecution('runCommand', undefined, 'start', { input: { command: command.slice(0, 200), timeout } });
-            const policyResult = validateCommand(command);
+            const policyResult = validateCommand(command, workspaceDir);
             if (!policyResult.allowed) {
                 logToolExecution('runCommand', undefined, 'error', { error: policyResult.reason, input: { command: command.slice(0, 200) }, durationMs: Date.now() - startTime });
                 return { stdout: '', stderr: policyResult.reason, exitCode: 126 };
@@ -25,7 +25,8 @@ export function createRunCommandTool(workspaceDir) {
                     cwd: workspaceDir,
                     timeout: timeout * 1000,
                     maxBuffer: 1024 * 1024 * 10,
-                    env: buildSafeEnv(),
+                    env: buildWorkspaceEnv(workspaceDir),
+                    ...getUnprivilegedExecOptions(),
                 });
                 logToolExecution('runCommand', undefined, 'success', {
                     output: { exitCode: 0, stdoutLength: stdout?.length ?? 0, stderrLength: stderr?.length ?? 0 },

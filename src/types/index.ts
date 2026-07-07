@@ -130,6 +130,21 @@ export interface CreditTransaction {
   createdAt: string;
 }
 
+export interface PixPayment {
+  id: string;
+  userId: string;
+  providerPaymentId: string | null;
+  status: string;
+  credits: number;
+  amountBrl: number;
+  qrCode: string | null;
+  qrCodeBase64: string | null;
+  ticketUrl: string | null;
+  creditedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type OrchestratorSessionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed';
 export type OrchestratorStepStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type OrchestratorRole = 'orchestrator' | 'auxiliar' | 'arquiteto' | 'programador' | 'revisor';

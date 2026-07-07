@@ -31,6 +31,7 @@ export default function Layout() {
   const [existingFolders, setExistingFolders] = useState<{ name: string; path: string }[]>([]);
   const [useExistingFolder, setUseExistingFolder] = useState(false);
   const [isChatStreaming, setIsChatStreaming] = useState(false);
+  const [accountInitialTab, setAccountInitialTab] = useState<'account' | 'security' | 'credits'>('account');
   const { projects, createProject, deleteProject, startProject, stopProject, promoteNode, refresh: refreshProjects } = useProjects();
   const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
@@ -117,6 +118,12 @@ export default function Layout() {
     }
   }, [createSession]);
 
+  const openCreditsPanel = useCallback(() => {
+    setAccountInitialTab('credits');
+    setActiveTab('account');
+    setMobileMenuOpen(false);
+  }, []);
+
   const effectiveSessionId = sessionId || 'default';
   const activeProject = projects.find(p => p.id === activeProjectId);
 
@@ -171,7 +178,7 @@ export default function Layout() {
         <main className="flex-1 overflow-hidden">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
             {effectiveSessionId ? (
-              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} onStreamingChange={setIsChatStreaming} onNewSession={handleNewSession} basePath={activeProject?.folderPath} />
+              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} onStreamingChange={setIsChatStreaming} onNewSession={handleNewSession} onCreditsRequired={openCreditsPanel} basePath={activeProject?.folderPath} />
             ) : (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center space-y-3">
@@ -184,7 +191,7 @@ export default function Layout() {
             )}
           </div>
           <div className={activeTab === 'autonomous' ? 'h-full' : 'h-full hidden'}>
-            <AutonomousPanel sessionId={effectiveSessionId} />
+            <AutonomousPanel sessionId={effectiveSessionId} onCreditsRequired={openCreditsPanel} />
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">
@@ -204,7 +211,7 @@ export default function Layout() {
           )}
           {!isAdmin && (
             <div className={activeTab === 'account' ? 'h-full' : 'h-full hidden'}>
-              <UserPanel />
+              <UserPanel initialTab={accountInitialTab} />
             </div>
           )}
         </main>

@@ -62,12 +62,16 @@ export function createAuthRouter(db: Database.Database, authLimiter?: any, refre
     }
 
     const { username, password, email } = req.body;
-    if (!username || !password) {
-      res.status(400).json({ error: 'username and password are required' });
+    if (!username || !password || !email) {
+      res.status(400).json({ error: 'username, password and email are required' });
       return;
     }
     if (username.length < 3 || password.length < 6) {
       res.status(400).json({ error: 'username must be 3+ chars, password 6+ chars' });
+      return;
+    }
+    if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      res.status(400).json({ error: 'A valid email is required' });
       return;
     }
 
@@ -78,7 +82,7 @@ export function createAuthRouter(db: Database.Database, authLimiter?: any, refre
     }
 
     const initialCredits = config.initialCredits;
-    const user = usersRepo.create(username, password, 'user', initialCredits, email);
+    const user = usersRepo.create(username, password, 'user', initialCredits, email.trim());
     creditsRepo.add(user.id, initialCredits, 'bonus', 'Initial credits');
 
     mkdirSync(resolve(config.workspaceBaseDir, username), { recursive: true });

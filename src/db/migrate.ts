@@ -173,6 +173,30 @@ export function migrate(db: Database.Database): void {
     log.warn('Orchestrator state init skipped', { error: err.message });
   }
 
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pix_payments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider_payment_id TEXT UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pending',
+        credits INTEGER NOT NULL,
+        amount_brl REAL NOT NULL,
+        qr_code TEXT,
+        qr_code_base64 TEXT,
+        ticket_url TEXT,
+        credited_at DATETIME DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_pix_payments_user_id ON pix_payments(user_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_pix_payments_provider_payment_id ON pix_payments(provider_payment_id)');
+    log.info('pix_payments table and indexes ensured');
+  } catch (err: any) {
+    log.warn('pix_payments migration failed', { error: err.message });
+  }
+
   // Add orchestrator_tasks table (new in multi-agent orchestrator refactor)
   try {
     db.exec(`

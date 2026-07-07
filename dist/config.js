@@ -59,6 +59,7 @@ export const config = {
     workspaceDir: process.env.WORKSPACE_DIR || './workspace',
     workspaceBaseDir: process.env.WORKSPACE_BASE_DIR || './workspace',
     dataDir: process.env.DATA_DIR || './data',
+    projectLinkBaseDir: process.env.PROJECT_LINK_BASE_DIR || './data/project-links',
     maxSteps: parseInt(process.env.MAX_STEPS || '100', 10),
     defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.2',
     agentType: (process.env.AGENT_TYPE || 'none'),
@@ -68,6 +69,13 @@ export const config = {
     adminPassword: adminPassword || 'admin123',
     initialCredits: parseInt(process.env.INITIAL_CREDITS || '100', 10),
     publicBaseUrl: process.env.PUBLIC_BASE_URL || '',
+    corsOrigins: process.env.CORS_ORIGINS || '',
+    trustProxy: process.env.TRUST_PROXY || '',
+    mercadoPagoAccessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN || '',
+    mercadoPagoPublicKey: process.env.MERCADO_PAGO_PUBLIC_KEY || '',
+    mercadoPagoWebhookSecret: process.env.MERCADO_PAGO_WEBHOOK_SECRET || '',
+    pixCreditPriceBrl: parseFloat(process.env.PIX_CREDIT_PRICE_BRL || '1'),
+    dailyBonusCredits: parseInt(process.env.DAILY_BONUS_CREDITS || '2', 10),
 };
 export { rewriteUrlForDocker, IS_DOCKER };
 //# sourceMappingURL=config.js.map

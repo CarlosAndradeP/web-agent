@@ -88,6 +88,21 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS pix_payments (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider_payment_id TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending',
+  credits INTEGER NOT NULL,
+  amount_brl REAL NOT NULL,
+  qr_code TEXT,
+  qr_code_base64 TEXT,
+  ticket_url TEXT,
+  credited_at DATETIME DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   uuid TEXT NOT NULL UNIQUE,

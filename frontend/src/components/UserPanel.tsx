@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { authApi, type CreditTransaction } from '../lib/auth-api';
+import { authApi, type CreditTransaction, type PixPayment } from '../lib/auth-api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
-import { User, Lock, CreditCard, Save, AlertCircle } from 'lucide-react';
+import { User, Lock, CreditCard, Save, AlertCircle, QrCode, Copy, RefreshCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 type AccountTab = 'account' | 'security' | 'credits';
@@ -15,11 +15,17 @@ const roleLabels: Record<string, string> = {
   user: 'Usuário',
 };
 
-export default function UserPanel() {
+export default function UserPanel({ initialTab = 'account' }: { initialTab?: AccountTab }) {
   const { user, accessToken, updateCredits, updateUser } = useAuth();
-  const [tab, setTab] = useState<AccountTab>('account');
+  const [tab, setTab] = useState<AccountTab>(initialTab);
   const [creditHistory, setCreditHistory] = useState<CreditTransaction[]>([]);
   const [creditBalance, setCreditBalance] = useState(0);
+  const [pixEnabled, setPixEnabled] = useState(false);
+  const [creditPriceBrl, setCreditPriceBrl] = useState(1);
+  const [pixCredits, setPixCredits] = useState('50');
+  const [pixPayment, setPixPayment] = useState<PixPayment | null>(null);
+  const [pixLoading, setPixLoading] = useState(false);
+  const [pixError, setPixError] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -40,6 +46,25 @@ export default function UserPanel() {
   useEffect(() => {
     loadCreditHistory();
   }, [loadCreditHistory]);
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    authApi.paymentConfig(accessToken)
+      .then(data => {
+        setPixEnabled(data.pixEnabled);
+        setCreditPriceBrl(data.creditPriceBrl);
+      })
+      .catch(() => {});
+    authApi.pixPayments(accessToken)
+      .then(data => {
+        setPixPayment(data.payments.find(payment => payment.status !== 'approved' && payment.status !== 'cancelled' && payment.status !== 'rejected') || data.payments[0] || null);
+      })
+      .catch(() => {});
+  }, [accessToken]);
 
   useEffect(() => {
     if (user) {
@@ -90,6 +115,47 @@ export default function UserPanel() {
     } catch {}
   };
 
+  const handleCreatePixPayment = async () => {
+    if (!accessToken) return;
+    const credits = Math.floor(Number(pixCredits));
+    if (!Number.isFinite(credits) || credits < 1) {
+      setPixError('Informe uma quantidade válida de créditos');
+      return;
+    }
+    setPixLoading(true);
+    setPixError('');
+    try {
+      const data = await authApi.createPixPayment(credits, accessToken);
+      setPixPayment(data.payment);
+    } catch {
+      setPixError('Não foi possível gerar o Pix agora');
+    } finally {
+      setPixLoading(false);
+    }
+  };
+
+  const handleRefreshPixPayment = async () => {
+    if (!accessToken || !pixPayment) return;
+    setPixLoading(true);
+    setPixError('');
+    try {
+      const data = await authApi.pixPayment(pixPayment.id, accessToken);
+      setPixPayment(data.payment);
+      if (data.payment.creditedAt) {
+        await loadCreditHistory();
+      }
+    } catch {
+      setPixError('Não foi possível atualizar o status');
+    } finally {
+      setPixLoading(false);
+    }
+  };
+
+  const handleCopyPixCode = async () => {
+    if (!pixPayment?.qrCode) return;
+    await navigator.clipboard.writeText(pixPayment.qrCode);
+  };
+
   if (!user) return null;
 
   const tabs: { id: AccountTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -97,6 +163,15 @@ export default function UserPanel() {
     { id: 'security', label: 'Segurança', icon: Lock },
     { id: 'credits', label: 'Créditos', icon: CreditCard },
   ];
+  const pixCreditCount = Math.max(0, Math.floor(Number(pixCredits) || 0));
+  const pixAmount = pixCreditCount * creditPriceBrl;
+  const pixStatusLabels: Record<string, string> = {
+    pending: 'Aguardando pagamento',
+    approved: 'Aprovado',
+    rejected: 'Recusado',
+    cancelled: 'Cancelado',
+    error: 'Erro',
+  };
 
   return (
     <div className="flex h-full">
@@ -219,6 +294,88 @@ export default function UserPanel() {
                 <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Saldo atual</div>
                 <div className="text-2xl font-bold text-zinc-100 mt-1">{creditBalance.toLocaleString()}</div>
                 <div className="text-[10px] text-zinc-500 mt-1">créditos</div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Comprar com Pix</label>
+                  <span className={cn('text-[10px]', pixEnabled ? 'text-emerald-400' : 'text-zinc-600')}>
+                    {pixEnabled ? `R$ ${creditPriceBrl.toFixed(2).replace('.', ',')} por crédito` : 'Indisponível'}
+                  </span>
+                </div>
+
+                {pixEnabled && (
+                  <>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min="1"
+                        value={pixCredits}
+                        onChange={e => { setPixCredits(e.target.value); setPixError(''); }}
+                        className="text-xs"
+                        placeholder="Créditos"
+                      />
+                      <Button size="sm" onClick={handleCreatePixPayment} disabled={pixLoading} className="h-9 text-xs gap-1">
+                        <QrCode className="h-3 w-3" /> Gerar Pix
+                      </Button>
+                    </div>
+                    <div className="text-[10px] text-zinc-500">
+                      Total: R$ {pixAmount.toFixed(2).replace('.', ',')}
+                    </div>
+                  </>
+                )}
+
+                {pixError && (
+                  <div className="flex items-center gap-2 text-red-400 text-xs">
+                    <AlertCircle className="h-3 w-3" />
+                    {pixError}
+                  </div>
+                )}
+
+                {pixPayment && (
+                  <div className="border border-zinc-800 rounded-lg p-3 space-y-3 bg-zinc-950">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs text-zinc-200">{pixPayment.credits.toLocaleString()} créditos</div>
+                        <div className="text-[10px] text-zinc-500">R$ {pixPayment.amountBrl.toFixed(2).replace('.', ',')}</div>
+                      </div>
+                      <div className={cn(
+                        'text-[10px] font-medium',
+                        pixPayment.status === 'approved' ? 'text-emerald-400' : 'text-amber-400'
+                      )}>
+                        {pixStatusLabels[pixPayment.status] || pixPayment.status}
+                      </div>
+                    </div>
+
+                    {pixPayment.qrCodeBase64 && pixPayment.status !== 'approved' && (
+                      <img
+                        src={`data:image/png;base64,${pixPayment.qrCodeBase64}`}
+                        alt="QR Code Pix"
+                        className="h-44 w-44 rounded-md bg-white p-2 mx-auto"
+                      />
+                    )}
+
+                    {pixPayment.qrCode && pixPayment.status !== 'approved' && (
+                      <div className="space-y-2">
+                        <textarea
+                          readOnly
+                          value={pixPayment.qrCode}
+                          className="w-full min-h-20 resize-none rounded-md border border-zinc-800 bg-zinc-900 p-2 text-[10px] text-zinc-400 outline-none"
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={handleCopyPixCode} className="h-8 text-xs gap-1">
+                            <Copy className="h-3 w-3" /> Copiar código
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={handleRefreshPixPayment} disabled={pixLoading} className="h-8 text-xs gap-1">
+                            <RefreshCw className="h-3 w-3" /> Atualizar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <Separator />

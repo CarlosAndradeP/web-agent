@@ -14,6 +14,7 @@ import type { UsersRepository } from '../db/repositories/users.js';
 import { createLogger } from '../services/logger.js';
 import { buildSafeEnv } from '../agent/tools/command-policy.js';
 import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
+import { config } from '../config.js';
 
 const log = createLogger('ProjectRouter');
 
@@ -111,7 +112,7 @@ async function waitForPort(port: number, timeoutMs = 15000): Promise<boolean> {
 
 export class ProjectRouter {
   private activeProjects = new Map<string, ActiveProject>();
-  private workspaceBaseDir: string;
+  private projectLinkBaseDir: string;
   private io: Server | null = null;
 
   constructor(
@@ -119,7 +120,8 @@ export class ProjectRouter {
     private projectsRepo: ProjectsRepository,
     private usersRepo: UsersRepository,
   ) {
-    this.workspaceBaseDir = process.env.WORKSPACE_BASE_DIR || './workspace';
+    this.projectLinkBaseDir = config.projectLinkBaseDir;
+    mkdirSync(this.projectLinkBaseDir, { recursive: true });
   }
 
   setIo(io: Server): void {
@@ -240,7 +242,7 @@ export class ProjectRouter {
 
       log.info('Static project mounted (dual: express.static + Apache proxy for PHP)', { uuid: project.uuid, path: fullFolderPath });
 
-      const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+      const uuidLinkPath = resolve(this.projectLinkBaseDir, project.uuid);
       try {
         if (lstatSync(uuidLinkPath).isSymbolicLink()) {
           unlinkSync(uuidLinkPath);
@@ -254,7 +256,7 @@ export class ProjectRouter {
         log.warn('Failed to create symlink for static project (non-fatal)', { uuid: project.uuid, error: err.message });
       }
     } else if (project.type === 'php') {
-      const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+      const uuidLinkPath = resolve(this.projectLinkBaseDir, project.uuid);
       try {
         if (lstatSync(uuidLinkPath).isSymbolicLink()) {
           unlinkSync(uuidLinkPath);

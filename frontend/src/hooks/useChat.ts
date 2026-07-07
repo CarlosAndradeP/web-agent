@@ -20,7 +20,7 @@ export interface ChatMessage {
   timestamp?: number;
 }
 
-export function useChat(sessionId: string) {
+export function useChat(sessionId: string, options?: { onCreditsRequired?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -86,6 +86,7 @@ export function useChat(sessionId: string) {
 
       if (!response.ok) {
         if (response.status === 402) {
+          options?.onCreditsRequired?.();
           throw new Error('Créditos esgotados. Fale com um administrador para adicionar mais créditos.');
         }
         throw new Error(`Erro da API: ${response.status} ${response.statusText}`);
@@ -213,7 +214,7 @@ export function useChat(sessionId: string) {
       abortRef.current = null;
       activeTaskIdRef.current = null;
     }
-  }, [sessionId]);
+  }, [sessionId, options]);
 
   const cancel = useCallback(async () => {
     // First, cancel the server-side task so the agent stops executing

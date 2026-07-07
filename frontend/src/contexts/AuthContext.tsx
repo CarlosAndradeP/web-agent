@@ -11,7 +11,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, email?: string) => Promise<void>;
+  register: (username: string, password: string, email: string) => Promise<void>;
   logout: () => void;
   updateCredits: (credits: number) => void;
   updateUser: (updates: Partial<UserPublic>) => void;
@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const register = useCallback(async (username: string, password: string, email?: string) => {
+  const register = useCallback(async (username: string, password: string, email: string) => {
     setIsLoading(true);
     try {
       const data = await authApi.register(username, password, email);
@@ -192,6 +192,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    socket.on('credits:added', (data: { userId: string; newBalance: number }) => {
+      if (data.userId === user.id) {
+        updateCredits(data.newBalance);
+      }
+    });
+
     socket.on('credits:exhausted', (data: { userId: string }) => {
       if (data.userId === user.id) {
         updateCredits(0);
@@ -201,6 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       socket.off('connect', joinRoom);
       socket.off('credits:deducted');
+      socket.off('credits:added');
       socket.off('credits:exhausted');
       disconnectSocket();
       socketRef.current = null;

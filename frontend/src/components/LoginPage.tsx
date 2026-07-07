@@ -27,7 +27,11 @@ export default function LoginPage() {
       if (mode === 'login') {
         await login(username, password);
       } else {
-        await register(username, password, email || undefined);
+        if (!email.trim()) {
+          setError('Informe seu e-mail para criar a conta.');
+          return;
+        }
+        await register(username, password, email.trim());
       }
     } catch (err: any) {
       const msg = err.message || 'Falha na autenticação';
@@ -93,9 +97,10 @@ export default function LoginPage() {
           {mode === 'register' && (
             <Input
               type="email"
-              placeholder="E-mail (opcional)"
+              placeholder="E-mail"
               value={email}
               onChange={e => setEmail(e.target.value)}
+              required
               disabled={isLoading}
             />
           )}
@@ -107,7 +112,7 @@ export default function LoginPage() {
           <Button
             type="submit"
             className="w-full rounded-lg"
-            disabled={isLoading || !username || !password}
+            disabled={isLoading || !username || !password || (mode === 'register' && !email.trim())}
           >
             {isLoading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
           </Button>

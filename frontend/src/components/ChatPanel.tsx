@@ -31,11 +31,12 @@ interface Props {
   sessionId: string;
   onStreamingChange?: (isStreaming: boolean) => void;
   onNewSession?: () => void;
+  onCreditsRequired?: () => void;
   basePath?: string;
 }
 
-export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, basePath }: Props) {
-  const { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId);
+export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, onCreditsRequired, basePath }: Props) {
+  const { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId, { onCreditsRequired });
   const { socket } = useSocket();
 
   // Notify parent layout about streaming state changes

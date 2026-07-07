@@ -27,7 +27,7 @@ export declare class ProjectRouter {
     private projectsRepo;
     private usersRepo;
     private activeProjects;
-    private workspaceBaseDir;
+    private projectLinkBaseDir;
     private io;
     constructor(app: express.Express, projectsRepo: ProjectsRepository, usersRepo: UsersRepository);
     setIo(io: Server): void;
