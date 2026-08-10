@@ -81,9 +81,10 @@ npm run dev:frontend
 - Per-user storage at `workspace/<username>/Word/Documentos` and `workspace/<username>/Word/Modelos`
 - First-run AI model selection with a dedicated document-agent session
 - Full browser editing through the self-hosted ONLYOFFICE Docs Community service
+- Multi-architecture ONLYOFFICE 9.4 image pinned for reproducible AMD64/ARM64 deployments
 - Create blank DOCX files, upload existing documents, add reusable templates, download, and delete
 - JWT-signed editor configuration, short-lived storage links, and authenticated save callbacks
-- Production agent image includes LibreOffice, python-docx, docxtpl, lxml, Pillow, PyMuPDF, and reportlab
+- Production agent image includes python-docx, docxtpl, lxml, and Pillow; ONLYOFFICE provides document rendering, visual review, and export
 
 The default browser URL for the editor is `http://localhost:8082`. When users access Web Agent from another machine, set `ONLYOFFICE_PUBLIC_URL` to the public HTTPS URL that exposes the document server.
 
