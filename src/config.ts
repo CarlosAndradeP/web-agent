@@ -1,33 +1,7 @@
 import 'dotenv/config';
-import { existsSync } from 'node:fs';
 import { createLogger } from './services/logger.js';
 
 const log = createLogger('Config');
-
-const IS_DOCKER = process.env.DOCKER_CONTAINER === '1' || existsSync('/.dockerenv');
-
-function rewriteUrlForDocker(url: string): string {
-  if (!IS_DOCKER) return url;
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.hostname === 'host.docker.internal' ||
-      parsed.hostname.endsWith('.internal') ||
-      parsed.hostname.endsWith('.docker')
-    ) {
-      return url;
-    }
-    const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(parsed.hostname);
-    const isLikelyDockerService = !isIp && !parsed.hostname.includes('.');
-    if (isLikelyDockerService) {
-      return url;
-    }
-    parsed.hostname = 'host.docker.internal';
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -63,7 +37,9 @@ if (!adminPassword) {
 
 export const config = {
   port: parseInt(process.env.PORT || '89', 10),
-  apiBaseUrl: rewriteUrlForDocker(process.env.API_BASE_URL || 'http://192.168.3.5:11431/v1'),
+  // Use the deployment value verbatim. It may be a LAN IP, Docker service
+  // name, host.docker.internal, or a public domain.
+  apiBaseUrl: process.env.API_BASE_URL || 'http://192.168.3.5:11431/v1',
   apiKey: process.env.API_KEY || '',
   workspaceDir: process.env.WORKSPACE_DIR || './workspace',
   workspaceBaseDir: process.env.WORKSPACE_BASE_DIR || './workspace',
@@ -86,5 +62,3 @@ export const config = {
   pixCreditPriceBrl: parseFloat(process.env.PIX_CREDIT_PRICE_BRL || '1'),
   dailyBonusCredits: parseInt(process.env.DAILY_BONUS_CREDITS || '2', 10),
 };
-
-export { rewriteUrlForDocker, IS_DOCKER };

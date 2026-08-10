@@ -140,7 +140,7 @@ npm run dev:frontend
 
 | Variable | Default | Description |
 |---|---|---|
-| `API_BASE_URL` | `http://192.168.3.5:11431/v1` (rewritten to `host.docker.internal` in Docker) | LLM provider API URL (OpenAI-compatible) |
+| `API_BASE_URL` | `http://192.168.3.5:11431/v1` | LLM provider API URL (OpenAI-compatible), used exactly as configured and authoritative over the SQLite setting when defined |
 | `API_KEY` | — | LLM API key |
 | `PORT` | `89` | Server port |
 | `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory (each user gets `workspace/<username>/`) |

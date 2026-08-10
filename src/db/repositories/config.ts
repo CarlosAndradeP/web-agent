@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { ApprovalMode, AppConfig, AppConfigPublic } from '../../types/index.js';
-import { config as envConfig, rewriteUrlForDocker } from '../../config.js';
+import { config as envConfig } from '../../config.js';
 
 const DEFAULTS: Record<string, string> = {
   default_model: envConfig.defaultModel,
@@ -22,14 +22,16 @@ export class ConfigRepository {
   constructor(private db: Database.Database) {}
 
   get(key: string): string | undefined {
+    // An explicitly supplied deployment URL is authoritative. This prevents a
+    // stale value saved in SQLite from overriding API_BASE_URL after a deploy.
+    if (key === 'api_base_url' && process.env.API_BASE_URL) {
+      return envConfig.apiBaseUrl;
+    }
     const row = this.db.prepare('SELECT value FROM config WHERE key = ?').get(key) as any;
     let value = row?.value ?? DEFAULTS[key];
     if (key === 'default_model' && value && LEGACY_MODEL_MAP[value]) {
       value = LEGACY_MODEL_MAP[value];
       this.set(key, value);
-    }
-    if (key === 'api_base_url' && value) {
-      value = rewriteUrlForDocker(value);
     }
     return value;
   }

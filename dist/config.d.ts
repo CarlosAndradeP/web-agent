@@ -1,6 +1,4 @@
 import 'dotenv/config';
-declare const IS_DOCKER: boolean;
-declare function rewriteUrlForDocker(url: string): string;
 export declare const config: {
     port: number;
     apiBaseUrl: string;
@@ -26,5 +24,4 @@ export declare const config: {
     pixCreditPriceBrl: number;
     dailyBonusCredits: number;
 };
-export { rewriteUrlForDocker, IS_DOCKER };
 //# sourceMappingURL=config.d.ts.map
