@@ -20,6 +20,14 @@ if (!accessTokenSecretRaw || !refreshTokenSecretRaw) {
 }
 const accessTokenSecret = accessTokenSecretRaw || 'web-agent-access-token-secret-insecure-default-dev-only';
 const refreshTokenSecret = refreshTokenSecretRaw || 'web-agent-refresh-token-secret-insecure-default-dev-only';
+const onlyofficeJwtSecretRaw = process.env.ONLYOFFICE_JWT_SECRET;
+if (!onlyofficeJwtSecretRaw && isProduction) {
+    log.error('FATAL: ONLYOFFICE_JWT_SECRET is required in production for the Word workspace. Set it in .env or docker-compose.yml');
+    process.exit(1);
+}
+if (!onlyofficeJwtSecretRaw) {
+    log.warn('ONLYOFFICE_JWT_SECRET not set - using an insecure development-only value.');
+}
 const adminPassword = process.env.ADMIN_PASSWORD;
 if (!adminPassword) {
     if (isProduction) {
@@ -54,5 +62,9 @@ export const config = {
     mercadoPagoWebhookSecret: process.env.MERCADO_PAGO_WEBHOOK_SECRET || '',
     pixCreditPriceBrl: parseFloat(process.env.PIX_CREDIT_PRICE_BRL || '1'),
     dailyBonusCredits: parseInt(process.env.DAILY_BONUS_CREDITS || '2', 10),
+    onlyofficePublicUrl: (process.env.ONLYOFFICE_PUBLIC_URL || 'http://localhost:8082').replace(/\/+$/, ''),
+    onlyofficeInternalUrl: (process.env.ONLYOFFICE_INTERNAL_URL || 'http://onlyoffice-documentserver').replace(/\/+$/, ''),
+    onlyofficeStorageUrl: (process.env.ONLYOFFICE_STORAGE_URL || 'http://web-agent:89').replace(/\/+$/, ''),
+    onlyofficeJwtSecret: onlyofficeJwtSecretRaw || 'onlyoffice-insecure-development-secret',
 };
 //# sourceMappingURL=config.js.map

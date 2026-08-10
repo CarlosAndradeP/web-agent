@@ -30,10 +30,20 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     unzip \
+    libreoffice-writer \
+    poppler-utils \
+    fonts-liberation \
+    fonts-dejavu-core \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Complete Word-document toolchain used by the dedicated agent workspace.
+RUN python3 -m venv /opt/word-tools \
+    && /opt/word-tools/bin/pip install --no-cache-dir \
+      python-docx docxtpl lxml Pillow PyMuPDF reportlab
+ENV PATH="/opt/word-tools/bin:${PATH}"
 
 RUN a2enmod rewrite proxy proxy_http headers
 

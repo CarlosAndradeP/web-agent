@@ -22,11 +22,18 @@ services:
       - MERCADO_PAGO_WEBHOOK_SECRET=${MERCADO_PAGO_WEBHOOK_SECRET:-}
       - AGENT_COMMAND_UID=33
       - AGENT_COMMAND_GID=33
+      - ONLYOFFICE_PUBLIC_URL=${ONLYOFFICE_PUBLIC_URL:-http://localhost:8082}
+      - ONLYOFFICE_INTERNAL_URL=http://onlyoffice-documentserver
+      - ONLYOFFICE_STORAGE_URL=http://web-agent:89
+      - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET must be set in .env}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - agent-net
     restart: unless-stopped
+    depends_on:
+      onlyoffice-documentserver:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:89/health"]
       interval: 30s
@@ -34,6 +41,38 @@ services:
       retries: 3
       start_period: 30s
 
+  onlyoffice-documentserver:
+    image: onlyoffice/documentserver:latest
+    container_name: onlyoffice-documentserver
+    ports:
+      - "8082:80"
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET must be set in .env}
+      - JWT_HEADER=Authorization
+      - ALLOW_PRIVATE_IP_ADDRESS=true
+      - ALLOW_META_IP_ADDRESS=false
+      - EXAMPLE_ENABLED=false
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+      - onlyoffice_lib:/var/lib/onlyoffice
+    networks:
+      - agent-net
+    restart: unless-stopped
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
 networks:
   agent-net:
     driver: bridge
+
+volumes:
+  onlyoffice_data:
+  onlyoffice_logs:
+  onlyoffice_lib:

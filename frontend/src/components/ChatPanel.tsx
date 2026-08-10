@@ -32,9 +32,12 @@ interface Props {
   onNewSession?: () => void;
   onCreditsRequired?: () => void;
   basePath?: string;
+  workspaceRootPath?: string;
+  initialModel?: string;
+  onModelChange?: (model: string) => void;
 }
 
-export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, onCreditsRequired, basePath }: Props) {
+export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, onCreditsRequired, basePath, workspaceRootPath, initialModel, onModelChange }: Props) {
   const { messages, send, cancel, isStreaming, status, isLoadingHistory, historyError, reloadHistory, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId, { onCreditsRequired });
   const { socket } = useSocket();
 
@@ -85,15 +88,16 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
         api.models.list().then(data => {
           setModels(data.models);
           if (data.models.length > 0) {
-            const exists = defaultModel && data.models.find(m => m.id === defaultModel);
-            setSelectedModel(exists ? defaultModel : data.models[0].id);
+            const preferred = initialModel || defaultModel;
+            const exists = preferred && data.models.find(m => m.id === preferred);
+            setSelectedModel(exists ? preferred : data.models[0].id);
           }
           if (data.models.length === 0) setModelsError('Nenhum modelo disponível.');
         }).catch((err: Error) => {
           setModelsError(err.message || 'Não foi possível carregar os modelos.');
         }).finally(() => setIsLoadingModels(false));
       });
-  }, []);
+  }, [initialModel]);
 
   useEffect(() => {
     loadModels();
@@ -181,6 +185,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
         const match = models.find(m => m.id.toLowerCase() === modelQuery || m.id.toLowerCase().includes(modelQuery));
         if (match) {
           setSelectedModel(match.id);
+          onModelChange?.(match.id);
           addSystemMessage(`Modelo alterado para \`${match.id}\`.`);
         } else {
           addSystemMessage(`Modelo não encontrado. Disponíveis: ${models.map(m => `\`${m.id}\``).join(', ')}`);
@@ -205,7 +210,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
         addSystemMessage(`Comando desconhecido: \`${cmd}\`. Digite \`/help\` para ver os comandos disponíveis.`);
         return true;
     }
-  }, [clearChat, onNewSession, sessionId, addSystemMessage, selectedModel, models, customMaxSteps]);
+  }, [clearChat, onNewSession, sessionId, addSystemMessage, selectedModel, models, customMaxSteps, onModelChange]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -292,15 +297,20 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
     try {
       const result = await api.files.upload(fileArray, basePath || '.');
       if (result.uploaded && result.uploaded.length > 0) {
-        setAttachedFiles(prev => [...prev, ...result.uploaded]);
-        addSystemMessage(`Arquivos enviados: ${result.uploaded.join(', ')}`);
+        const scopedRoot = (workspaceRootPath || basePath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+        const scopedUploads = result.uploaded.map(path => {
+          const normalized = path.replace(/\\/g, '/');
+          return scopedRoot && normalized.startsWith(`${scopedRoot}/`) ? normalized.slice(scopedRoot.length + 1) : normalized;
+        });
+        setAttachedFiles(prev => [...prev, ...scopedUploads]);
+        addSystemMessage(`Arquivos enviados: ${scopedUploads.join(', ')}`);
       }
     } catch (err: any) {
       addSystemMessage(`Falha no upload: ${err.message}`);
     } finally {
       setIsUploading(false);
     }
-  }, [basePath, addSystemMessage, isStreaming]);
+  }, [basePath, workspaceRootPath, addSystemMessage, isStreaming]);
 
   const removeAttachedFile = useCallback((file: string) => {
     setAttachedFiles(prev => prev.filter(f => f !== file));
@@ -464,7 +474,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
               <label className="flex items-center gap-1.5 min-w-0 text-xs text-zinc-500">
                 <Globe className="h-3.5 w-3.5 shrink-0" />
                 <span className="sr-only">Modelo</span>
-                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={isLoadingModels || !!modelsError} className="bg-transparent max-w-[210px] sm:max-w-xs truncate text-xs text-zinc-400 focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60" title={models.find(m => m.id === selectedModel) ? `${models.find(m => m.id === selectedModel)!.displayName || selectedModel} - ${models.find(m => m.id === selectedModel)?.costPerStep ?? 1} cr/etapa` : selectedModel}>
+                <select value={selectedModel} onChange={e => { setSelectedModel(e.target.value); onModelChange?.(e.target.value); }} disabled={isLoadingModels || !!modelsError} className="bg-transparent max-w-[210px] sm:max-w-xs truncate text-xs text-zinc-400 focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60" title={models.find(m => m.id === selectedModel) ? `${models.find(m => m.id === selectedModel)!.displayName || selectedModel} - ${models.find(m => m.id === selectedModel)?.costPerStep ?? 1} cr/etapa` : selectedModel}>
                   {isLoadingModels && <option value="">Carregando modelos...</option>}
                   {modelsError && <option value="">Modelos indisponíveis</option>}
                   {models.map(m => <option key={m.id} value={m.id}>{m.displayName || m.id} ({m.costPerStep ?? 1} cr/etapa)</option>)}

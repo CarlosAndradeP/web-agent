@@ -24,8 +24,12 @@ CONSTRAINTS:
 - You have limited steps. Use them wisely.
 - A response without tool calls is incomplete. Always use tools until the task is done.`;
 
-export function buildSystemPrompt(projectInfo: ProjectInfo | null): string {
+export function buildSystemPrompt(projectInfo: ProjectInfo | null, workspaceProfile: 'development' | 'word' = 'development'): string {
   let prompt = AUTOCORRECTIVE_SYSTEM_PROMPT;
+
+  if (workspaceProfile === 'word') {
+    prompt += WORD_WORKSPACE_SYSTEM_PROMPT;
+  }
 
   if (projectInfo) {
     prompt += `
@@ -61,6 +65,21 @@ ${projectInfo.type === 'static' ? '- This project serves web content (HTML, CSS,
 
   return prompt;
 }
+
+const WORD_WORKSPACE_SYSTEM_PROMPT = `
+
+WORD WORKSPACE PROFILE:
+- You are working only inside the user's dedicated Word workspace.
+- Documents are stored in Documentos/ and reusable templates in Modelos/.
+- Your primary job is to create, improve, analyze, and precisely edit Microsoft Word documents. Do not create web projects here.
+- Prefer Python with python-docx, docxtpl, lxml, Pillow, PyMuPDF, and reportlab. These dependencies and LibreOffice are preinstalled in the production image.
+- Preserve an existing document's structure and styles unless the user asks for a redesign. Make minimal, local edits for revision requests.
+- For new documents, use real Word styles, headings, numbered lists, explicit table geometry, page margins, headers/footers, and a coherent professional design system. Never fake lists with typed bullet characters.
+- Never overwrite the user's source document during a substantial edit. Create a clearly named revised copy unless the user explicitly asks to update the original.
+- After every meaningful DOCX creation or edit, use LibreOffice headless to export it to PDF in a temporary QA directory, inspect page count/output, and fix conversion or layout failures before finishing. Delete QA intermediates when done.
+- Keep final deliverables in Documentos/ and reusable starting points in Modelos/.
+- The embedded ONLYOFFICE editor saves direct user edits automatically. When you modify a document, tell the user which file was produced or updated.
+`;
 
 export const AUTOCORRECTIVE_SYSTEM_PROMPT = `You are an autonomous development agent. Your mission is to complete tasks fully and impeccably. You MUST use tools to accomplish everything — never just describe what you would do, DO IT.
 

@@ -1,11 +1,11 @@
-import { ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut, Globe, ExternalLink, User, Play, Square, Zap, BrainCircuit } from 'lucide-react';
+import { ListTodo, FolderOpen, Settings, Plus, Trash2, Shield, LogOut, Globe, ExternalLink, User, Play, Square, Zap, BrainCircuit, FileText } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 import { useAuth } from '../contexts/AuthContext';
 import type { Project } from '../types';
 
-type Tab = 'chat' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
+type Tab = 'chat' | 'word' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
 interface Props {
   activeTab: Tab;
@@ -27,6 +27,7 @@ export default function Sidebar({ activeTab, onTabChange, projects, activeProjec
 
   const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'chat', label: 'Chat', icon: ListTodo },
+    { id: 'word', label: 'Word', icon: FileText },
     { id: 'autonomous', label: 'Autônomo', icon: BrainCircuit },
     { id: 'files', label: 'Arquivos', icon: FolderOpen },
     { id: 'config', label: 'Configuração', icon: Settings },

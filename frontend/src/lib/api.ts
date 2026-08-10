@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo, OrchestratorTaskInfo } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo, OrchestratorTaskInfo, WordWorkspaceStatus, WordWorkspaceInfo } from '../types';
 
 const BASE = '/api';
 
@@ -203,6 +203,41 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/projects/${id}/stop`, { method: 'POST' }),
     promoteNode: (id: string) =>
       fetchJSON<{ project: Project }>(`${BASE}/projects/${id}/promote-node`, { method: 'POST' }),
+  },
+  word: {
+    status: () => fetchJSON<WordWorkspaceStatus>(`${BASE}/word`),
+    setup: (model: string) => fetchJSON<{ configured: true; workspace: WordWorkspaceInfo }>(`${BASE}/word/setup`, {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+    }),
+    createDocument: (name: string, templatePath?: string) => fetchJSON<{ success: boolean; path: string; name: string }>(`${BASE}/word/documents`, {
+      method: 'POST',
+      body: JSON.stringify({ name, templatePath }),
+    }),
+    upload: async (kind: 'documents' | 'templates', files: File[]) => {
+      const formData = new FormData();
+      files.forEach(file => formData.append('files', file));
+      const fetcher = _authFetch ?? fetch;
+      const res = await fetcher(`${BASE}/word/${kind}/upload`, {
+        method: 'POST',
+        headers: getAuthHeadersNoContentType(),
+        body: formData,
+      });
+      if (!res.ok) throw await responseError(res);
+      return res.json() as Promise<{ success: boolean; uploaded: string[] }>;
+    },
+    rename: (path: string, name: string) => fetchJSON<{ success: boolean }>(`${BASE}/word/files`, {
+      method: 'PATCH',
+      body: JSON.stringify({ path, name }),
+    }),
+    delete: (path: string) => fetchJSON<{ success: boolean }>(`${BASE}/word/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+    editorConfig: (path: string) => fetchJSON<{ editorConfig: Record<string, unknown>; publicUrl: string }>(`${BASE}/word/editor-config?path=${encodeURIComponent(path)}`),
+    download: async (path: string) => {
+      const fetcher = _authFetch ?? fetch;
+      const res = await fetcher(`${BASE}/word/download?path=${encodeURIComponent(path)}`, { headers: getAuthHeadersNoContentType() });
+      if (!res.ok) throw await responseError(res);
+      return res.blob();
+    },
   },
   admin: {
     users: () => fetchJSON<{ users: UserPublic[] }>(`${BASE}/admin/users`),

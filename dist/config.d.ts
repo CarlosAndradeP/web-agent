@@ -23,5 +23,9 @@ export declare const config: {
     mercadoPagoWebhookSecret: string;
     pixCreditPriceBrl: number;
     dailyBonusCredits: number;
+    onlyofficePublicUrl: string;
+    onlyofficeInternalUrl: string;
+    onlyofficeStorageUrl: string;
+    onlyofficeJwtSecret: string;
 };
 //# sourceMappingURL=config.d.ts.map

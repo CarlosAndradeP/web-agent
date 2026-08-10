@@ -21,7 +21,7 @@ export function createAgent(options) {
     log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });
     const isGlmModel = options.model.toLowerCase().includes('glm');
     const maxOutputTokens = isGlmModel ? 16384 : 8192;
-    const systemPrompt = buildSystemPrompt(options.projectInfo ?? null);
+    const systemPrompt = buildSystemPrompt(options.projectInfo ?? null, options.workspaceProfile ?? 'development');
     const agent = new ToolLoopAgent({
         model: provider.chatModel(options.model),
         instructions: systemPrompt,

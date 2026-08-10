@@ -122,6 +122,32 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface WordFile {
+  name: string;
+  path: string;
+  kind: 'document' | 'template';
+  size: number;
+  modifiedAt: string;
+}
+
+export interface WordWorkspaceInfo {
+  id: string;
+  userId: string;
+  sessionId: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WordWorkspaceStatus {
+  configured: boolean;
+  workspace: WordWorkspaceInfo | null;
+  rootPath: string;
+  documents: WordFile[];
+  templates: WordFile[];
+  editor: { publicUrl: string };
+}
+
 export interface CreditTransaction {
   id: string;
   userId: string;

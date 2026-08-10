@@ -23,6 +23,7 @@ import { createAdminRouter } from './api/admin.js';
 import { createProjectsRouter } from './api/projects.js';
 import { createOrchestratorRouter } from './api/orchestrator.js';
 import { createPaymentsRouter } from './api/payments.js';
+import { createWordPublicRouter, createWordRouter } from './api/word.js';
 import { ProjectRouter } from './services/project-router.js';
 import { ProjectsRepository } from './db/repositories/projects.js';
 import { CreditManager } from './services/credit-manager.js';
@@ -228,6 +229,10 @@ for (const u of allUsers) {
 
 app.use('/api/auth', createAuthRouter(db, authLimiter, refreshLimiter));
 
+// ONLYOFFICE fetches document bytes and posts save callbacks server-to-server.
+// These two endpoints use short-lived signed tokens instead of browser auth.
+app.use('/api/word', createWordPublicRouter(db));
+
 app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo, projectRouter));
 
 app.use('/api/chat', authMiddleware, createChatRouter(db, taskManager, creditManager, compactionService));
@@ -239,6 +244,7 @@ app.use('/api/sessions', authMiddleware, createSessionsRouter(db));
 app.use('/api/projects', authMiddleware, createProjectsRouter(db, projectRouter));
 app.use('/api/orchestrator', authMiddleware, createOrchestratorRouter(orchestratorManager, orchestratorSessionsRepo, orchestratorStepsRepo, orchestratorStateRepo, orchestratorTasksRepo));
 app.use('/api/payments', createPaymentsRouter(db, usersRepo, io));
+app.use('/api/word', authMiddleware, createWordRouter(db));
 
 app.use('/p', projectRouter.middleware());
 
@@ -298,7 +304,7 @@ const allProjects = projectsRepo.listAll();
 
 httpServer.listen(config.port, () => {
   log.info(`Web Agent running on http://localhost:${config.port}`);
-  log.info('Available routes: /api/auth, /api/admin, /api/chat, /api/models, /api/tasks, /api/files, /api/config, /api/sessions, /api/projects');
+  log.info('Available routes: /api/auth, /api/admin, /api/chat, /api/models, /api/tasks, /api/files, /api/config, /api/sessions, /api/projects, /api/word');
 });
 
 // Graceful shutdown handler shared by SIGINT and SIGTERM. Docker sends SIGTERM
