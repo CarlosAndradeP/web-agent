@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { resolveModels } from '../services/model-resolver.js';
+import { resolveModels, invalidateModelCache } from '../services/model-resolver.js';
 import { createLogger } from '../services/logger.js';
 const log = createLogger('ConfigAPI');
 export function createConfigRouter(configRepo, adminMiddleware) {
@@ -26,6 +26,9 @@ export function createConfigRouter(configRepo, adminMiddleware) {
             }
         }
         configRepo.updateAll(req.body);
+        // API base URL may have changed; invalidate the model list cache so the
+        // next request refetches from the new endpoint.
+        invalidateModelCache();
         res.json(configRepo.getAll());
     });
     return router;

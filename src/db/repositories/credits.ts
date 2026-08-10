@@ -12,21 +12,28 @@ export class CreditsRepository {
     const id = uuid();
     const now = new Date().toISOString();
 
-    // Atomic deduct: UPDATE with balance check in WHERE clause
-    const result = this.db.prepare(
-      'UPDATE users SET credits = credits - ?, updated_at = ? WHERE id = ? AND credits >= ?'
-    ).run(amount, now, userId, amount);
+    // Atomic deduct: UPDATE with balance check in WHERE clause. Both the
+    // UPDATE and the audit INSERT run inside a transaction so a crash between
+    // them cannot leave a decremented balance without an audit row.
+    const tx = this.db.transaction(() => {
+      const result = this.db.prepare(
+        'UPDATE users SET credits = credits - ?, updated_at = ? WHERE id = ? AND credits >= ?'
+      ).run(amount, now, userId, amount);
 
-    if (result.changes === 0) {
-      throw new Error('Insufficient credits');
-    }
+      if (result.changes === 0) {
+        throw new Error('Insufficient credits');
+      }
 
-    const newBalance = this.getBalance(userId);
+      const newBalance = this.getBalance(userId);
 
-    this.db.prepare(
-      'INSERT INTO credit_transactions (id, user_id, amount, balance_after, type, description, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, userId, -amount, newBalance, type, description ?? null, taskId ?? null, now);
+      this.db.prepare(
+        'INSERT INTO credit_transactions (id, user_id, amount, balance_after, type, description, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(id, userId, -amount, newBalance, type, description ?? null, taskId ?? null, now);
 
+      return newBalance;
+    });
+
+    const newBalance = tx();
     log.info('Credits deducted', { userId, amount, newBalance, type });
     return {
       id,
@@ -44,15 +51,28 @@ export class CreditsRepository {
     const id = uuid();
     const now = new Date().toISOString();
 
-    const user = this.db.prepare('SELECT credits FROM users WHERE id = ?').get(userId) as any;
-    if (!user) throw new Error('User not found');
+    // Atomic add: increment via `credits = credits + ?` (no read-modify-write)
+    // and capture the resulting balance in the same transaction for the audit
+    // row. Two concurrent adds cannot lose credits.
+    const tx = this.db.transaction(() => {
+      const result = this.db.prepare(
+        'UPDATE users SET credits = credits + ?, updated_at = ? WHERE id = ?'
+      ).run(amount, now, userId);
 
-    const newBalance = user.credits + amount;
-    this.db.prepare('UPDATE users SET credits = ?, updated_at = ? WHERE id = ?').run(newBalance, now, userId);
-    this.db.prepare(
-      'INSERT INTO credit_transactions (id, user_id, amount, balance_after, type, description, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, userId, amount, newBalance, type, description ?? null, null, now);
+      if (result.changes === 0) {
+        throw new Error('User not found');
+      }
 
+      const newBalance = this.getBalance(userId);
+
+      this.db.prepare(
+        'INSERT INTO credit_transactions (id, user_id, amount, balance_after, type, description, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(id, userId, amount, newBalance, type, description ?? null, null, now);
+
+      return newBalance;
+    });
+
+    const newBalance = tx();
     log.info('Credits added', { userId, amount, newBalance, type });
     return {
       id,

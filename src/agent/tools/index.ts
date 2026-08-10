@@ -49,6 +49,7 @@ export function buildToolSet(options: {
   agentType?: string;
   approvalManager?: ApprovalManager;
   userId?: string;
+  abortSignal?: AbortSignal;
 }) {
   log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode });
 
@@ -70,8 +71,7 @@ export function buildToolSet(options: {
       apiBaseUrl: options.apiBaseUrl,
       apiKey: options.apiKey,
       agentType: options.agentType,
-      approvalMode: options.approvalMode,
-      approvalTools: options.approvalTools,
+      abortSignal: options.abortSignal,
     });
   }
 

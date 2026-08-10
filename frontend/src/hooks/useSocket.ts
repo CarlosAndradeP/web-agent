@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getSocket } from '../lib/socket';
+import { subscribeSocketChange } from '../lib/socket';
 import type { Socket } from 'socket.io-client';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -19,15 +19,17 @@ export function useSocket() {
       return;
     }
 
-    // Read the singleton managed by AuthContext
-    const s = getSocket();
-    if (!s) {
-      setSocket(null);
+    return subscribeSocketChange(s => {
+      setSocket(s);
+      setConnected(!!s?.connected);
+    });
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!socket) {
       setConnected(false);
       return;
     }
-
-    setSocket(s);
 
     const onConnect = () => setConnected(true);
     const onDisconnect = () => setConnected(false);
@@ -38,19 +40,19 @@ export function useSocket() {
       setConnected(false);
     };
 
-    s.on('connect', onConnect);
-    s.on('disconnect', onDisconnect);
-    s.on('connect_error', onConnectError);
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onConnectError);
 
-    if (s.connected) setConnected(true);
+    if (socket.connected) setConnected(true);
 
     return () => {
-      s.off('connect', onConnect);
-      s.off('disconnect', onDisconnect);
-      s.off('connect_error', onConnectError);
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onConnectError);
       // Don't disconnect — the singleton is managed by AuthContext
     };
-  }, [accessToken]);
+  }, [socket]);
 
   return { socket, connected };
 }

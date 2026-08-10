@@ -69,8 +69,11 @@ export interface ApprovalRequest {
 
 export interface FileEntry {
   name: string;
+  path: string;
   type: 'file' | 'directory';
   size?: number;
+  modifiedAt?: string;
+  editable?: boolean;
   children?: FileEntry[];
 }
 
@@ -138,4 +141,60 @@ export interface NodeProcessInfo {
   pid: number | undefined;
   status: 'running' | 'stopped' | 'error';
   username?: string;
+}
+
+export type OrchestratorSessionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed';
+export type OrchestratorRole = 'orchestrator' | 'auxiliar' | 'arquiteto' | 'programador' | 'revisor';
+
+export interface OrchestratorSessionInfo {
+  id: string;
+  sessionId?: string;
+  status: OrchestratorSessionStatus;
+  objective: string;
+  currentStep: string | null;
+  progressPercent: number;
+  errorCount: number;
+  autoRecover: boolean;
+  mdFiles: string[] | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrchestratorStepInfo {
+  id: string;
+  orchestratorSessionId: string;
+  stepNumber: number;
+  role: OrchestratorRole;
+  model: string;
+  action: string;
+  input: string;
+  output: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  errorMessage: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface OrchestratorStatusInfo {
+  isRunning: boolean;
+  lastHeartbeat: string;
+  currentSessionId: string | null;
+  totalStepsCompleted: number;
+  session?: OrchestratorSessionInfo;
+}
+
+export interface OrchestratorTaskInfo {
+  id: string;
+  orchestratorSessionId: string;
+  name: string;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  role: string;
+  dependsOn: string | null;
+  output: string | null;
+  errorMessage: string | null;
+  stepNumber: number;
+  createdAt: string;
+  updatedAt: string;
 }

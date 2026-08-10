@@ -1,0 +1,271 @@
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../lib/api';
+import type { OrchestratorStatusInfo, OrchestratorStepInfo, OrchestratorSessionInfo, OrchestratorTaskInfo } from '../types';
+import { useSocket } from './useSocket';
+
+export interface LogEntry {
+  role: string;
+  message: string;
+  timestamp: string;
+}
+
+const statusLabels: Record<string, string> = {
+  idle: 'ocioso',
+  running: 'em execução',
+  paused: 'pausado',
+  completed: 'concluído',
+  failed: 'falhou',
+};
+
+export function useOrchestrator(sessionId?: string) {
+  const [status, setStatus] = useState<OrchestratorStatusInfo | null>(null);
+  const [steps, setSteps] = useState<OrchestratorStepInfo[]>([]);
+  const [tasks, setTasks] = useState<OrchestratorTaskInfo[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const { socket, connected } = useSocket();
+
+  const addLog = useCallback((role: string, message: string) => {
+    setLogs(prev => [...prev.slice(-200), { role, message, timestamp: new Date().toISOString() }]);
+  }, []);
+
+  const refreshSessionData = useCallback(async (orchestratorSessionId: string) => {
+    const [sessionData, stepsData, tasksData] = await Promise.all([
+      api.orchestrator.sessionStatus(orchestratorSessionId),
+      api.orchestrator.steps(orchestratorSessionId, 100, 0),
+      api.orchestrator.tasks(orchestratorSessionId),
+    ]);
+
+    setStatus(prev => ({
+      isRunning: sessionData.isRunning,
+      lastHeartbeat: prev?.lastHeartbeat ?? new Date().toISOString(),
+      currentSessionId: orchestratorSessionId,
+      totalStepsCompleted: prev?.totalStepsCompleted ?? 0,
+      session: sessionData.session,
+    }));
+    setSteps(stepsData.steps);
+    setTasks(tasksData.tasks);
+  }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const onStatus = (data: any) => {
+      setStatus(prev => prev ? { ...prev, isRunning: data.status === 'running', session: prev.session ? { ...prev.session, status: data.status, progressPercent: data.progressPercent ?? prev.session.progressPercent } : prev.session } : null);
+      addLog('orchestrator', `Status: ${statusLabels[data.status] || data.status} ${data.progressPercent ? `(${data.progressPercent}%)` : ''}`);
+    };
+
+    const onStep = (data: any) => {
+      setSteps(prev => [...prev, {
+        id: `step-${data.stepNumber}-${Date.now()}`,
+        orchestratorSessionId: data.sessionId,
+        stepNumber: data.stepNumber,
+        role: data.role,
+        model: data.model,
+        action: data.action,
+        input: data.input?.slice(0, 200) ?? '',
+        output: data.output?.slice(0, 200) ?? null,
+        status: data.status,
+        errorMessage: null,
+        durationMs: data.durationMs ?? null,
+        createdAt: new Date().toISOString(),
+        completedAt: data.status === 'completed' ? new Date().toISOString() : null,
+      }]);
+      addLog(data.role, `${data.action}: ${data.input?.slice(0, 100) ?? ''}`);
+    };
+
+    const onProgress = (data: any) => {
+      setStatus(prev => prev ? { ...prev, session: prev.session ? { ...prev.session, progressPercent: data.progressPercent, currentStep: data.currentStep } : prev.session } : null);
+    };
+
+    const onTask = (data: any) => {
+      setTasks(prev => {
+        const existingIdx = prev.findIndex(t => t.id === data.taskId);
+        const newTask: OrchestratorTaskInfo = {
+          id: data.taskId,
+          orchestratorSessionId: data.sessionId,
+          name: data.name ?? '',
+          description: data.description ?? '',
+          status: data.status,
+          role: data.role ?? 'programador',
+          dependsOn: data.dependsOn ?? null,
+          output: null,
+          errorMessage: data.errorMessage ?? null,
+          stepNumber: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (existingIdx >= 0) {
+          const updated = [...prev];
+          updated[existingIdx] = { ...updated[existingIdx], status: data.status, errorMessage: data.errorMessage ?? updated[existingIdx].errorMessage };
+          return updated;
+        }
+        return [...prev, newTask];
+      });
+    };
+
+    const onPlan = (data: any) => {
+      if (data.sessionId) void refreshSessionData(data.sessionId);
+    };
+
+    const onError = (data: any) => {
+      addLog(data.role ?? 'system', `Erro: ${data.error}`);
+    };
+
+    const onComplete = (data: any) => {
+      setStatus(prev => prev ? { ...prev, isRunning: false, session: prev.session ? { ...prev.session, status: data.status } : prev.session } : null);
+      addLog('orchestrator', `Sessão ${statusLabels[data.status] || data.status}`);
+      if (data.sessionId) void refreshSessionData(data.sessionId);
+      setTasks(prevTasks => {
+        if (data.status === 'completed') {
+          return prevTasks.map(t => t.status === 'running' || t.status === 'pending' ? { ...t, status: 'completed' as const } : t);
+        }
+        return prevTasks;
+      });
+    };
+
+    socket.on('orchestrator:status', onStatus);
+    socket.on('orchestrator:step', onStep);
+    socket.on('orchestrator:progress', onProgress);
+    socket.on('orchestrator:task', onTask);
+    socket.on('orchestrator:plan', onPlan);
+    socket.on('orchestrator:error', onError);
+    socket.on('orchestrator:complete', onComplete);
+
+    return () => {
+      socket.off('orchestrator:status', onStatus);
+      socket.off('orchestrator:step', onStep);
+      socket.off('orchestrator:progress', onProgress);
+      socket.off('orchestrator:task', onTask);
+      socket.off('orchestrator:plan', onPlan);
+      socket.off('orchestrator:error', onError);
+      socket.off('orchestrator:complete', onComplete);
+    };
+  }, [socket, addLog, refreshSessionData]);
+
+  useEffect(() => {
+    const orchestratorSessionId = status?.session?.id;
+    if (!socket || !connected || !orchestratorSessionId) return;
+
+    socket.emit('orchestrator:subscribe', { sessionId: orchestratorSessionId });
+    return () => {
+      socket.emit('orchestrator:unsubscribe', { sessionId: orchestratorSessionId });
+    };
+  }, [socket, connected, status?.session?.id]);
+
+  const start = useCallback(async (objective: string, mdFiles?: File[]) => {
+    setIsLoading(true);
+    try {
+      const mdPaths: string[] = [];
+
+      if (mdFiles && mdFiles.length > 0) {
+        const uploaded = await api.files.upload(mdFiles);
+        for (const name of uploaded.uploaded ?? []) {
+          mdPaths.push(name);
+        }
+      }
+
+      const result = await api.orchestrator.start({ sessionId, objective, mdFiles: mdPaths.length > 0 ? mdPaths : undefined });
+      const startedSession: OrchestratorSessionInfo = { ...result.session, status: 'running' };
+      setStatus(prev => ({
+        isRunning: true,
+        lastHeartbeat: prev?.lastHeartbeat ?? new Date().toISOString(),
+        currentSessionId: startedSession.id,
+        totalStepsCompleted: prev?.totalStepsCompleted ?? 0,
+        session: startedSession,
+      }));
+      setSteps([]);
+      setTasks([]);
+      addLog('orchestrator', `Iniciado: ${objective.slice(0, 80)}${mdPaths.length > 0 ? ` com ${mdPaths.length} arquivo(s) .md` : ''}`);
+
+      if (socket && connected && result.session.id) {
+        socket.emit('orchestrator:subscribe', { sessionId: result.session.id });
+      }
+      void refreshSessionData(result.session.id);
+    } catch (err: any) {
+      addLog('system', `Falha ao iniciar: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [socket, connected, sessionId, addLog, refreshSessionData]);
+
+  const stop = useCallback(async () => {
+    if (!status?.session?.id) return;
+    setIsLoading(true);
+    try {
+      await api.orchestrator.stop(status.session.id);
+      setStatus(prev => prev ? { ...prev, isRunning: false } : null);
+      addLog('orchestrator', 'Parado');
+    } catch (err: any) {
+      addLog('system', `Falha ao parar: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [status, addLog]);
+
+  const pause = useCallback(async () => {
+    if (!status?.session?.id) return;
+    setIsLoading(true);
+    try {
+      await api.orchestrator.pause(status.session.id);
+      addLog('orchestrator', 'Pausado');
+    } catch (err: any) {
+      addLog('system', `Falha ao pausar: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [status, addLog]);
+
+  const resume = useCallback(async () => {
+    if (!status?.session?.id) return;
+    setIsLoading(true);
+    try {
+      await api.orchestrator.resume(status.session.id);
+      addLog('orchestrator', 'Retomado');
+    } catch (err: any) {
+      addLog('system', `Falha ao retomar: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [status, addLog]);
+
+  const uploadMd = useCallback(async (files: File[]) => {
+    if (!status?.session?.id) return;
+    try {
+      await api.orchestrator.uploadMd(status.session.id, files);
+      addLog('orchestrator', `${files.length} arquivo(s) .md enviado(s)`);
+    } catch (err: any) {
+      addLog('system', `Falha no upload: ${err.message}`);
+    }
+  }, [status, addLog]);
+
+  const refreshTasks = useCallback(async () => {
+    if (!status?.session?.id) return;
+    try {
+      const data = await api.orchestrator.tasks(status.session.id);
+      setTasks(data.tasks);
+    } catch (err: any) {
+      addLog('system', `Falha ao atualizar tarefas: ${err.message}`);
+    }
+  }, [status, addLog]);
+
+  const refresh = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await api.orchestrator.status();
+      setStatus(data);
+      if (data.session) {
+        const stepsData = await api.orchestrator.steps(data.session.id, 100, 0);
+        setSteps(stepsData.steps);
+        const tasksData = await api.orchestrator.tasks(data.session.id);
+        setTasks(tasksData.tasks);
+      }
+    } catch (err: any) {
+      addLog('system', `Falha ao atualizar: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [addLog]);
+
+  return { status, steps, tasks, logs, isLoading, start, stop, pause, resume, uploadMd, refresh, refreshTasks };
+}

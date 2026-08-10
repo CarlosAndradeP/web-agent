@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
-import { resolve } from 'node:path';
 import { UsersRepository, toPublic } from '../db/repositories/users.js';
 import { CreditsRepository } from '../db/repositories/credits.js';
 import { ModelConfigRepository } from '../db/repositories/model-config.js';
@@ -9,6 +8,7 @@ import { resolveModels } from '../services/model-resolver.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { ProjectRouter } from '../services/project-router.js';
 import { createLogger } from '../services/logger.js';
+import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 
 const log = createLogger('AdminAPI');
 
@@ -293,7 +293,7 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
         res.status(404).json({ error: 'User not found' });
         return;
       }
-      const fullFolderPath = resolve(process.env.WORKSPACE_BASE_DIR || './workspace', user.username, project.folderPath);
+      const fullFolderPath = resolveUserWorkspacePath(user.username, project.folderPath, { allowRoot: true });
       await projectRouter.startProject(project, fullFolderPath);
       projectsRepo.updateStatus(project.id, 'active');
       res.json({ success: true });

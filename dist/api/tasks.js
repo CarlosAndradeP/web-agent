@@ -29,26 +29,40 @@ export function createTasksRouter(db, taskManager) {
             res.status(400).json({ error: 'description is required' });
             return;
         }
+        const userId = req.user?.userId;
+        const isAdminRole = req.user?.role === 'admin';
         try {
             let effectiveSessionId = sessionId;
             if (!effectiveSessionId) {
+                // No session provided: prefer the caller's own default session, never
+                // another user's. Admins fall back to any existing session.
                 const sessions = sessionsRepo.list();
-                if (sessions.length === 0) {
+                const ownSessions = isAdminRole ? sessions : (userId ? sessions.filter(s => !s.userId || s.userId === userId) : []);
+                if (ownSessions.length === 0) {
                     const session = sessionsRepo.create('Default Session', config.defaultModel);
                     effectiveSessionId = session.id;
+                    if (userId) {
+                        db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
+                    }
                 }
                 else {
-                    effectiveSessionId = sessions[0].id;
+                    effectiveSessionId = ownSessions[0].id;
                 }
             }
             else {
                 const existing = sessionsRepo.findById(effectiveSessionId);
                 if (!existing) {
-                    const session = sessionsRepo.create('Default Session', config.defaultModel);
-                    effectiveSessionId = session.id;
+                    res.status(404).json({ error: 'Session not found' });
+                    return;
+                }
+                // Ownership: non-admin may only create tasks on sessions they own (or
+                // legacy sessions with no owner if they are otherwise permitted).
+                if (!isAdminRole && existing.userId && existing.userId !== userId) {
+                    res.status(403).json({ error: 'Access denied' });
+                    return;
                 }
             }
-            const task = taskManager.createTask(effectiveSessionId, description, model ?? null, maxSteps);
+            const task = taskManager.createTask(effectiveSessionId, description, model ?? null, maxSteps, userId);
             res.status(201).json({ task });
         }
         catch (err) {

@@ -47,6 +47,7 @@ export function createAgent(options: CreateAgentOptions) {
     agentType: options.agentType,
     approvalManager: options.approvalManager,
     userId: options.userId,
+    abortSignal: options.abortSignal,
   });
 
   log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });

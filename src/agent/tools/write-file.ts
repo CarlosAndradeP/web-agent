@@ -1,8 +1,9 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { dirname } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, relative } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { safeWorkspacePath } from './sanitize.js';
+import { logToolExecution } from '../../services/logger.js';
 
 export function createWriteFileTool(workspaceDir: string) {
   return tool({
@@ -12,12 +13,17 @@ export function createWriteFileTool(workspaceDir: string) {
       content: z.string().describe('File content to write'),
     }),
     execute: async ({ path, content }) => {
+      const startTime = Date.now();
+      logToolExecution('writeFile', undefined, 'start', { input: { path, contentLength: content.length } });
       try {
         const fullPath = safeWorkspacePath(workspaceDir, path);
-        mkdirSync(dirname(fullPath), { recursive: true });
-        writeFileSync(fullPath, content, 'utf-8');
-        return { success: true, path };
+        const workspacePath = relative(workspaceDir, fullPath).replace(/\\/g, '/');
+        await mkdir(dirname(fullPath), { recursive: true });
+        await writeFile(fullPath, content, 'utf-8');
+        logToolExecution('writeFile', undefined, 'success', { output: { path: workspacePath, contentLength: content.length }, durationMs: Date.now() - startTime });
+        return { success: true, path: workspacePath };
       } catch (err: any) {
+        logToolExecution('writeFile', undefined, 'error', { error: err.message, input: { path }, durationMs: Date.now() - startTime });
         return { error: err.message, path };
       }
     },

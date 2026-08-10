@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { UsersRepository, toPublic } from '../db/repositories/users.js';
 import { CreditsRepository } from '../db/repositories/credits.js';
 import { ConfigRepository } from '../db/repositories/config.js';
-import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
+import { signAccessToken, signRefreshToken, verifyToken, verifyRefreshToken } from '../lib/jwt.js';
 import { createLogger } from '../services/logger.js';
 import { v4 as uuid } from 'uuid';
 import { resolve } from 'node:path';
@@ -51,12 +51,16 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
             return;
         }
         const { username, password, email } = req.body;
-        if (!username || !password) {
-            res.status(400).json({ error: 'username and password are required' });
+        if (!username || !password || !email) {
+            res.status(400).json({ error: 'username, password and email are required' });
             return;
         }
-        if (username.length < 3 || password.length < 6) {
-            res.status(400).json({ error: 'username must be 3+ chars, password 6+ chars' });
+        if (typeof username !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(username) || password.length < 6) {
+            res.status(400).json({ error: 'username must be 3-32 characters using only letters, numbers, _ or -; password must be 6+ characters' });
+            return;
+        }
+        if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+            res.status(400).json({ error: 'A valid email is required' });
             return;
         }
         const existing = usersRepo.findByUsername(username);
@@ -64,8 +68,8 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
             res.status(409).json({ error: 'Username already exists' });
             return;
         }
-        const initialCredits = 100;
-        const user = usersRepo.create(username, password, 'user', initialCredits, email);
+        const initialCredits = config.initialCredits;
+        const user = usersRepo.create(username, password, 'user', initialCredits, email.trim());
         creditsRepo.add(user.id, initialCredits, 'bonus', 'Initial credits');
         mkdirSync(resolve(config.workspaceBaseDir, username), { recursive: true });
         log.info('User registered', { userId: user.id, username: user.username });
@@ -83,18 +87,35 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
             return;
         }
         try {
-            const payload = verifyToken(refreshToken);
+            const payload = verifyRefreshToken(refreshToken);
             const user = usersRepo.findById(payload.userId);
             if (!user) {
                 res.status(401).json({ error: 'User not found' });
                 return;
             }
+            // Load only the user's non-expired sessions. Cap the loop iteration count
+            // to avoid pathological bcrypt-amplification DoS if a user accumulates
+            // many refresh tokens.
             const sessions = db.prepare('SELECT * FROM auth_sessions WHERE user_id = ? AND expires_at > ?').all(user.id, new Date().toISOString());
-            const validSession = sessions.find(s => bcrypt.compareSync(refreshToken, s.refresh_token_hash));
+            let validSession = null;
+            const compareLimit = Math.min(sessions.length, 20);
+            for (let i = 0; i < compareLimit; i++) {
+                if (bcrypt.compareSync(refreshToken, sessions[i].refresh_token_hash)) {
+                    validSession = sessions[i];
+                    break;
+                }
+            }
             if (!validSession) {
+                // Prune all expired sessions opportunistically. Closes DB rows that no
+                // longer correspond to a usable token and bounds future loop cost.
+                try {
+                    db.prepare('DELETE FROM auth_sessions WHERE user_id = ? AND expires_at <= ?').run(user.id, new Date().toISOString());
+                }
+                catch { }
                 res.status(401).json({ error: 'Invalid refresh token' });
                 return;
             }
+            // Rotation: delete the consumed token
             db.prepare('DELETE FROM auth_sessions WHERE id = ?').run(validSession.id);
             const accessToken = signAccessToken({ userId: user.id, role: user.role });
             const newRefreshToken = signRefreshToken({ userId: user.id });

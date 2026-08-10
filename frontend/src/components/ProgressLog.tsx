@@ -20,7 +20,7 @@ const statusColors: Record<string, string> = {
 
 export default function ProgressLog({ steps }: Props) {
   if (steps.length === 0) {
-    return <p className="text-xs text-zinc-600">No steps recorded yet</p>;
+    return <p className="text-xs text-zinc-600">Nenhuma etapa registrada ainda</p>;
   }
 
   return (
@@ -33,7 +33,7 @@ export default function ProgressLog({ steps }: Props) {
             <span className="text-[10px] text-zinc-600 w-5 text-right tabular-nums">{step.stepNumber}</span>
             <Icon className={cn('h-3 w-3 shrink-0', color)} />
             <span className={cn('font-mono truncate', color)}>
-              {step.toolName || 'thinking'}
+              {step.toolName || 'pensando'}
             </span>
             {step.durationMs != null && (
               <span className="text-[10px] text-zinc-600 ml-auto tabular-nums">{step.durationMs}ms</span>

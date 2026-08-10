@@ -47,10 +47,15 @@ export class ApprovalManager {
       return;
     }
 
-    // Check ownership: only the approval owner or an admin can respond
-    if (!isAdmin && entry.userId && responderUserId && entry.userId !== responderUserId) {
-      log.warn('Approval response denied — not owner', { id, responderUserId, ownerUserId: entry.userId });
-      return;
+    // Check ownership: only the approval owner or an admin can respond. If the
+    // approval was registered without a userId (e.g. task created without an
+    // owner) we reject by default — never allow an unauthenticated ownership
+    // bypass. Admins can still respond to userId-less approvals.
+    if (!isAdmin) {
+      if (!entry.userId || !responderUserId || entry.userId !== responderUserId) {
+        log.warn('Approval response denied — not owner', { id, responderUserId, ownerUserId: entry.userId });
+        return;
+      }
     }
 
     clearTimeout(entry.timeout);

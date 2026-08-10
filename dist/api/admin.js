@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import { resolve } from 'node:path';
 import { toPublic } from '../db/repositories/users.js';
 import { ModelConfigRepository } from '../db/repositories/model-config.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { createLogger } from '../services/logger.js';
+import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 const log = createLogger('AdminAPI');
 export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter) {
     const router = Router();
@@ -119,9 +119,13 @@ export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter) {
             res.status(500).json({ error: err.message });
         }
     });
-    router.put('/models/:modelId', (req, res) => {
-        const { modelId } = req.params;
-        const { enabled, costPerStep, displayName } = req.body;
+    // PUT /models — modelId in body (avoids Express 5 decoding %2F in URL paths)
+    router.put('/models', (req, res) => {
+        const { modelId, enabled, costPerStep, displayName } = req.body;
+        if (!modelId || typeof modelId !== 'string') {
+            res.status(400).json({ error: 'modelId is required and must be a string' });
+            return;
+        }
         if (enabled !== undefined && typeof enabled !== 'boolean') {
             res.status(400).json({ error: 'enabled must be a boolean' });
             return;
@@ -131,17 +135,22 @@ export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter) {
             return;
         }
         try {
-            const result = modelConfigRepo.upsert(decodeURIComponent(modelId), enabled ?? true, costPerStep ?? 1, displayName ?? null);
+            const result = modelConfigRepo.upsert(modelId, enabled ?? true, costPerStep ?? 1, displayName ?? null);
             res.json({ success: true, modelConfig: result });
         }
         catch (err) {
             res.status(400).json({ error: err.message });
         }
     });
-    router.delete('/models/:modelId', (req, res) => {
-        const { modelId } = req.params;
+    // POST /models/delete — modelId in body (avoids Express 5 decoding %2F in URL paths)
+    router.post('/models/delete', (req, res) => {
+        const { modelId } = req.body;
+        if (!modelId || typeof modelId !== 'string') {
+            res.status(400).json({ error: 'modelId is required and must be a string' });
+            return;
+        }
         try {
-            modelConfigRepo.deleteByModelId(decodeURIComponent(modelId));
+            modelConfigRepo.deleteByModelId(modelId);
             res.json({ success: true });
         }
         catch (err) {
@@ -255,7 +264,7 @@ export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter) {
                 res.status(404).json({ error: 'User not found' });
                 return;
             }
-            const fullFolderPath = resolve(process.env.WORKSPACE_BASE_DIR || './workspace', user.username, project.folderPath);
+            const fullFolderPath = resolveUserWorkspacePath(user.username, project.folderPath, { allowRoot: true });
             await projectRouter.startProject(project, fullFolderPath);
             projectsRepo.updateStatus(project.id, 'active');
             res.json({ success: true });

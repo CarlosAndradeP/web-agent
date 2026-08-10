@@ -6,7 +6,8 @@ Multi-user web development platform with an autonomous AI agent. Each user gets 
 
 - **Backend**: Express v5 + TypeScript + SQLite (better-sqlite3)
 - **Agent**: Vercel AI SDK v6 (ToolLoopAgent) + 10 tools + sub-agent + autocorrection
-- **Auth**: JWT (bcryptjs) with access token (15min) + refresh token (7d). Authenticated fetch via `authFetch()` wrapper (no global monkey-patching)
+- **Orchestrator**: Multi-agent autonomous workflow subsystem (arquiteto → programador/auxiliar → revisor)
+- **Auth**: JWT (bcryptjs) with access token (15min) + refresh token (7d), **separate access/refresh secrets** (legacy `JWT_SECRET` maps to both). Authenticated fetch via `authFetch()` wrapper (no global monkey-patching)
 - **Frontend**: React 19 + Vite 8 + TailwindCSS 4 + shadcn/ui (resizable layout, drag handles, visual polish)
 - **Real-time**: SSE (streaming) + Socket.IO (credits, file changes, approvals — singleton connection)
 - **Projects**: Static (express.static) / PHP (Apache 8080) / Node.js (spawn + proxy, auto-restart with exponential backoff)
@@ -100,6 +101,19 @@ npm run dev:frontend
 - `webFetch` tool has SSRF protection: blocks private IPs, link-local, cloud metadata (169.254.169.254), octal/hex IPs, post-DNS resolution checks
 - `installPackage` uses `execFile()` (no shell interpolation)
 
+### Orchestrator (Autonomous Project Delivery)
+- Multi-agent workflow subsystem that runs full project delivery from a single objective
+- **Phases**: `plan` (arquiteto scans codebase + LLM emits JSON task list) → `execute` (programador/auxiliar sub-agents execute tasks with dependency ordering) → `verify` (revisor reads files and returns PASS/FAIL)
+- **Multi-user concurrent runs**: one `OrchestratorRunner` per session, managed by `OrchestratorManager`
+- **Constants**: `MAX_TOTAL_STEPS=500`, `MAX_PARALLEL_TASKS=1`, `TASK_MAX_RETRIES=3`, `MAX_REPLAN_ATTEMPTS=1`, `SUB_AGENT_TIMEOUT_MS=900_000` (15min). Fallback model: `openai/gpt-oss-120b`
+- **Re-plan on repeated failure**: if a task fails all 3 retries, `arquiteto` proposes 2-3 smaller replacement tasks (max 1 re-plan attempt)
+- **File-state diffing**: programador runs attribute created/modified files and feed them into subsequent tasks' `previousResults` context
+- **Heartbeat**: 30s checks, 10min stale threshold — on stale, all runners shut down and corresponding sessions marked failed. On server restart, running sessions are recovered
+- **Credit deduction**: per-task after sub-agent completes (admins are exempt). Same execute-then-bill model as the chat agent
+- **`.md` file upload**: planning context can be augmented by uploading Markdown spec files (max 20 files, 10MB each)
+- Sub-agent toolsets are constructed **without** ApprovalManager bypassing the global `approvalMode` — see security.md Known Limitations
+- Frontend: `AutonomousPanel` + `Orchestrator*` components driven by `useOrchestrator` hook (subscribes to `orchestrator:*` socket events with 200-entry log history cap)
+
 ### Chat Input
 - **Slash commands** — 6 commands with autocomplete:
   - `/clear` — Clear chat messages
@@ -126,19 +140,21 @@ npm run dev:frontend
 
 | Variable | Default | Description |
 |---|---|---|
-| `API_BASE_URL` | — | LLM provider API URL (OpenAI-compatible) |
+| `API_BASE_URL` | `http://192.168.3.5:11431/v1` (rewritten to `host.docker.internal` in Docker) | LLM provider API URL (OpenAI-compatible) |
 | `API_KEY` | — | LLM API key |
 | `PORT` | `89` | Server port |
-| `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory |
+| `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory (each user gets `workspace/<username>/`) |
 | `DATA_DIR` | `./data` | SQLite database directory |
 | `MAX_STEPS` | `100` | Max agent steps per task |
-| `DEFAULT_MODEL` | `z-ai/glm-5.1` | Default LLM model |
-| `JWT_SECRET` | *(required in production)* | JWT signing secret |
-| `ADMIN_PASSWORD` | *(required in production)* | Admin bootstrap password |
+| `DEFAULT_MODEL` | `z-ai/glm-5.2` | Default LLM model |
+| `ACCESS_TOKEN_SECRET` | *(recommended, separate)* | Access token JWT secret (15min tokens) |
+| `REFRESH_TOKEN_SECRET` | *(recommended, separate)* | Refresh token JWT secret (7d tokens) |
+| `JWT_SECRET` | *(legacy, optional)* | If set, applies to both access and refresh secrets when the specific ones are unset |
+| `ADMIN_PASSWORD` | *(required in production)* | Admin bootstrap password (re-synced to DB on every boot, authoritative over UI-set passwords) |
 | `INITIAL_CREDITS` | `100` | Credits for new users |
 | `PUBLIC_BASE_URL` | — | Public base URL for project links |
 | `AGENT_TYPE` | `none` | Agent mode: `main` / `sub` / `none` |
-| `DOCKER_CONTAINER` | `0` | Set to `1` when running in Docker |
+| `DOCKER_CONTAINER` | `0` | Set to `1` when running in Docker (also auto-detected via `/.dockerenv`) |
 
 ## API
 
@@ -190,6 +206,19 @@ npm run dev:frontend
 | `GET` | `/api/admin/settings` | System settings (registration toggle) |
 | `PATCH` | `/api/admin/settings` | Update settings |
 
+### Orchestrator (authenticated, session-scoped)
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/orchestrator/start` | Start orchestrator session with objective (optional `sessionId`, `mdFiles`) |
+| `POST` | `/api/orchestrator/:sessionId/stop` | Stop session (ownership verified) |
+| `POST` | `/api/orchestrator/:sessionId/pause` | Pause session (ownership verified) |
+| `POST` | `/api/orchestrator/:sessionId/resume` | Resume session (ownership verified) |
+| `GET` | `/api/orchestrator/status` | Global singleton state (isRunning, currentSessionId, activeSessions list) |
+| `GET` | `/api/orchestrator/:sessionId/status` | Session status (objective, progress, isRunning) — NB: ownership check not yet enforced, see security.md |
+| `GET` | `/api/orchestrator/:sessionId/steps` | List orchestration steps (paginated) — NB: ownership check not yet enforced, see security.md |
+| `GET` | `/api/orchestrator/:sessionId/tasks` | List planned tasks for session (ownership verified) |
+| `POST` | `/api/orchestrator/:sessionId/upload-md` | Upload `.md` spec files (max 20, 10MB each; ownership verified) |
+
 ### Projects (public by UUID)
 | Method | Route | Description |
 |---|---|---|
@@ -217,30 +246,31 @@ npm run dev:frontend
 ```
 web-agent/
 ├── src/                    # Backend TypeScript (ESM)
-│   ├── server.ts           # Express + Socket.IO + auth bootstrap + project remount
+│   ├── server.ts           # Express + Socket.IO + auth bootstrap + project remount + orchestrator heartbeat start
 │   ├── agent/              # ToolLoopAgent + 10 tools + provider + instructions
-│   ├── api/                # 9 REST routers (auth, admin, chat, models, tasks, files, config, sessions, projects)
-│   ├── db/                 # Schema (10 tables + 7 indexes) + migration + 8 repositories
+│   ├── orchestrator/       # Multi-agent autonomous workflow (manager, runner, heartbeat, agents/, prompts/)
+│   ├── api/                # 10 REST routers (auth, admin, chat, models, tasks, files, config, sessions, projects, orchestrator)
+│   ├── db/                 # Schema (14 tables + 7 indexes) + migration + 9 repositories
 │   ├── middleware/          # Auth + Admin middleware
-│   ├── lib/                # JWT utilities
-│   ├── services/           # TaskManager, CreditManager, ProjectRouter, CompactionService, Logger, etc.
+│   ├── lib/                # JWT utilities + workspace path resolution
+│   ├── services/           # TaskManager, CreditManager, ApprovalManager, ProjectRouter, CompactionService, FileWatcher, ModelResolver, Logger
 │   ├── preload/            # port-force.cjs (PORT monkey-patch for Node.js projects)
 │   ├── types/              # Shared TypeScript types (single source of truth)
-│   └── websocket/          # Socket.IO events (room-scoped, JWT-authenticated)
+│   └── websocket/          # Socket.IO events (room-scoped, JWT-authenticated, ownership checks)
 ├── frontend/               # React 19 + Vite 8 + TailwindCSS 4
 │   └── src/
-│       ├── components/     # 17+ components + shadcn/ui primitives
+│       ├── components/     # 17+ components + shadcn/ui primitives (incl. AutonomousPanel + Orchestrator* views)
 │       ├── contexts/       # AuthContext (auth + socket singleton + authFetch)
-│       ├── hooks/          # 7 hooks (useChat, useProjects, useFiles, useSocket, etc.)
+│       ├── hooks/          # 8 hooks (useChat, useProjects, useFiles, useTasks, useSessions, useSocket, useResizable, useOrchestrator)
 │       ├── lib/            # api.ts (authFetch-integrated), socket singleton, auth-api
 │       └── types/          # Frontend type definitions
 ├── scripts/                # Build helper scripts (copy-preload.cjs)
 ├── apache/                 # Apache config (ports, vhost with -Indexes)
-├── Dockerfile              # Multi-stage php:8.3-apache-bookworm
-├── docker-compose.yml      # Production Docker (requires JWT_SECRET + ADMIN_PASSWORD)
-├── .dockerignore           # Excludes node_modules, dist, data, .env, etc.
+├── Dockerfile              # Multi-stage php:8.3-apache-bookworm (3 stages: frontend, backend, runtime)
+├── docker-compose.yml      # Production Docker (requires JWT_SECRET/ACCESS_TOKEN_SECRET + ADMIN_PASSWORD)
+├── .dockerignore           # Excludes logs and docs only — see security.md Known Limitations
 ├── CHANGELOG.md            # Detailed change history
-└── SECURITY.md             # Security model and reporting
+└── security.md             # Security model, mitigations, and known limitations
 ```
 
 ## Scripts
@@ -314,7 +344,7 @@ See full details in [`CHANGELOG.md`](CHANGELOG.md).
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | Internal UUID |
-| `model_id` | TEXT UNIQUE | Model ID (e.g. `z-ai/glm-5.1`) |
+| `model_id` | TEXT UNIQUE | Model ID (e.g. `z-ai/glm-5.2`) |
 | `enabled` | INTEGER | 1=enabled, 0=disabled (default 1) |
 | `cost_per_step` | REAL | Credits per step (default 1) |
 | `display_name` | TEXT | Custom display name |

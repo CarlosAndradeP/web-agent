@@ -49,8 +49,10 @@ COPY --from=builder-frontend /app/frontend/dist ./public
 COPY docker-start.sh /app/docker-start.sh
 RUN chmod +x /app/docker-start.sh
 
-RUN mkdir -p /app/workspace /app/data
-RUN chown -R www-data:www-data /app/workspace
+RUN mkdir -p /app/workspace /app/data /app/project-links
+RUN chown -R www-data:www-data /app/workspace /app/project-links
+ENV AGENT_COMMAND_UID=33
+ENV AGENT_COMMAND_GID=33
 
 EXPOSE 89
 ENV PORT=89

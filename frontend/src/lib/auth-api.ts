@@ -19,6 +19,21 @@ export interface CreditTransaction {
   createdAt: string;
 }
 
+export interface PixPayment {
+  id: string;
+  userId: string;
+  providerPaymentId: string | null;
+  status: string;
+  credits: number;
+  amountBrl: number;
+  qrCode: string | null;
+  qrCodeBase64: string | null;
+  ticketUrl: string | null;
+  creditedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
@@ -44,7 +59,7 @@ export const authApi = {
       body: JSON.stringify({ username, password }),
     }),
 
-  register: (username: string, password: string, email?: string) =>
+  register: (username: string, password: string, email: string) =>
     fetchJSON<AuthResponse>(`${BASE}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -78,6 +93,28 @@ export const authApi = {
 
   creditHistory: (accessToken: string, limit?: number, offset?: number) =>
     fetchJSON<{ history: CreditTransaction[]; balance: number }>(`${BASE}/credits/history?limit=${limit || 50}&offset=${offset || 0}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+
+  paymentConfig: (accessToken: string) =>
+    fetchJSON<{ pixEnabled: boolean; creditPriceBrl: number }>('/api/payments/config', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+
+  createPixPayment: (credits: number, accessToken: string) =>
+    fetchJSON<{ payment: PixPayment }>('/api/payments/pix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ credits }),
+    }),
+
+  pixPayment: (id: string, accessToken: string) =>
+    fetchJSON<{ payment: PixPayment }>(`/api/payments/pix/${id}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }),
+
+  pixPayments: (accessToken: string) =>
+    fetchJSON<{ payments: PixPayment[] }>('/api/payments/pix', {
       headers: { Authorization: `Bearer ${accessToken}` },
     }),
 

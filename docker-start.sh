@@ -3,6 +3,11 @@ set -e
 
 DB_PATH="/app/data/web-agent.db"
 
+mkdir -p /app/workspace /app/data /app/project-links
+if [ "$(id -u)" = "0" ]; then
+  chown -R www-data:www-data /app/workspace /app/data /app/project-links
+fi
+
 if [ -f "$DB_PATH" ]; then
   BACKUP_DIR="/app/data/backups"
   mkdir -p "$BACKUP_DIR"
@@ -23,4 +28,7 @@ apache2ctl start
 
 echo "Starting Node.js server on port 89..."
 cd /app
+if [ "$(id -u)" = "0" ]; then
+  exec runuser -u www-data -- node dist/server.js
+fi
 exec node dist/server.js

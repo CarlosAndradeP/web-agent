@@ -3,21 +3,45 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve, join, dirname, extname } from 'node:path';
 import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import http from 'node:http';
+import net from 'node:net';
 import { Transform, type TransformCallback } from 'node:stream';
-import type { Project } from '../db/repositories/projects.js';
+import type { Server } from 'socket.io';
+import type { Project, ProjectsRepository } from '../db/repositories/projects.js';
+import type { UsersRepository } from '../db/repositories/users.js';
 import { createLogger } from '../services/logger.js';
 import { buildSafeEnv } from '../agent/tools/command-policy.js';
+import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
+import { config } from '../config.js';
 
 const log = createLogger('ProjectRouter');
 
+// createRequire lets us dynamically load a project's package.json from an ESM
+// module. Using `require(...)` directly throws ReferenceError in ESM, which
+// silently broke script/main detection (it always fell back to index.js).
+const projectRequire = createRequire(import.meta.url);
+
 const PORT_MIN = 9000;
 const PORT_MAX = 65535;
+const MAX_PORT_SCAN_ATTEMPTS = PORT_MAX - PORT_MIN + 1;
+const MAX_RESTARTS = 5;
 let nextNodePort = PORT_MIN;
 const releasedPorts = new Set<number>();
 
-function allocatePort(): number {
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolveAvailability) => {
+    const server = net.createServer();
+    server.once('error', () => resolveAvailability(false));
+    server.once('listening', () => {
+      server.close(() => resolveAvailability(true));
+    });
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+function nextCandidatePort(): number {
   // Reuse a released port if available
   for (const port of releasedPorts) {
     releasedPorts.delete(port);
@@ -28,6 +52,14 @@ function allocatePort(): number {
     nextNodePort = PORT_MIN;
   }
   return nextNodePort++;
+}
+
+async function allocatePort(): Promise<number> {
+  for (let attempt = 0; attempt < MAX_PORT_SCAN_ATTEMPTS; attempt++) {
+    const port = nextCandidatePort();
+    if (await isPortAvailable(port)) return port;
+  }
+  throw new Error('No available Node.js ports');
 }
 
 function releasePort(port: number): void {
@@ -41,6 +73,7 @@ interface ActiveProject {
   port?: number;
   symlinkPath?: string;
   restartCount: number;
+  restartTimer?: ReturnType<typeof setTimeout>;
   stopped: boolean;
 }
 
@@ -79,10 +112,20 @@ async function waitForPort(port: number, timeoutMs = 15000): Promise<boolean> {
 
 export class ProjectRouter {
   private activeProjects = new Map<string, ActiveProject>();
-  private workspaceBaseDir: string;
+  private projectLinkBaseDir: string;
+  private io: Server | null = null;
 
-  constructor(private app: express.Express) {
-    this.workspaceBaseDir = process.env.WORKSPACE_BASE_DIR || './workspace';
+  constructor(
+    private app: express.Express,
+    private projectsRepo: ProjectsRepository,
+    private usersRepo: UsersRepository,
+  ) {
+    this.projectLinkBaseDir = config.projectLinkBaseDir;
+    mkdirSync(this.projectLinkBaseDir, { recursive: true });
+  }
+
+  setIo(io: Server): void {
+    this.io = io;
   }
 
   middleware(): express.RequestHandler {
@@ -199,7 +242,7 @@ export class ProjectRouter {
 
       log.info('Static project mounted (dual: express.static + Apache proxy for PHP)', { uuid: project.uuid, path: fullFolderPath });
 
-      const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+      const uuidLinkPath = resolve(this.projectLinkBaseDir, project.uuid);
       try {
         if (lstatSync(uuidLinkPath).isSymbolicLink()) {
           unlinkSync(uuidLinkPath);
@@ -213,7 +256,7 @@ export class ProjectRouter {
         log.warn('Failed to create symlink for static project (non-fatal)', { uuid: project.uuid, error: err.message });
       }
     } else if (project.type === 'php') {
-      const uuidLinkPath = resolve(this.workspaceBaseDir, project.uuid);
+      const uuidLinkPath = resolve(this.projectLinkBaseDir, project.uuid);
       try {
         if (lstatSync(uuidLinkPath).isSymbolicLink()) {
           unlinkSync(uuidLinkPath);
@@ -228,13 +271,10 @@ export class ProjectRouter {
       }) as any;
       log.info('PHP project mounted (proxy to Apache via symlink)', { uuid: project.uuid, symlink: uuidLinkPath, target: fullFolderPath });
     } else if (project.type === 'node') {
-      const port = allocatePort();
+      const port = await allocatePort();
       const active: ActiveProject = {
         project,
-        middleware: createProxyMiddleware({
-          target: `http://localhost:${port}`,
-          changeOrigin: true,
-        }) as any,
+        middleware: this.createNodeProxy(port),
         port,
         restartCount: 0,
         stopped: false,
@@ -250,7 +290,9 @@ export class ProjectRouter {
 
       const ready = await waitForPort(port);
       if (!ready) {
-        log.warn('Node project did not become ready in time', { uuid: project.uuid, port });
+        const error = `Node project did not become ready on port ${port}`;
+        this.failNodeProject(project, active, error);
+        throw new Error(error);
       } else {
         log.info('Node project ready', { uuid: project.uuid, port });
       }
@@ -268,18 +310,23 @@ export class ProjectRouter {
 
     active.stopped = true;
 
+    // Cancel any pending restart timer so it does not live up to 30s in the
+    // event loop after the project is unmounted (which would delay a clean
+    // server shutdown by up to the max backoff).
+    if (active.restartTimer) {
+      clearTimeout(active.restartTimer);
+      active.restartTimer = undefined;
+    }
+
+    this.closeProxy(active);
+
     if (active.process) {
-      try {
-        active.process.kill('SIGTERM');
-        log.info('Node process killed', { uuid: project.uuid, pid: active.process.pid });
-      } catch (err: any) {
-        log.warn('Failed to kill node process', { uuid: project.uuid, error: err.message });
-      }
+      this.terminateProcess(active.process, project.uuid, 'unmount');
     }
 
     // Release port back to the pool
     if (active.port) {
-      releasePort(active.port);
+      this.releaseActivePort(active);
     }
 
     if (active.symlinkPath) {
@@ -311,11 +358,10 @@ export class ProjectRouter {
       throw new Error(`Folder does not exist: ${fullFolderPath}`);
     }
 
-    const port = existing?.port ?? allocatePort();
-    const middleware = createProxyMiddleware({
-      target: `http://localhost:${port}`,
-      changeOrigin: true,
-    }) as any;
+    if (existing) this.cleanupActive(project.uuid, existing, { releasePort: false });
+
+    const port = await allocatePort();
+    const middleware = this.createNodeProxy(port);
 
     const active: ActiveProject = {
       project,
@@ -329,13 +375,15 @@ export class ProjectRouter {
     try {
       this.spawnAndWatch(project, fullFolderPath, port);
     } catch (err: any) {
-      this.activeProjects.delete(project.uuid);
+      this.cleanupActive(project.uuid, active);
       throw err;
     }
 
     const ready = await waitForPort(port);
     if (!ready) {
-      log.warn('Node project did not become ready on start', { uuid: project.uuid, port });
+      const error = `Node project did not become ready on port ${port}`;
+      this.failNodeProject(project, active, error);
+      throw new Error(error);
     }
   }
 
@@ -346,8 +394,14 @@ export class ProjectRouter {
     }
 
     active.stopped = true;
+    if (active.restartTimer) {
+      clearTimeout(active.restartTimer);
+      active.restartTimer = undefined;
+    }
+    this.closeProxy(active);
+
     try {
-      active.process.kill('SIGTERM');
+      this.terminateProcess(active.process, uuid, 'stop');
       log.info('Node process stopped by admin', { uuid, pid: active.process.pid });
     } catch (err: any) {
       log.warn('Failed to stop node process', { uuid, error: err.message });
@@ -356,18 +410,21 @@ export class ProjectRouter {
 
     // Release port back to the pool
     if (active.port) {
-      releasePort(active.port);
+      this.releaseActivePort(active);
     }
+    this.activeProjects.delete(uuid);
+    try { this.projectsRepo.updatePort(active.project.id, null); } catch {}
+    try { this.projectsRepo.updatePid(active.project.id, null); } catch {}
   }
 
   async promoteToNode(project: Project, fullFolderPath: string): Promise<void> {
     this.unmountProject(project);
 
-    const port = nextNodePort++;
-    const middleware = createProxyMiddleware({
-      target: `http://localhost:${port}`,
-      changeOrigin: true,
-    }) as any;
+    // Use allocatePort() so the promote path reuses released ports and
+    // respects the wraparound/PORT_MAX bounds. Directly mutating nextNodePort
+    // was bypassing the released-ports pool and could yield port 65536.
+    const port = await allocatePort();
+    const middleware = this.createNodeProxy(port);
 
     const active: ActiveProject = {
       project: { ...project, type: 'node' },
@@ -381,13 +438,15 @@ export class ProjectRouter {
     try {
       this.spawnAndWatch({ ...project, type: 'node' }, fullFolderPath, port);
     } catch (err: any) {
-      this.activeProjects.delete(project.uuid);
+      this.cleanupActive(project.uuid, active);
       throw err;
     }
 
     const ready = await waitForPort(port);
     if (!ready) {
-      log.warn('Promoted Node project did not become ready in time', { uuid: project.uuid, port });
+      const error = `Promoted Node project did not become ready on port ${port}`;
+      this.failNodeProject(active.project, active, error);
+      throw new Error(error);
     } else {
       log.info('Promoted Node project ready', { uuid: project.uuid, port });
     }
@@ -419,6 +478,10 @@ export class ProjectRouter {
   shutdownAll(): void {
     for (const [uuid, active] of this.activeProjects) {
       active.stopped = true;
+      if (active.restartTimer) {
+        clearTimeout(active.restartTimer);
+        active.restartTimer = undefined;
+      }
       if (active.process) {
         try {
           active.process.kill('SIGTERM');
@@ -446,7 +509,9 @@ export class ProjectRouter {
         const linkPath = active.symlinkPath;
         try {
           if (!lstatSync(linkPath).isSymbolicLink()) {
-            const fullFolderPath = resolve(this.workspaceBaseDir, active.project.userId, active.project.folderPath);
+            const user = this.usersRepo.findById(active.project.userId);
+            if (!user) continue;
+            const fullFolderPath = resolveUserWorkspacePath(user.username, active.project.folderPath, { allowRoot: true });
             if (existsSync(fullFolderPath)) {
               symlinkSync(fullFolderPath, linkPath, 'junction');
               log.info('Recreated symlink on startup', { uuid, path: linkPath });
@@ -470,25 +535,106 @@ export class ProjectRouter {
       throw err;
     }
     active.process = childProcess;
+    try { this.projectsRepo.updatePort(project.id, port); } catch {}
+    try { this.projectsRepo.updatePid(project.id, childProcess.pid ?? null); } catch {}
 
     childProcess.on('exit', (code) => {
       log.info('Node project exited', { uuid: project.uuid, exitCode: code });
+      try { this.projectsRepo.updatePid(project.id, null); } catch {}
 
       if (active.stopped) return;
 
-      if (active.restartCount < 5) {
+      if (active.restartCount < MAX_RESTARTS) {
         active.restartCount++;
         const delay = Math.min(1000 * Math.pow(2, active.restartCount - 1), 30000);
         log.info('Restarting Node project after crash', { uuid: project.uuid, restartCount: active.restartCount, delayMs: delay });
-        setTimeout(() => {
+        active.restartTimer = setTimeout(async () => {
+          active.restartTimer = undefined;
           if (!active.stopped && this.activeProjects.has(project.uuid)) {
-            this.spawnAndWatch(project, fullFolderPath, port);
+            try {
+              if (active.port) releasePort(active.port);
+              const nextPort = await allocatePort();
+              active.port = nextPort;
+              active.middleware = this.createNodeProxy(nextPort);
+              this.spawnAndWatch(project, fullFolderPath, nextPort);
+            } catch (err: any) {
+              this.failNodeProject(project, active, `Failed to restart Node.js project: ${err.message}`);
+            }
           }
         }, delay);
       } else {
-        log.warn('Node project exceeded max restarts', { uuid: project.uuid, restartCount: active.restartCount });
+        this.failNodeProject(project, active, `Node project exceeded max restarts (${MAX_RESTARTS})`);
       }
     });
+  }
+
+  private createNodeProxy(port: number): express.RequestHandler {
+    return createProxyMiddleware({
+      target: `http://localhost:${port}`,
+      changeOrigin: true,
+    }) as any;
+  }
+
+  private closeProxy(active: ActiveProject): void {
+    try {
+      (active.middleware as any).close?.();
+    } catch (err: any) {
+      log.warn('Failed to close project proxy', { uuid: active.project.uuid, error: err.message });
+    }
+  }
+
+  private cleanupActive(uuid: string, active: ActiveProject, options: { releasePort?: boolean } = {}): void {
+    active.stopped = true;
+    if (active.restartTimer) {
+      clearTimeout(active.restartTimer);
+      active.restartTimer = undefined;
+    }
+    this.closeProxy(active);
+    if (active.port && options.releasePort !== false) this.releaseActivePort(active);
+    this.activeProjects.delete(uuid);
+  }
+
+  private releaseActivePort(active: ActiveProject): void {
+    const port = active.port;
+    if (!port) return;
+    active.port = undefined;
+    const child = active.process;
+    if (child && child.exitCode === null) {
+      const releaseTimer = setTimeout(() => releasePort(port), 6000);
+      if (releaseTimer.unref) releaseTimer.unref();
+      child.once('close', () => {
+        clearTimeout(releaseTimer);
+        releasePort(port);
+      });
+      return;
+    }
+    releasePort(port);
+  }
+
+  private terminateProcess(process: ChildProcess, uuid: string, reason: string): void {
+    if (process.killed) return;
+    process.kill('SIGTERM');
+    const killTimer = setTimeout(() => {
+      if (!process.killed && process.exitCode === null) {
+        try {
+          process.kill('SIGKILL');
+          log.warn('Escalated Node process kill to SIGKILL', { uuid, pid: process.pid, reason });
+        } catch (err: any) {
+          log.warn('Failed to SIGKILL Node process', { uuid, pid: process.pid, reason, error: err.message });
+        }
+      }
+    }, 5000);
+    if (killTimer.unref) killTimer.unref();
+  }
+
+  private failNodeProject(project: Project, active: ActiveProject, error: string): void {
+    log.warn('Node project failed permanently', { uuid: project.uuid, projectId: project.id, error });
+    if (active.process) this.terminateProcess(active.process, project.uuid, 'failure');
+    this.cleanupActive(project.uuid, active);
+    try { this.projectsRepo.updateStatus(project.id, 'error'); } catch (err: any) { log.warn('Failed to update project status after Node failure', { projectId: project.id, error: err.message }); }
+    try { this.projectsRepo.updatePort(project.id, null); } catch {}
+    try { this.projectsRepo.updatePid(project.id, null); } catch {}
+    this.io?.to(`user:${project.userId}`).emit('project:error', { projectId: project.id, uuid: project.uuid, error });
   }
 
   private spawnNodeProject(folderPath: string, port: number, uuid: string): ChildProcess {
@@ -501,7 +647,7 @@ export class ProjectRouter {
 
     if (existsSync(pkgJsonPath)) {
       try {
-        const pkgJson = require(pkgJsonPath);
+        const pkgJson = projectRequire(pkgJsonPath);
         if (pkgJson.scripts?.start) {
           startCmd = 'npm';
           startArgs = ['start'];
@@ -510,7 +656,9 @@ export class ProjectRouter {
           startArgs = [pkgJson.main];
           entryFile = pkgJson.main;
         }
-      } catch {}
+      } catch (err: any) {
+        log.warn('Failed to parse package.json, falling back to index.js', { uuid, folderPath, error: err.message });
+      }
     }
 
     if (startCmd === 'node' && entryFile && !existsSync(resolve(folderPath, entryFile))) {

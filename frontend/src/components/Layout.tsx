@@ -6,6 +6,7 @@ import ConfigPanel from './ConfigPanel';
 import AdminPanel from './AdminPanel';
 import UserPanel from './UserPanel';
 import Header from './Header';
+import AutonomousPanel from './AutonomousPanel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -17,7 +18,7 @@ import { useResizable } from '../hooks/useResizable';
 import { api } from '../lib/api';
 import type { Project } from '../types';
 
-type Tab = 'chat' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
+type Tab = 'chat' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
@@ -30,6 +31,7 @@ export default function Layout() {
   const [existingFolders, setExistingFolders] = useState<{ name: string; path: string }[]>([]);
   const [useExistingFolder, setUseExistingFolder] = useState(false);
   const [isChatStreaming, setIsChatStreaming] = useState(false);
+  const [accountInitialTab, setAccountInitialTab] = useState<'account' | 'security' | 'credits'>('account');
   const { projects, createProject, deleteProject, startProject, stopProject, promoteNode, refresh: refreshProjects } = useProjects();
   const { sessions, createSession } = useSessions();
   const { connected } = useSocket();
@@ -52,6 +54,15 @@ export default function Layout() {
     }
   }, [showCreateDialog]);
 
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
+
   const handleTabChange = useCallback((tab: Tab) => {
     if (tab === 'admin' && !isAdmin) return;
     setActiveTab(tab);
@@ -59,7 +70,7 @@ export default function Layout() {
   }, [isAdmin]);
 
   const handleProjectCreate = useCallback(async () => {
-    const name = newProjectName.trim() || `Project ${projects.length + 1}`;
+    const name = newProjectName.trim() || `Projeto ${projects.length + 1}`;
     let folderPath: string;
     if (useExistingFolder && newProjectFolder) {
       folderPath = newProjectFolder;
@@ -78,12 +89,13 @@ export default function Layout() {
       setShowCreateDialog(false);
       setActiveTab('chat');
     } catch (err: any) {
-      alert(`Failed to create project: ${err.message}`);
+      alert(`Não foi possível criar o projeto: ${err.message}`);
     }
   }, [newProjectName, newProjectFolder, useExistingFolder, projects.length, createProject]);
 
   const handleProjectDelete = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
+    if (!confirm(`Excluir o projeto "${project?.name || 'sem nome'}"? Esta ação não pode ser desfeita.`)) return;
     await deleteProject(id);
     if (id === activeProjectId) {
       const remaining = projects.filter(p => p.id !== id);
@@ -108,12 +120,18 @@ export default function Layout() {
 
   const handleNewSession = useCallback(async () => {
     try {
-      const session = await createSession('New Session');
+      const session = await createSession('Nova sessão');
       setSessionId(session.id);
     } catch (err: any) {
-      console.error('Failed to create new session:', err);
+      console.error('Falha ao criar nova sessão:', err);
     }
   }, [createSession]);
+
+  const openCreditsPanel = useCallback(() => {
+    setAccountInitialTab('credits');
+    setActiveTab('account');
+    setMobileMenuOpen(false);
+  }, []);
 
   const effectiveSessionId = sessionId || 'default';
   const activeProject = projects.find(p => p.id === activeProjectId);
@@ -133,9 +151,9 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
+    <div className="flex h-screen h-dvh bg-zinc-950/95 text-zinc-100 overflow-hidden">
       {/* Desktop sidebar + resize handle */}
-      <div className="hidden md:flex shrink-0 border-r border-zinc-800/60" style={{ width: sidebarWidth }}>
+      <div className="hidden md:flex shrink-0 border-r border-zinc-800/70 shadow-2xl shadow-black/10" style={{ width: sidebarWidth }}>
         <Sidebar {...sidebarProps} />
       </div>
       <div
@@ -150,15 +168,15 @@ export default function Layout() {
       {/* Mobile sidebar overlay */}
       {mobileMenuOpen && (
         <>
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden animate-in" onClick={() => setMobileMenuOpen(false)} />
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden w-72 animate-in shadow-2xl">
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden animate-in" onClick={() => setMobileMenuOpen(false)} aria-hidden="true" />
+          <div className="fixed inset-y-0 left-0 z-50 md:hidden w-[min(86vw,320px)] animate-in shadow-2xl" role="dialog" aria-modal="true" aria-label="Menu principal">
             <Sidebar {...sidebarProps} />
           </div>
         </>
       )}
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <Header
           onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
           menuOpen={mobileMenuOpen}
@@ -166,24 +184,27 @@ export default function Layout() {
           sessionName={activeProject?.name}
         />
 
-        <main className="flex-1 overflow-hidden">
+        <main className="min-h-0 flex-1 overflow-hidden" aria-label="Conteúdo principal">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
             {effectiveSessionId ? (
-              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} onStreamingChange={setIsChatStreaming} onNewSession={handleNewSession} basePath={activeProject?.folderPath} />
+              <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} onStreamingChange={setIsChatStreaming} onNewSession={handleNewSession} onCreditsRequired={openCreditsPanel} basePath={activeProject?.folderPath} />
             ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center space-y-3">
-                  <div className="h-12 w-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center mx-auto">
+              <div className="flex items-center justify-center h-full p-6">
+                <div className="text-center space-y-4 max-w-sm rounded-2xl border border-zinc-800/70 bg-zinc-900/40 p-8 shadow-xl shadow-black/10">
+                  <div className="h-12 w-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
                     <span className="text-lg">+</span>
                   </div>
-                  <p className="text-sm text-zinc-500">Select or create a project to start</p>
+                  <div><h2 className="text-base font-semibold">Comece por um projeto</h2><p className="text-sm text-zinc-500 mt-1">Selecione um projeto existente ou crie um novo no menu lateral.</p></div>
                 </div>
               </div>
             )}
           </div>
+          <div className={activeTab === 'autonomous' ? 'h-full' : 'h-full hidden'}>
+            <AutonomousPanel sessionId={effectiveSessionId} onCreditsRequired={openCreditsPanel} />
+          </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">
-              <p className="text-sm text-zinc-500">Tasks are tracked per-project in the chat</p>
+              <p className="text-sm text-zinc-500">As tarefas são acompanhadas por projeto no chat</p>
             </div>
           </div>
           <div className={activeTab === 'files' ? 'h-full' : 'h-full hidden'}>
@@ -199,7 +220,7 @@ export default function Layout() {
           )}
           {!isAdmin && (
             <div className={activeTab === 'account' ? 'h-full' : 'h-full hidden'}>
-              <UserPanel />
+              <UserPanel initialTab={accountInitialTab} />
             </div>
           )}
         </main>
@@ -208,12 +229,12 @@ export default function Layout() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Project</DialogTitle>
-            <DialogDescription>Create a new project with a linked chat session</DialogDescription>
+            <DialogTitle>Novo projeto</DialogTitle>
+            <DialogDescription>Crie um projeto com uma sessão de chat vinculada</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <Input
-              placeholder="Project name..."
+              placeholder="Nome do projeto..."
               value={newProjectName}
               onChange={e => setNewProjectName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleProjectCreate()}
@@ -228,7 +249,7 @@ export default function Layout() {
                   onChange={e => setUseExistingFolder(e.target.checked)}
                   className="rounded border-zinc-700 bg-zinc-900"
                 />
-                <label htmlFor="use-existing" className="text-xs text-zinc-400 cursor-pointer">Use existing folder in workspace</label>
+                <label htmlFor="use-existing" className="text-xs text-zinc-400 cursor-pointer">Usar pasta existente no workspace</label>
               </div>
               {useExistingFolder ? (
                 <select
@@ -236,14 +257,14 @@ export default function Layout() {
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewProjectFolder(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-200"
                 >
-                  <option value="">Select a folder...</option>
+                  <option value="">Selecione uma pasta...</option>
                   {existingFolders.map(f => (
                     <option key={f.path} value={f.path}>{f.name}</option>
                   ))}
                 </select>
               ) : (
                 <Input
-                  placeholder="Folder name (auto-generated from project name)"
+                  placeholder="Nome da pasta (gerado pelo nome do projeto)"
                   value={newProjectFolder}
                   onChange={e => setNewProjectFolder(e.target.value)}
                   className="text-xs"
@@ -256,8 +277,8 @@ export default function Layout() {
                 setNewProjectName('');
                 setNewProjectFolder('');
                 setUseExistingFolder(false);
-              }}>Cancel</Button>
-              <Button onClick={handleProjectCreate}>Create</Button>
+              }}>Cancelar</Button>
+              <Button onClick={handleProjectCreate}>Criar</Button>
             </div>
           </div>
         </DialogContent>

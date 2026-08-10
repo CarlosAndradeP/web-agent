@@ -38,12 +38,18 @@ export class ModelConfigRepository {
     }
     batchSetEnabled(modelIds, enabled) {
         const now = new Date().toISOString();
-        const stmt = this.db.prepare('UPDATE model_config SET enabled = ?, updated_at = ? WHERE model_id = ?');
         let count = 0;
         const transaction = this.db.transaction(() => {
             for (const id of modelIds) {
-                const result = stmt.run(enabled ? 1 : 0, now, id);
-                count += result.changes;
+                const existing = this.findByModelId(id);
+                if (existing) {
+                    const result = this.db.prepare('UPDATE model_config SET enabled = ?, updated_at = ? WHERE model_id = ?').run(enabled ? 1 : 0, now, id);
+                    count += result.changes;
+                }
+                else {
+                    this.db.prepare('INSERT INTO model_config (id, model_id, enabled, cost_per_step, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(uuid(), id, enabled ? 1 : 0, 1, null, now, now);
+                    count += 1;
+                }
             }
         });
         transaction();

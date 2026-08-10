@@ -8,7 +8,7 @@ let cacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000;
 
 const FALLBACK_MODELS: ModelInfo[] = [
-  { id: 'z-ai/glm-5.1', name: 'Z.AI GLM 5.1' },
+  { id: 'z-ai/glm-5.2', name: 'Z.AI GLM 5.2' },
   { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B' },
   { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B' },
   { id: 'deepseek-ai/deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
@@ -30,6 +30,12 @@ async function fetchWithRetry(url: string, retries = 2, delay = 3000): Promise<R
     }
   }
   throw lastErr;
+}
+
+export function invalidateModelCache(): void {
+  cachedModels = null;
+  cacheTime = 0;
+  log.debug('Model cache invalidated');
 }
 
 export async function resolveModels(apiBaseUrl: string, _apiKey?: string): Promise<ModelInfo[]> {

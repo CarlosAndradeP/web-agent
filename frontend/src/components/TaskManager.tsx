@@ -17,6 +17,14 @@ const statusConfig: Record<string, { icon: React.ComponentType<{ className?: str
   cancelled: { icon: Ban, color: 'text-yellow-400', badge: 'outline' },
 };
 
+const statusLabels: Record<string, string> = {
+  pending: 'pendente',
+  running: 'em execução',
+  completed: 'concluída',
+  failed: 'falhou',
+  cancelled: 'cancelada',
+};
+
 export default function TaskManager() {
   const { tasks, loading, refresh } = useTasks();
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
@@ -32,14 +40,14 @@ export default function TaskManager() {
     setSteps(data.steps);
   };
 
-  if (loading) return <div className="p-4 text-zinc-500">Loading tasks...</div>;
+  if (loading) return <div className="p-4 text-zinc-500">Carregando tarefas...</div>;
 
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 border-b border-zinc-800">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">Tasks</h2>
-          <Button variant="ghost" size="sm" onClick={refresh}>Refresh</Button>
+          <h2 className="text-sm font-semibold text-zinc-200">Tarefas</h2>
+          <Button variant="ghost" size="sm" onClick={refresh}>Atualizar</Button>
         </div>
       </div>
 
@@ -48,8 +56,8 @@ export default function TaskManager() {
           {tasks.length === 0 && (
             <div className="py-16 text-center">
               <ListTodo className="h-10 w-10 mx-auto mb-2 text-zinc-700" />
-              <p className="text-sm text-zinc-600">No tasks yet</p>
-              <p className="text-xs text-zinc-700 mt-1">Tasks are created when you send a message in Chat</p>
+              <p className="text-sm text-zinc-600">Nenhuma tarefa ainda</p>
+              <p className="text-xs text-zinc-700 mt-1">As tarefas são criadas quando você envia uma mensagem no chat</p>
             </div>
           )}
           {tasks.map(task => {
@@ -63,12 +71,12 @@ export default function TaskManager() {
                 >
                   <Icon className={cn('h-4 w-4 shrink-0', cfg.color, task.status === 'running' && 'animate-pulse')} />
                   <span className="text-xs text-zinc-300 truncate flex-1">{task.description}</span>
-                  <Badge variant={cfg.badge} className="text-[10px] shrink-0">{task.status}</Badge>
+                  <Badge variant={cfg.badge} className="text-[10px] shrink-0">{statusLabels[task.status] || task.status}</Badge>
                 </div>
                 {task.status === 'running' && (
                   <div className="px-3 pb-2">
                     <Button variant="ghost" size="sm" onClick={() => api.tasks.cancel(task.id).then(refresh)} className="h-6 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/10">
-                      Cancel
+                      Cancelar
                     </Button>
                   </div>
                 )}

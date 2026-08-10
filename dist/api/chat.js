@@ -6,10 +6,19 @@ import { UsersRepository } from '../db/repositories/users.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { config } from '../config.js';
-import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
+import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 const log = createLogger('ChatAPI');
+function compactToolValue(value) {
+    try {
+        const serialized = JSON.stringify(value);
+        return serialized.length > 5000 ? `${serialized.slice(0, 5000)}...` : value;
+    }
+    catch {
+        return String(value);
+    }
+}
 export function createChatRouter(db, taskManager, creditManager, compactionService) {
     const router = Router();
     const messagesRepo = new MessagesRepository(db);
@@ -50,7 +59,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         const userId = req.user?.userId;
         const user = userId ? usersRepo.findById(userId) : undefined;
         const username = user?.username ?? 'default';
-        let workspaceDir = resolve(config.workspaceBaseDir, username);
+        let workspaceDir = getUserWorkspaceDir(username);
         if (userId && !creditManager.hasCredits(userId)) {
             res.status(402).json({ error: 'Insufficient credits. Please contact admin to add more credits.' });
             return;
@@ -59,7 +68,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         if (!effectiveSessionId) {
             let sessions = sessionsRepo.list();
             if (userId) {
-                sessions = sessions.filter(s => s.user_id === userId);
+                sessions = sessions.filter(s => s.userId === userId);
             }
             if (sessions.length === 0) {
                 const session = sessionsRepo.create('Default Session', config.defaultModel);
@@ -68,7 +77,9 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
                     try {
                         db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
                     }
-                    catch { }
+                    catch (err) {
+                        log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+                    }
                 }
             }
             else {
@@ -86,7 +97,21 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
                     try {
                         db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
                     }
-                    catch { }
+                    catch (err) {
+                        log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
+                    }
+                }
+            }
+            else {
+                // Ownership check: a non-admin may only chat in their own session.
+                // Sessions with user_id NULL (legacy/orphan) are admin-only — a non-admin
+                // cannot address them even if they know the id, since we cannot verify
+                // ownership.
+                const isAdmin = req.user?.role === 'admin';
+                if (!isAdmin && existing.userId !== userId) {
+                    log.warn('Chat denied — session not owned by user', { sessionId: effectiveSessionId, userId, ownerId: existing.userId });
+                    res.status(403).json({ error: 'Access denied' });
+                    return;
                 }
             }
         }
@@ -101,7 +126,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
             try {
                 const projectRow = db.prepare('SELECT * FROM projects WHERE session_id = ?').get(effectiveSessionId);
                 if (projectRow && projectRow.folder_path) {
-                    const projectDir = resolve(config.workspaceBaseDir, username, projectRow.folder_path);
+                    const projectDir = resolveUserWorkspacePath(username, projectRow.folder_path, { allowRoot: true });
                     mkdirSync(projectDir, { recursive: true });
                     workspaceDir = projectDir;
                     log.info('Using project workspace directory', { sessionId: effectiveSessionId, workspaceDir });
@@ -121,24 +146,32 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
                 log.warn('Failed to resolve project workspace', { error: err.message });
             }
         }
-        // Persist incoming messages to the database
+        // Persist incoming messages to the database. Only user/assistant/tool roles
+        // are accepted; `system` messages are reserved for internal summary injection
+        // and never come from a legitimate client. The frontend injects `system`
+        // entries as local UI notices (slash commands, upload feedback) — strip
+        // them with a warning rather than failing the whole request, so a stray
+        // client-side notice can't brick the conversation (and `system` still never
+        // reaches the model or DB, preserving the injection guard).
+        const allowedRoles = new Set(['user', 'assistant', 'tool']);
         for (const msg of messages) {
-            messagesRepo.create(effectiveSessionId, msg.role, msg.content);
-        }
-        // Auto-compact if the conversation is getting too long
-        const selectedModel = model ?? configRepo.getAll().defaultModel;
-        try {
-            const didCompact = await compactionService.autoCompactIfNeeded(effectiveSessionId, selectedModel);
-            if (didCompact) {
-                log.info('Auto-compacted session before sending to agent', { sessionId: effectiveSessionId });
+            if (msg.role === 'system') {
+                log.warn('Stripped system message from client payload', { sessionId: effectiveSessionId });
+                continue;
+            }
+            if (!allowedRoles.has(msg.role)) {
+                log.warn('Chat rejected — invalid message role', { role: msg.role });
+                res.status(400).json({ error: `Invalid message role: ${msg.role}` });
+                return;
             }
         }
-        catch (err) {
-            log.warn('Auto-compaction check failed, continuing anyway', { error: err.message });
+        const latestMessage = messages[messages.length - 1];
+        if (latestMessage.role !== 'user') {
+            res.status(400).json({ error: 'The latest message must be from the user' });
+            return;
         }
-        // Build the full conversation context (including any previous summary)
-        const conversationContext = compactionService.getConversationContext(effectiveSessionId);
         const appConfig = configRepo.getAll();
+        const selectedModel = model ?? appConfig.defaultModel;
         try {
             const availableModels = await resolveModels(appConfig.apiBaseUrl);
             if (!availableModels.find(m => m.id === selectedModel)) {
@@ -152,6 +185,19 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         catch (err) {
             log.warn('Could not validate model, proceeding anyway', { error: err.message });
         }
+        // The payload contains conversation context; only the newest user turn is new.
+        messagesRepo.create(effectiveSessionId, latestMessage.role, latestMessage.content);
+        try {
+            const didCompact = await compactionService.autoCompactIfNeeded(effectiveSessionId, selectedModel);
+            if (didCompact) {
+                log.info('Auto-compacted session before sending to agent', { sessionId: effectiveSessionId });
+            }
+        }
+        catch (err) {
+            log.warn('Auto-compaction check failed, continuing anyway', { error: err.message });
+        }
+        // Build the full conversation context after persisting and compacting the new turn.
+        const conversationContext = compactionService.getConversationContext(effectiveSessionId);
         const description = messages[messages.length - 1].content;
         log.info('Creating task for chat', { selectedModel, descriptionLength: description.length, contextLength: conversationContext.length });
         const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo, conversationContext);
@@ -172,12 +218,74 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
             const eventStream = await taskManager.streamTask(task.id);
             res.write(`data: ${JSON.stringify({ type: 'task-start', taskId: task.id })}\n\n`);
             let totalEvents = 0;
+            const createdFiles = new Set();
+            let assistantContent = '';
+            const persistedToolCalls = [];
             for await (const event of eventStream) {
                 totalEvents++;
+                if (event.type === 'text-delta' && typeof event.content === 'string') {
+                    assistantContent += event.content;
+                }
+                if (event.type === 'tool-call') {
+                    persistedToolCalls.push({
+                        toolName: event.toolName,
+                        toolCallId: event.toolCallId,
+                        input: compactToolValue(event.input),
+                        status: 'running',
+                    });
+                }
+                if (event.type === 'tool-result') {
+                    const index = persistedToolCalls.findIndex(call => call.toolCallId === event.toolCallId);
+                    const result = {
+                        toolName: event.toolName,
+                        toolCallId: event.toolCallId,
+                        result: compactToolValue(event.result),
+                        stepNumber: event.stepNumber,
+                        durationMs: event.durationMs,
+                        status: 'completed',
+                    };
+                    if (index >= 0)
+                        persistedToolCalls[index] = { ...persistedToolCalls[index], ...result };
+                    else
+                        persistedToolCalls.push(result);
+                }
+                if (event.type === 'tool-result' && event.toolName === 'writeFile') {
+                    const result = event.result;
+                    if (result?.success && typeof result.path === 'string') {
+                        createdFiles.add(result.path.replace(/\\/g, '/'));
+                    }
+                }
+                if (event.type === 'tool-result' && event.toolName === 'invokeSubAgent') {
+                    const result = event.result;
+                    if (Array.isArray(result?.createdFiles)) {
+                        for (const path of result.createdFiles) {
+                            if (typeof path === 'string')
+                                createdFiles.add(path.replace(/\\/g, '/'));
+                        }
+                    }
+                }
                 res.write(`data: ${JSON.stringify(event)}\n\n`);
             }
             log.info('Stream finished', { taskId: task.id, totalEvents });
-            res.write(`data: ${JSON.stringify({ type: 'finish', taskId: task.id })}\n\n`);
+            const allCreatedFiles = [...createdFiles];
+            const finalTask = taskManager.getTask(task.id);
+            if (finalTask?.status === 'cancelled') {
+                res.write(`data: ${JSON.stringify({ type: 'cancelled', taskId: task.id })}\n\n`);
+                res.end();
+                return;
+            }
+            const finalContent = assistantContent || 'Tarefa concluída sem uma resposta em texto.';
+            messagesRepo.create(effectiveSessionId, 'assistant', finalContent, JSON.stringify({
+                calls: persistedToolCalls,
+                createdFiles: allCreatedFiles.slice(0, 5),
+                createdFileCount: allCreatedFiles.length,
+            }));
+            res.write(`data: ${JSON.stringify({
+                type: 'finish',
+                taskId: task.id,
+                createdFiles: allCreatedFiles.slice(0, 5),
+                createdFileCount: allCreatedFiles.length,
+            })}\n\n`);
             res.end();
         }
         catch (err) {

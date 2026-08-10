@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo, OrchestratorTaskInfo } from '../types';
 
 const BASE = '/api';
 
@@ -32,8 +32,18 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
       ...(options?.headers as Record<string, string> || {}),
     },
   });
-  if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw await responseError(res);
   return res.json();
+}
+
+async function responseError(res: Response): Promise<Error> {
+  const fallback = `Request failed: ${res.status} ${res.statusText}`;
+  try {
+    const body = await res.json() as { error?: string };
+    return new Error(body.error || fallback);
+  } catch {
+    return new Error(fallback);
+  }
 }
 
 export const api = {
@@ -81,10 +91,10 @@ export const api = {
       fetchJSON<{ steps: AgentStep[] }>(`${BASE}/tasks/${id}/steps`),
   },
   files: {
-    list: (path = '.', recursive = false) =>
-      fetchJSON<{ tree: FileEntry[] }>(`${BASE}/files?path=${encodeURIComponent(path)}&recursive=${recursive}`),
-    content: (path: string) =>
-      fetchJSON<{ path: string; content: string }>(`${BASE}/files/content?path=${encodeURIComponent(path)}`),
+    list: (path = '.', recursive = false, signal?: AbortSignal) =>
+      fetchJSON<{ tree: FileEntry[] }>(`${BASE}/files?path=${encodeURIComponent(path)}&recursive=${recursive}`, { signal }),
+    content: (path: string, signal?: AbortSignal) =>
+      fetchJSON<{ path: string; content: string; size: number; modifiedAt: string }>(`${BASE}/files/content?path=${encodeURIComponent(path)}`, { signal }),
     write: (path: string, content: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/files`, {
         method: 'PUT',
@@ -100,12 +110,13 @@ export const api = {
       if (destination) {
         formData.append('destination', destination);
       }
-      const res = await fetch(`${BASE}/files/upload`, {
+      const fetcher = _authFetch ?? fetch;
+      const res = await fetcher(`${BASE}/files/upload`, {
         method: 'POST',
         headers: getAuthHeadersNoContentType(),
         body: formData,
       });
-      if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       return res.json() as Promise<{ success: boolean; uploaded: string[] }>;
     },
     mkdir: (path: string) =>
@@ -126,7 +137,7 @@ export const api = {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetcher(url, { headers });
-      if (!res.ok) throw new Error(`Download error: ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       return res.blob();
     },
     extractZip: async (file: File, destination?: string) => {
@@ -135,12 +146,13 @@ export const api = {
       if (destination) {
         formData.append('destination', destination);
       }
-      const res = await fetch(`${BASE}/files/extract-zip`, {
+      const fetcher = _authFetch ?? fetch;
+      const res = await fetcher(`${BASE}/files/extract-zip`, {
         method: 'POST',
         headers: getAuthHeadersNoContentType(),
         body: formData,
       });
-      if (!res.ok) throw new Error(`Extract zip error: ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       return res.json() as Promise<{ success: boolean; destination: string; extracted: string[] }>;
     },
     listFolders: (path = '.') =>
@@ -157,14 +169,16 @@ export const api = {
       }),
   },
   chat: {
-    stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number) => {
+    stream: (sessionId: string, model: string, messages: Array<{ role: string; content: string }>, maxSteps?: number, signal?: AbortSignal) => {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       const token = localStorage.getItem('webagent_access_token');
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      return fetch(`${BASE}/chat`, {
+      const fetcher = _authFetch ?? fetch;
+      return fetcher(`${BASE}/chat`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ sessionId, model, messages, maxSteps }),
+        signal,
       });
     },
     compact: (sessionId: string) =>
@@ -246,5 +260,36 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+  },
+  orchestrator: {
+    status: () => fetchJSON<OrchestratorStatusInfo>(`${BASE}/orchestrator/status`),
+    sessionStatus: (sessionId: string) =>
+      fetchJSON<{ session: OrchestratorSessionInfo; isRunning: boolean }>(`${BASE}/orchestrator/${sessionId}/status`),
+    start: (data: { sessionId?: string; objective: string; mdFiles?: string[] }) =>
+      fetchJSON<{ session: OrchestratorSessionInfo }>(`${BASE}/orchestrator/start`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    stop: (sessionId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/stop`, { method: 'POST' }),
+    pause: (sessionId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/pause`, { method: 'POST' }),
+    resume: (sessionId: string) =>
+      fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/resume`, { method: 'POST' }),
+    steps: (sessionId: string, limit?: number, offset?: number) =>
+      fetchJSON<{ steps: OrchestratorStepInfo[]; total: number }>(`${BASE}/orchestrator/${sessionId}/steps?limit=${limit ?? 50}&offset=${offset ?? 0}`),
+    tasks: (sessionId: string) =>
+      fetchJSON<{ tasks: OrchestratorTaskInfo[]; total: number }>(`${BASE}/orchestrator/${sessionId}/tasks`),
+    uploadMd: async (sessionId: string, files: File[]) => {
+      const formData = new FormData();
+      for (const file of files) formData.append('files', file);
+      const res = await fetch(`${BASE}/orchestrator/${sessionId}/upload-md`, {
+        method: 'POST',
+        headers: getAuthHeadersNoContentType(),
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+      return res.json() as Promise<{ success: boolean; mdFiles: string[] }>;
+    },
   },
 };

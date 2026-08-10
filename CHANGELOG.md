@@ -2,6 +2,48 @@
 
 All notable changes to the Web Agent project.
 
+## [2026-07-02] — Security, Stability, Orchestrator, Hardening (PRs 1–5)
+
+Multi-area hardening pass based on a deep code + docs audit. Five focused PRs, one per area. JWT refresh now uses a separate secret, which invalidates all existing tokens on deploy (forces re-login).
+
+### PR 1 — Backend Security & Auth Critical
+- **JWT hardening** (`src/lib/jwt.ts`, `src/config.ts`) — `signAccessToken`/`signRefreshToken` emit a `type: 'access'|'refresh'` claim; `verifyToken` rejects refresh tokens; `verifyRefreshToken` uses a separate `REFRESH_TOKEN_SECRET` (falls back to legacy `JWT_SECRET`). Rotating secrets forces logout for all users.
+- **Auth API** (`src/api/auth.ts`) — refresh endpoint uses `verifyRefreshToken`; bcrypt cost loop capped at 20; expired auth-session pruning on each login.
+- **Chat IDOR + role validation** (`src/api/chat.ts`) — `effectiveSessionId` ownership-validated; message roles restricted to `user|assistant|tool`; default-session dedup uses `s.userId` (not `(s as any).user_id`); swallowed `catch {}` replaced with logged errors.
+- **Atomic credit operations** (`src/db/repositories/credits.ts`) — `deduct` and `add` wrapped in `db.transaction`; `add` uses `credits = credits + ?` (atomic, no read-modify-write race).
+- **Approval deny-by-default** (`src/services/approval-manager.ts`) — when `entry.userId === undefined`, approvals are rejected unless an explicit admin bypass is provided.
+- **Tasks ownership + cancel race** (`src/api/tasks.ts`, `src/services/task-manager.ts`) — `createTask` receives `userId`; session ownership validated; `cancelTask` emits events before deleting `taskUserMaps`; stream marks status `'cancelled'` (not `'completed'`) on abort.
+- **Sessions/projects ownership in transactions** — deletions run inside transactions; `project_id = null` bug fixed; swallowed catches logged.
+- **DB init** (`src/db/index.ts`) — `import` over `require` for `node:fs`; `busy_timeout = 5000` pragma added.
+
+### PR 2 — Backend Stability
+- **Rate limiter eviction** (`src/server.ts`) — in-memory Map capped at 10k keys with FIFO eviction; `req.ip` fallback chain (`req.socket?.remoteAddress`); shared `gracefulShutdown` handler for SIGTERM and SIGINT.
+- **Project router** (`src/services/project-router.ts`) — `promoteToNode` uses `allocatePort()` (port-recycler pool) instead of an ever-incrementing counter; `createRequire(import.meta.url)` for loading project `package.json` (works with ESM); `restartTimer` tracked on `ActiveProject` and cleared on unmount/stop/shutdown (no zombie timers).
+- **File watcher rooms** (`src/services/file-watcher.ts`) — `file:changed` and `project:node-detected` emitted to `user:<userId>` rooms (aligned with the rooms clients actually join); `UsersRepository` injected.
+- **Archiver error handler** (`src/api/files.ts`) — `archive.on('error', ...)` prevents an unhandled stream error from crashing the process.
+
+### PR 3 — Orchestrator Critical
+- **Resume state reset** (`orchestrator-runner.ts`) — `resume()` now resets `totalStepsUsed`, `taskRetryCount`, and `replanCount` (previously leaked across runs, causing stale retry/step limits).
+- **Replan suggestions** — `parseReplanSuggestions` accepts `'revisor'` as a valid role (was excluded, blocking replan that included reviewer tasks).
+- **Timeout classification** — `classifyError` now marks timeouts as `transient` (was `permanent`, blocking retry of network timeouts).
+- **`verifyProject` no longer assumes pass on empty/exception** — empty verification text and caught exceptions return `false` (fail-closed) instead of assuming success.
+- **Per-model credit billing** — `SubAgentResult` carries `modelUsed`; `deductCreditsForTask` uses the actual fallback model's cost instead of always charging the primary (more expensive) model.
+
+### PR 4 — Backend Hardening
+- **Command policy** (`command-policy.ts`) — regex patterns anchored with `\b` to avoid false-positive substring matches (e.g. `mkfifo` no longer matches `mkfifoX`).
+- **Path traversal defense-in-depth** (`sanitize.ts`) — `path.relative()` check rejects drive changes and `..` sequences uniformly (catches Windows cross-drive escapes).
+- **SSRF rebinding mitigation** (`web-fetch.ts`) — re-resolve DNS immediately before `fetch()` and reject if the resolved IP is private/internal (narrows the TOCTOU window).
+- **execute-code path quoting** (`execute-code.ts`) — file paths quoted in the shell command (supports paths with spaces).
+- **Logger stream prune** (`logger.ts`) — periodic eviction of stale `WriteStream` entries from `streamCache` (every hour; streams older than 2 days closed/removed).
+- **Compaction summary preservation** (`compaction-service.ts`) — `compactSession` includes the previous summary in the summarization input, so multi-compaction builds on prior context instead of discarding it.
+- **Model cache invalidation** (`model-resolver.ts`, `api/config.ts`) — exported `invalidateModelCache()`; the config PUT endpoint invalidates the cache after `configRepo.updateAll()` so the next request refetches from the new endpoint.
+
+### PR 5 — Frontend Hardening
+- **Chat stream abort** (`api.ts`, `useChat.ts`) — `api.chat.stream` accepts an `AbortSignal`; `useChat` passes the local `AbortController` signal so a cancel actually aborts the fetch (not just the reader).
+- **Socket re-auth on token refresh** (`AuthContext.tsx`) — the Socket.IO connection now depends on `accessToken`; a refresh triggers reconnect with the new token (the previous token expired after 15 min with no re-auth).
+- **Authenticated upload** (`FileManager.tsx`) — file upload uses `authFetch` (auto Authorization header + 401 refresh) instead of a raw `fetch` with a manual header.
+- **Stable list keys** (`OrchestratorLog.tsx`) — step/log entries keyed by stable IDs (`id`/`stepNumber`/`timestamp`) instead of the array index, avoiding reconciliation bugs on reorder/insert.
+
 ## [2025-06-27-b] — Chat Compaction, Slash Commands, Force Stop, File Attach
 
 ### Feature 1: Chat Context Compaction (Multi-turn + Auto-compact)

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync, existsSync, copyFileSync } from 'node:fs';
+import { mkdirSync, existsSync, copyFileSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { schema } from './schema.js';
 import { migrate } from './migrate.js';
@@ -22,8 +22,7 @@ export function initDatabase(dbPath: string): Database.Database {
         const backupPath = dbPath + '.corrupt.' + Date.now();
         copyFileSync(dbPath, backupPath);
         log.info('Corrupt DB backed up', { backupPath });
-        const { unlinkSync } = require('node:fs');
-        unlinkSync(dbPath);
+        try { unlinkSync(dbPath); } catch {}
         const walPath = dbPath + '-wal';
         const shmPath = dbPath + '-shm';
         try { unlinkSync(walPath); } catch {}
@@ -39,6 +38,10 @@ export function initDatabase(dbPath: string): Database.Database {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  // Give waiting writers a chance to acquire locks instead of failing fast with
+  // SQLITE_BUSY when a concurrent writer holds the lock. 5s is plenty for the
+  // short write transactions in this project (credit deducts, compaction, etc.).
+  db.pragma('busy_timeout = 5000');
   db.exec(schema);
   migrate(db);
   log.info('Database initialized, schema applied, migrations ran');

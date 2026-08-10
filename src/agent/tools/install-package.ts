@@ -2,7 +2,8 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { validateCommand, buildSafeEnv } from './command-policy.js';
+import { validateCommand, buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
+import { logToolExecution } from '../../services/logger.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,40 +47,51 @@ export function createInstallPackageTool(workspaceDir: string) {
       manager: z.enum(['npm', 'pip']).describe('Package manager to use'),
     }),
     execute: async ({ package: pkg, manager }) => {
+      const startTime = Date.now();
+      logToolExecution('installPackage', undefined, 'start', { input: { package: pkg, manager } });
+
       const pkgCheck = validatePackageName(pkg, manager);
       if (!pkgCheck.allowed) {
+        logToolExecution('installPackage', undefined, 'error', { error: pkgCheck.reason, input: { package: pkg }, durationMs: Date.now() - startTime });
         return { stdout: '', stderr: pkgCheck.reason!, exitCode: 126 };
       }
 
-      // Build command for policy validation (uses same string format)
       const command = manager === 'npm'
         ? `npm install --prefix "${workspaceDir}" ${pkg} --ignore-scripts`
         : `pip install --no-cache-dir ${pkg}`;
-      const policyResult = validateCommand(command);
+      const policyResult = validateCommand(command, workspaceDir);
       if (!policyResult.allowed) {
+        logToolExecution('installPackage', undefined, 'error', { error: policyResult.reason, input: { package: pkg }, durationMs: Date.now() - startTime });
         return { stdout: '', stderr: policyResult.reason!, exitCode: 126 };
       }
 
       try {
-        // Use execFile (not exec) to avoid shell interpretation of arguments
         let stdout: string, stderr: string;
         if (manager === 'npm') {
           ({ stdout, stderr } = await execFileAsync('npm', ['install', '--prefix', workspaceDir, pkg, '--ignore-scripts'], {
             timeout: 60000,
             maxBuffer: 1024 * 1024 * 5,
             cwd: workspaceDir,
-            env: buildSafeEnv(),
+            env: buildWorkspaceEnv(workspaceDir),
+            ...getUnprivilegedExecOptions(),
           }));
         } else {
-          ({ stdout, stderr } = await execFileAsync('pip', ['install', '--no-cache-dir', pkg], {
+          ({ stdout, stderr } = await execFileAsync('pip', ['install', '--no-cache-dir', '--target', workspaceDir, pkg], {
             timeout: 60000,
             maxBuffer: 1024 * 1024 * 5,
             cwd: workspaceDir,
-            env: buildSafeEnv(),
+            env: buildWorkspaceEnv(workspaceDir),
+            ...getUnprivilegedExecOptions(),
           }));
         }
+        logToolExecution('installPackage', undefined, 'success', { output: { package: pkg, manager }, durationMs: Date.now() - startTime });
         return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
       } catch (err: any) {
+        logToolExecution('installPackage', undefined, 'error', {
+          error: err.stderr ?? err.message,
+          input: { package: pkg, manager },
+          durationMs: Date.now() - startTime,
+        });
         return {
           stdout: err.stdout ?? '',
           stderr: err.stderr ?? err.message,

@@ -8,13 +8,23 @@ export declare const config: {
     workspaceDir: string;
     workspaceBaseDir: string;
     dataDir: string;
+    projectLinkBaseDir: string;
     maxSteps: number;
     defaultModel: string;
     agentType: "main" | "sub" | "none";
     jwtSecret: string;
+    accessTokenSecret: string;
+    refreshTokenSecret: string;
     adminPassword: string;
     initialCredits: number;
     publicBaseUrl: string;
+    corsOrigins: string;
+    trustProxy: string;
+    mercadoPagoAccessToken: string;
+    mercadoPagoPublicKey: string;
+    mercadoPagoWebhookSecret: string;
+    pixCreditPriceBrl: number;
+    dailyBonusCredits: number;
 };
 export { rewriteUrlForDocker, IS_DOCKER };
 //# sourceMappingURL=config.d.ts.map

@@ -10,6 +10,17 @@ import { cn } from '../lib/utils';
 
 type AdminTab = 'users' | 'models' | 'processes' | 'settings' | 'stats';
 
+const userRoleLabels: Record<string, string> = {
+  admin: 'admin',
+  user: 'usuário',
+};
+
+const processStatusLabels: Record<string, string> = {
+  running: 'rodando',
+  stopped: 'parado',
+  error: 'erro',
+};
+
 export default function AdminPanel() {
   const [tab, setTab] = useState<AdminTab>('users');
   const [users, setUsers] = useState<UserPublic[]>([]);
@@ -151,7 +162,7 @@ export default function AdminPanel() {
   };
 
   const handleDeleteUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) return;
+    if (!confirm('Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.')) return;
     try {
       await api.admin.deleteUser(userId);
       if (selectedUser?.id === userId) setSelectedUser(null);
@@ -276,21 +287,21 @@ export default function AdminPanel() {
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center h-full text-zinc-500 text-sm">Loading admin panel...</div>;
+    return <div className="flex items-center justify-center h-full text-zinc-500 text-sm">Carregando painel administrativo...</div>;
   }
 
   const tabs: { id: AdminTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'users', label: 'Users', icon: Users },
-    { id: 'models', label: 'Models', icon: Cpu },
-    { id: 'processes', label: 'Processes', icon: Server },
-    { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'stats', label: 'Dashboard', icon: BarChart3 },
+    { id: 'users', label: 'Usuários', icon: Users },
+    { id: 'models', label: 'Modelos', icon: Cpu },
+    { id: 'processes', label: 'Processos', icon: Server },
+    { id: 'settings', label: 'Ajustes', icon: Settings },
+    { id: 'stats', label: 'Painel', icon: BarChart3 },
   ];
 
   return (
-    <div className="flex h-full">
-      <div className="w-48 border-r border-zinc-800 bg-zinc-900/50 p-2">
-        <nav className="space-y-0.5">
+    <div className="flex flex-col md:flex-row h-full">
+      <div className="md:w-48 border-b md:border-b-0 md:border-r border-zinc-800 bg-zinc-900/50 p-2 shrink-0">
+        <nav className="flex md:block gap-1 overflow-x-auto md:space-y-0.5" aria-label="Seções administrativas">
           {tabs.map(t => {
             const Icon = t.icon;
             return (
@@ -298,7 +309,7 @@ export default function AdminPanel() {
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all',
+                  'shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium transition-all',
                   tab === t.id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
                 )}
               >
@@ -312,9 +323,9 @@ export default function AdminPanel() {
 
       <div className="flex-1 overflow-hidden">
         {tab === 'users' && (
-          <div className="flex h-full">
+          <div className="flex flex-col lg:flex-row h-full">
             <ScrollArea className="flex-1 p-4">
-              <h2 className="text-sm font-semibold mb-3">Users ({users.length})</h2>
+              <h2 className="text-sm font-semibold mb-3">Usuários ({users.length})</h2>
               <div className="space-y-1">
                 {users.map(u => (
                   <div
@@ -330,7 +341,7 @@ export default function AdminPanel() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-zinc-200 truncate">{u.username}</div>
-                      <div className="text-[10px] text-zinc-500">{u.credits} credits &middot; {u.role}</div>
+                      <div className="text-[10px] text-zinc-500">{u.credits} créditos &middot; {userRoleLabels[u.role] || u.role}</div>
                     </div>
                   </div>
                 ))}
@@ -338,33 +349,33 @@ export default function AdminPanel() {
             </ScrollArea>
 
             {selectedUser && (
-              <div className="w-80 border-l border-zinc-800 p-4 overflow-y-auto">
+              <div className="lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-800 p-4 overflow-y-auto max-h-[48%] lg:max-h-none">
                 <h2 className="text-sm font-semibold mb-3">{selectedUser.username}</h2>
                 <div className="space-y-3 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">Role</span>
+                    <span className="text-zinc-500">Perfil</span>
                     <select
                       value={selectedUser.role}
                       onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleChangeRole(selectedUser.id, e.target.value as any)}
                       className="bg-zinc-800 text-zinc-200 rounded px-2 py-0.5 text-xs"
                     >
-                      <option value="user">user</option>
+                      <option value="user">usuário</option>
                       <option value="admin">admin</option>
                     </select>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">Credits</span>
+                    <span className="text-zinc-500">Créditos</span>
                     <span className="text-zinc-200 font-medium">{selectedUser.credits}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">Created</span>
-                    <span className="text-zinc-400">{new Date(selectedUser.createdAt).toLocaleDateString()}</span>
+                    <span className="text-zinc-500">Criado em</span>
+                    <span className="text-zinc-400">{new Date(selectedUser.createdAt).toLocaleDateString('pt-BR')}</span>
                   </div>
 
                   <Separator />
 
                   <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Email</label>
+                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">E-mail</label>
                     <div className="flex gap-2">
                       <Input
                         type="email"
@@ -374,7 +385,7 @@ export default function AdminPanel() {
                         className="text-xs h-8 flex-1"
                       />
                       <Button size="sm" onClick={handleSaveEmail} className="h-8 text-xs">
-                        {emailSaved ? 'Saved' : 'Save'}
+                        {emailSaved ? 'Salvo' : 'Salvar'}
                       </Button>
                     </div>
                   </div>
@@ -382,28 +393,28 @@ export default function AdminPanel() {
                   <Separator />
 
                   <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Reset Password</label>
+                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Redefinir senha</label>
                     {showResetPassword ? (
                       <div className="space-y-2">
                         <Input
                           type="password"
-                          placeholder="New password (min 4 chars)"
+                          placeholder="Nova senha (mín. 4 caracteres)"
                           value={resetPassword}
                           onChange={e => setResetPassword(e.target.value)}
                           className="text-xs h-8"
                         />
                         <div className="flex gap-2">
                           <Button size="sm" onClick={handleResetPassword} className="h-8 text-xs text-[11px]" disabled={resetPassword.length < 4}>
-                            {passwordSaved ? 'Saved' : 'Apply'}
+                            {passwordSaved ? 'Salvo' : 'Aplicar'}
                           </Button>
                           <Button variant="outline" size="sm" onClick={() => { setShowResetPassword(false); setResetPassword(''); }} className="h-8 text-xs">
-                            Cancel
+                            Cancelar
                           </Button>
                         </div>
                       </div>
                     ) : (
                       <Button variant="outline" size="sm" onClick={() => setShowResetPassword(true)} className="w-full text-xs h-8">
-                        Reset Password
+                        Redefinir senha
                       </Button>
                     )}
                   </div>
@@ -411,23 +422,23 @@ export default function AdminPanel() {
                   <Separator />
 
                   <div className="space-y-2">
-                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Add Credits</label>
+                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Adicionar créditos</label>
                     <div className="flex gap-2">
                       <Input
                         type="number"
-                        placeholder="Amount"
+                        placeholder="Quantidade"
                         value={creditAmount}
                         onChange={e => setCreditAmount(e.target.value)}
                         className="text-xs h-8"
                       />
-                      <Button size="sm" onClick={handleAddCredits} className="h-8 text-xs">Add</Button>
+                      <Button size="sm" onClick={handleAddCredits} className="h-8 text-xs">Adicionar</Button>
                     </div>
                   </div>
 
                   <Separator />
 
                   <div>
-                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Credit History</label>
+                    <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Histórico de créditos</label>
                     <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
                       {creditHistory.map(tx => (
                         <div key={tx.id} className="flex justify-between text-[11px] py-1">
@@ -438,7 +449,7 @@ export default function AdminPanel() {
                         </div>
                       ))}
                       {creditHistory.length === 0 && (
-                        <p className="text-[10px] text-zinc-600">No transactions</p>
+                        <p className="text-[10px] text-zinc-600">Nenhuma transação</p>
                       )}
                     </div>
                   </div>
@@ -451,7 +462,7 @@ export default function AdminPanel() {
                     className="w-full text-xs"
                     onClick={() => handleDeleteUser(selectedUser.id)}
                   >
-                    Delete User
+                    Excluir usuário
                   </Button>
                 </div>
               </div>
@@ -462,38 +473,38 @@ export default function AdminPanel() {
         {tab === 'models' && (
           <ScrollArea className="h-full p-4">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold">Model Management</h2>
-              <span className="text-[10px] text-zinc-500">{models.length} models available</span>
+              <h2 className="text-sm font-semibold">Gerenciamento de modelos</h2>
+              <span className="text-[10px] text-zinc-500">{models.length} modelos disponíveis</span>
             </div>
 
             {selectedModels.size > 0 && (
               <div className="flex items-center gap-2 mb-3 p-2 bg-zinc-800/50 rounded-md">
-                <span className="text-[11px] text-zinc-400">{selectedModels.size} selected</span>
+                <span className="text-[11px] text-zinc-400">{selectedModels.size} selecionado(s)</span>
                 <Button size="sm" className="h-6 text-[10px] text-emerald-400" onClick={() => handleBatchUpdateModels(true)}>
-                  Enable
+                  Ativar
                 </Button>
                 <Button size="sm" variant="outline" className="h-6 text-[10px] text-red-400" onClick={() => handleBatchUpdateModels(false)}>
-                  Disable
+                  Desativar
                 </Button>
                 <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setSelectedModels(new Set())}>
-                  Clear
+                  Limpar
                 </Button>
               </div>
             )}
 
             {modelsLoading ? (
-              <div className="text-zinc-500 text-xs">Loading models...</div>
+              <div className="text-zinc-500 text-xs">Carregando modelos...</div>
             ) : (
               <div className="space-y-2">
                 <div className="grid grid-cols-[28px_1fr_80px_80px_80px_60px] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
-                  <button onClick={toggleSelectAllModels} className="flex items-center justify-center cursor-pointer" title={selectedModels.size === models.length ? 'Deselect all' : 'Select all'}>
+                  <button onClick={toggleSelectAllModels} className="flex items-center justify-center cursor-pointer" title={selectedModels.size === models.length ? 'Desmarcar todos' : 'Selecionar todos'}>
                     {selectedModels.size === models.length ? <CheckSquare className="h-3.5 w-3.5" /> : <SquareBox className="h-3.5 w-3.5" />}
                   </button>
-                  <span>Model</span>
-                  <span>Cost/Step</span>
+                  <span>Modelo</span>
+                  <span>Custo/etapa</span>
                   <span>Status</span>
-                  <span>Display Name</span>
-                  <span>Actions</span>
+                  <span>Nome público</span>
+                  <span>Ações</span>
                 </div>
 
                 {models.map(model => (
@@ -541,10 +552,10 @@ export default function AdminPanel() {
                           'flex items-center gap-1 text-[11px] transition-colors',
                           model.enabled ? 'text-emerald-400' : 'text-red-400'
                         )}
-                        title={model.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+                        title={model.enabled ? 'Ativo — clique para desativar' : 'Inativo — clique para ativar'}
                       >
                         {model.enabled ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
-                        {model.enabled ? 'On' : 'Off'}
+                        {model.enabled ? 'Ativo' : 'Inativo'}
                       </button>
                     </div>
 
@@ -552,7 +563,7 @@ export default function AdminPanel() {
                       <Input
                         value={editDisplayName}
                         onChange={e => setEditDisplayName(e.target.value)}
-                        placeholder="Display name"
+                        placeholder="Nome público"
                         className="h-6 text-[11px] w-full px-1"
                       />
                     ) : (
@@ -570,7 +581,7 @@ export default function AdminPanel() {
                             className="h-6 px-2 text-[10px] text-emerald-400"
                             onClick={() => handleSaveModelConfig(model.id)}
                           >
-                            Save
+                            Salvar
                           </Button>
                           <Button
                             variant="ghost"
@@ -578,7 +589,7 @@ export default function AdminPanel() {
                             className="h-6 px-2 text-[10px]"
                             onClick={() => setEditingModel(null)}
                           >
-                            Cancel
+                            Cancelar
                           </Button>
                         </>
                       ) : (
@@ -588,7 +599,7 @@ export default function AdminPanel() {
                           className="h-6 px-2 text-[10px]"
                           onClick={() => startEditModel(model)}
                         >
-                          Edit
+                          Editar
                         </Button>
                       )}
                     </div>
@@ -602,26 +613,26 @@ export default function AdminPanel() {
         {tab === 'processes' && (
           <ScrollArea className="h-full p-4">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold">Node.js Processes</h2>
+              <h2 className="text-sm font-semibold">Processos Node.js</h2>
               <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={loadNodeProcesses} disabled={processesLoading}>
                 <RefreshCw className={cn('h-3 w-3 mr-1', processesLoading && 'animate-spin')} />
-                Refresh
+                Atualizar
               </Button>
             </div>
 
             {nodeProcesses.length === 0 ? (
               <div className="text-zinc-500 text-xs text-center py-8">
                 <Server className="h-8 w-8 mx-auto mb-2 text-zinc-700" />
-                <p>No Node.js processes running</p>
+                <p>Nenhum processo Node.js em execução</p>
               </div>
             ) : (
               <div className="space-y-2">
                 <div className="grid grid-cols-[1fr_80px_60px_80px_80px] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
-                  <span>Project</span>
-                  <span>User</span>
-                  <span>Port</span>
+                  <span>Projeto</span>
+                  <span>Usuário</span>
+                  <span>Porta</span>
                   <span>Status</span>
-                  <span>Actions</span>
+                  <span>Ações</span>
                 </div>
 
                 {nodeProcesses.map(proc => (
@@ -640,7 +651,7 @@ export default function AdminPanel() {
                         'text-[11px] px-1.5 py-0.5 rounded-full',
                         proc.status === 'running' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'
                       )}>
-                        {proc.status}
+                        {processStatusLabels[proc.status] || proc.status}
                       </span>
                     </div>
                     <div className="flex gap-1">
@@ -648,7 +659,7 @@ export default function AdminPanel() {
                         <button
                           onClick={() => handleStopProcess(proc.uuid)}
                           className="h-6 w-6 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
-                          title="Stop process"
+                          title="Parar processo"
                         >
                           <Square className="h-3 w-3 text-red-400" />
                         </button>
@@ -656,7 +667,7 @@ export default function AdminPanel() {
                       <button
                         onClick={() => handleRestartProcess(proc.uuid)}
                         className="h-6 w-6 flex items-center justify-center rounded hover:bg-zinc-700 transition-all"
-                        title="Restart process"
+                        title="Reiniciar processo"
                       >
                         <RotateCw className="h-3 w-3 text-blue-400" />
                       </button>
@@ -670,16 +681,16 @@ export default function AdminPanel() {
 
         {tab === 'settings' && (
           <ScrollArea className="h-full p-4">
-            <h2 className="text-sm font-semibold mb-4">Settings</h2>
+            <h2 className="text-sm font-semibold mb-4">Ajustes</h2>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between p-4 bg-zinc-900 border border-zinc-800 rounded-lg">
                 <div>
-                  <div className="text-xs font-medium text-zinc-200">User Registration</div>
+                  <div className="text-xs font-medium text-zinc-200">Cadastro de usuários</div>
                   <div className="text-[10px] text-zinc-500 mt-0.5">
                     {registrationEnabled
-                      ? 'New users can create accounts'
-                      : 'Registration is disabled — new users cannot sign up'}
+                      ? 'Novos usuários podem criar contas'
+                      : 'O cadastro está desativado — novos usuários não podem se registrar'}
                   </div>
                 </div>
                 <button
@@ -689,10 +700,10 @@ export default function AdminPanel() {
                     'flex items-center gap-1.5 text-xs font-medium transition-colors',
                     registrationEnabled ? 'text-emerald-400' : 'text-red-400'
                   )}
-                  title={registrationEnabled ? 'Click to disable registration' : 'Click to enable registration'}
+                  title={registrationEnabled ? 'Clique para desativar o cadastro' : 'Clique para ativar o cadastro'}
                 >
                   {registrationEnabled ? <ToggleRight className="h-5 w-5" /> : <ToggleLeft className="h-5 w-5" />}
-                  {registrationEnabled ? 'Enabled' : 'Disabled'}
+                  {registrationEnabled ? 'Ativo' : 'Inativo'}
                 </button>
               </div>
             </div>
@@ -701,25 +712,25 @@ export default function AdminPanel() {
 
         {tab === 'stats' && stats && (
           <ScrollArea className="h-full p-4">
-            <h2 className="text-sm font-semibold mb-4">Dashboard</h2>
+            <h2 className="text-sm font-semibold mb-4">Painel</h2>
 
             <div className="grid grid-cols-4 gap-3 mb-6">
-              <StatCard label="Total Users" value={stats.totalUsers} color="blue" />
-              <StatCard label="Active Projects" value={stats.activeProjects} color="emerald" />
-              <StatCard label="Total Tasks" value={stats.totalTasks} color="purple" />
-              <StatCard label="Running Tasks" value={stats.runningTasks} color="amber" />
+              <StatCard label="Total de usuários" value={stats.totalUsers} color="blue" />
+              <StatCard label="Projetos ativos" value={stats.activeProjects} color="emerald" />
+              <StatCard label="Total de tarefas" value={stats.totalTasks} color="purple" />
+              <StatCard label="Tarefas em execução" value={stats.runningTasks} color="amber" />
             </div>
 
             <div className="grid grid-cols-3 gap-3 mb-6">
-              <StatCard label="Credits Granted" value={stats.totalCreditsGranted} color="green" />
-              <StatCard label="Credits Used" value={stats.totalCreditsUsed} color="red" />
-              <StatCard label="Agent Steps" value={stats.totalSteps} color="cyan" />
+              <StatCard label="Créditos concedidos" value={stats.totalCreditsGranted} color="green" />
+              <StatCard label="Créditos usados" value={stats.totalCreditsUsed} color="red" />
+              <StatCard label="Etapas do agente" value={stats.totalSteps} color="cyan" />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <StatCard label="Total Projects" value={stats.totalProjects} color="emerald" />
+              <StatCard label="Total de projetos" value={stats.totalProjects} color="emerald" />
               <StatCard
-                label="Avg Credits/User"
+                label="Média de créditos/usuário"
                 value={stats.totalUsers > 0 ? Math.round((stats.totalCreditsGranted / stats.totalUsers) * 10) / 10 : 0}
                 color="blue"
               />
@@ -727,7 +738,7 @@ export default function AdminPanel() {
 
             {users.length > 0 && (
               <div className="mt-6">
-                <h3 className="text-xs font-semibold text-zinc-400 mb-3">Top Users by Credits</h3>
+                <h3 className="text-xs font-semibold text-zinc-400 mb-3">Usuários com mais créditos</h3>
                 <div className="space-y-1">
                   {[...users].sort((a, b) => b.credits - a.credits).slice(0, 5).map((u, i) => (
                     <div key={u.id} className="flex items-center gap-2 px-2 py-1.5 text-xs">

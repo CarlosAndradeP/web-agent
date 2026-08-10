@@ -1,11 +1,13 @@
 import type { Server } from 'socket.io';
+import type { UsersRepository } from '../db/repositories/users.js';
 export declare class FileWatcher {
     private watcher;
     private workspaceDir;
     private io;
-    start(workspaceDir: string, io: Server): void;
+    private usersRepo;
+    private usernameToUserId;
+    start(workspaceDir: string, io: Server, usersRepo: UsersRepository): void;
     private checkAndEmitNodeDetected;
-    private pathToRoom;
     stop(): void;
 }
 //# sourceMappingURL=file-watcher.d.ts.map
