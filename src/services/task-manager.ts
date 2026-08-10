@@ -238,9 +238,8 @@ export class TaskManager {
 
       async function* eventStream(): AsyncIterableIterator<StreamEvent> {
         let stepNumber = 0;
-        let toolName: string | null = null;
-        let toolInput: string | null = null;
         let stepStartTime = Date.now();
+        const pendingTools = new Map<string, { toolName: string; toolInput: string; startedAt: number }>();
 
         try {
           for await (const chunk of fullStream) {
@@ -258,31 +257,34 @@ export class TaskManager {
                 yield { type: 'text-delta' as const, taskId, content: text };
               }
             } else if (chunkType === 'tool-call') {
-              toolName = (chunk as any).toolName;
-              toolInput = JSON.stringify((chunk as any).input ?? {}).slice(0, 5000);
+              const toolCallId = (chunk as any).toolCallId;
+              const toolName = (chunk as any).toolName;
+              const toolInput = JSON.stringify((chunk as any).input ?? {}).slice(0, 5000);
+              pendingTools.set(toolCallId, { toolName, toolInput, startedAt: Date.now() });
               yield {
                 type: 'tool-call' as const,
                 taskId,
                 toolName,
-                toolCallId: (chunk as any).toolCallId,
+                toolCallId,
                 input: (chunk as any).input,
               };
             } else if (chunkType === 'tool-result') {
-              const durationMs = Date.now() - stepStartTime;
+              const toolCallId = (chunk as any).toolCallId;
+              const pendingTool = pendingTools.get(toolCallId);
+              const durationMs = Date.now() - (pendingTool?.startedAt ?? stepStartTime);
               stepNumber++;
               const output = JSON.stringify((chunk as any).output ?? {}).slice(0, 5000);
-              insertStep(taskId, stepNumber, toolName, toolInput, output, durationMs);
+              insertStep(taskId, stepNumber, pendingTool?.toolName ?? null, pendingTool?.toolInput ?? null, output, durationMs);
               yield {
                 type: 'tool-result' as const,
                 taskId,
-                toolName: toolName ?? 'unknown',
-                toolCallId: (chunk as any).toolCallId,
+                toolName: pendingTool?.toolName ?? 'unknown',
+                toolCallId,
                 result: (chunk as any).output,
                 stepNumber,
                 durationMs,
               };
-              toolName = null;
-              toolInput = null;
+              pendingTools.delete(toolCallId);
               stepStartTime = Date.now();
             } else if (chunkType === 'start-step') {
               stepStartTime = Date.now();
@@ -307,8 +309,9 @@ export class TaskManager {
           // the generator finally race, and the status ends up 'completed' for a
           // task the user explicitly stopped.
           if (abortSignal?.aborted) {
+            const wasAlreadyCancelled = tasksRepo.findById(taskId)?.status === 'cancelled';
             tasksRepo.updateStatus(taskId, 'cancelled');
-            emitToTaskUser(taskId, 'task:cancelled', { taskId });
+            if (!wasAlreadyCancelled) emitToTaskUser(taskId, 'task:cancelled', { taskId });
             log.info('Stream cancelled by signal', { taskId, totalSteps: stepNumber });
           } else {
             tasksRepo.updateStatus(taskId, 'completed');
@@ -319,7 +322,6 @@ export class TaskManager {
           tasksRepo.updateStatus(taskId, 'failed', null, err.message);
           emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
           log.error('Stream error', { taskId, error: err.message, stack: err.stack });
-          yield { type: 'error' as const, taskId, error: err.message };
           throw err;
         } finally {
           activeControllers.delete(taskId);
@@ -346,15 +348,14 @@ export class TaskManager {
     log.info('Canceling task', { taskId });
     const controller = this.activeControllers.get(taskId);
     if (controller) {
+      const wasAlreadyCancelled = this.tasksRepo.findById(taskId)?.status === 'cancelled';
       controller.abort();
       // Emit BEFORE deleting taskUserIds: emitToTaskUser looks up the userId
       // entry to scope the broadcast to the owner's socket room. Deleting
       // first would make the emit fall back to a global broadcast, leaking the
       // event to every connected user.
       this.tasksRepo.updateStatus(taskId, 'cancelled');
-      this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
-      this.activeControllers.delete(taskId);
-      this.taskUserIds.delete(taskId);
+      if (!wasAlreadyCancelled) this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
       log.info('Task canceled', { taskId });
     } else {
       log.warn('No active controller for task cancel', { taskId });

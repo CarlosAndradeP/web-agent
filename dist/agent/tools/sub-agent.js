@@ -49,12 +49,22 @@ export function createInvokeSubAgentTool(options) {
                 });
                 const text = result.text ?? 'Sub-agent completed with no output';
                 const stepsUsed = result.steps?.length ?? 0;
+                const createdFiles = new Set();
+                for (const step of result.steps ?? []) {
+                    for (const toolResult of step.toolResults ?? []) {
+                        const output = toolResult.output;
+                        if (toolResult.toolName === 'writeFile' && output?.success && typeof output.path === 'string') {
+                            createdFiles.add(output.path);
+                        }
+                    }
+                }
                 logSubAgentEvent('sub-agent', undefined, 'success', { result: text, stepsUsed });
                 log.info('Sub-agent completed', { task: task.slice(0, 100), resultLength: text.length, stepsUsed });
                 return {
                     success: true,
                     result: text.slice(0, 10000),
                     stepsUsed,
+                    createdFiles: [...createdFiles],
                 };
             }
             catch (err) {

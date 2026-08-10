@@ -11,11 +11,13 @@ export declare function createInvokeSubAgentTool(options: {
     success: boolean;
     result: string;
     stepsUsed: number;
+    createdFiles: string[];
     error?: undefined;
 } | {
     success: boolean;
     error: any;
     result: string;
     stepsUsed?: undefined;
+    createdFiles?: undefined;
 }>;
 //# sourceMappingURL=sub-agent.d.ts.map

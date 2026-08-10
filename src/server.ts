@@ -145,7 +145,7 @@ app.use((_req, res, next) => {
   }
   next();
 });
-app.use(express.json());
+app.use(express.json({ limit: '3mb' }));
 
 app.use((req, _res, next) => {
   log.debug(`${req.method} ${req.url}`);

@@ -204,9 +204,8 @@ export class TaskManager {
             const fullStream = streamResult.fullStream;
             async function* eventStream() {
                 let stepNumber = 0;
-                let toolName = null;
-                let toolInput = null;
                 let stepStartTime = Date.now();
+                const pendingTools = new Map();
                 try {
                     for await (const chunk of fullStream) {
                         // Check if task was cancelled between chunks
@@ -222,32 +221,35 @@ export class TaskManager {
                             }
                         }
                         else if (chunkType === 'tool-call') {
-                            toolName = chunk.toolName;
-                            toolInput = JSON.stringify(chunk.input ?? {}).slice(0, 5000);
+                            const toolCallId = chunk.toolCallId;
+                            const toolName = chunk.toolName;
+                            const toolInput = JSON.stringify(chunk.input ?? {}).slice(0, 5000);
+                            pendingTools.set(toolCallId, { toolName, toolInput, startedAt: Date.now() });
                             yield {
                                 type: 'tool-call',
                                 taskId,
                                 toolName,
-                                toolCallId: chunk.toolCallId,
+                                toolCallId,
                                 input: chunk.input,
                             };
                         }
                         else if (chunkType === 'tool-result') {
-                            const durationMs = Date.now() - stepStartTime;
+                            const toolCallId = chunk.toolCallId;
+                            const pendingTool = pendingTools.get(toolCallId);
+                            const durationMs = Date.now() - (pendingTool?.startedAt ?? stepStartTime);
                             stepNumber++;
                             const output = JSON.stringify(chunk.output ?? {}).slice(0, 5000);
-                            insertStep(taskId, stepNumber, toolName, toolInput, output, durationMs);
+                            insertStep(taskId, stepNumber, pendingTool?.toolName ?? null, pendingTool?.toolInput ?? null, output, durationMs);
                             yield {
                                 type: 'tool-result',
                                 taskId,
-                                toolName: toolName ?? 'unknown',
-                                toolCallId: chunk.toolCallId,
+                                toolName: pendingTool?.toolName ?? 'unknown',
+                                toolCallId,
                                 result: chunk.output,
                                 stepNumber,
                                 durationMs,
                             };
-                            toolName = null;
-                            toolInput = null;
+                            pendingTools.delete(toolCallId);
                             stepStartTime = Date.now();
                         }
                         else if (chunkType === 'start-step') {
@@ -274,8 +276,10 @@ export class TaskManager {
                     // the generator finally race, and the status ends up 'completed' for a
                     // task the user explicitly stopped.
                     if (abortSignal?.aborted) {
+                        const wasAlreadyCancelled = tasksRepo.findById(taskId)?.status === 'cancelled';
                         tasksRepo.updateStatus(taskId, 'cancelled');
-                        emitToTaskUser(taskId, 'task:cancelled', { taskId });
+                        if (!wasAlreadyCancelled)
+                            emitToTaskUser(taskId, 'task:cancelled', { taskId });
                         log.info('Stream cancelled by signal', { taskId, totalSteps: stepNumber });
                     }
                     else {
@@ -288,7 +292,6 @@ export class TaskManager {
                     tasksRepo.updateStatus(taskId, 'failed', null, err.message);
                     emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
                     log.error('Stream error', { taskId, error: err.message, stack: err.stack });
-                    yield { type: 'error', taskId, error: err.message };
                     throw err;
                 }
                 finally {
@@ -315,15 +318,15 @@ export class TaskManager {
         log.info('Canceling task', { taskId });
         const controller = this.activeControllers.get(taskId);
         if (controller) {
+            const wasAlreadyCancelled = this.tasksRepo.findById(taskId)?.status === 'cancelled';
             controller.abort();
             // Emit BEFORE deleting taskUserIds: emitToTaskUser looks up the userId
             // entry to scope the broadcast to the owner's socket room. Deleting
             // first would make the emit fall back to a global broadcast, leaking the
             // event to every connected user.
             this.tasksRepo.updateStatus(taskId, 'cancelled');
-            this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
-            this.activeControllers.delete(taskId);
-            this.taskUserIds.delete(taskId);
+            if (!wasAlreadyCancelled)
+                this.emitToTaskUser(taskId, 'task:cancelled', { taskId });
             log.info('Task canceled', { taskId });
         }
         else {

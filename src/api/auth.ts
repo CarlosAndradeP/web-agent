@@ -66,8 +66,8 @@ export function createAuthRouter(db: Database.Database, authLimiter?: any, refre
       res.status(400).json({ error: 'username, password and email are required' });
       return;
     }
-    if (username.length < 3 || password.length < 6) {
-      res.status(400).json({ error: 'username must be 3+ chars, password 6+ chars' });
+    if (typeof username !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(username) || password.length < 6) {
+      res.status(400).json({ error: 'username must be 3-32 characters using only letters, numbers, _ or -; password must be 6+ characters' });
       return;
     }
     if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {

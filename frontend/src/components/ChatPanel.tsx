@@ -2,14 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '../hooks/useChat';
 import { useSocket } from '../hooks/useSocket';
 import { api } from '../lib/api';
-import type { AppConfig, ModelInfo, ApprovalRequest } from '../types';
+import type { ModelInfo, ApprovalRequest } from '../types';
 import MessageBubble from './MessageBubble';
 import ApprovalDialog from './ApprovalDialog';
 import StepProgressBar from './StepProgressBar';
 import TypingIndicator from './TypingIndicator';
-import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
-import { Send, Square, Paperclip, ChevronDown, Globe, Sparkles, X, Upload } from 'lucide-react';
+import { Send, Square, Paperclip, ChevronDown, Globe, Sparkles, X, Upload, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SlashCommand {
@@ -36,7 +35,7 @@ interface Props {
 }
 
 export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, onCreditsRequired, basePath }: Props) {
-  const { messages, send, cancel, isStreaming, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId, { onCreditsRequired });
+  const { messages, send, cancel, isStreaming, status, isLoadingHistory, historyError, reloadHistory, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId, { onCreditsRequired });
   const { socket } = useSocket();
 
   // Notify parent layout about streaming state changes
@@ -47,6 +46,9 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
   const [input, setInput] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [defaultMaxSteps, setDefaultMaxSteps] = useState(100);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const [customMaxSteps, setCustomMaxSteps] = useState<number | undefined>(undefined);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -55,10 +57,10 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
   const [isUploading, setIsUploading] = useState(false);
   const [commandIndex, setCommandIndex] = useState(0);
   const [showCommands, setShowCommands] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isNearBottomRef = useRef(true);
 
   // Filter slash commands based on current input
   const filteredCommands = input.startsWith('/')
@@ -69,10 +71,15 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
     setShowCommands(input.startsWith('/') && !input.includes(' ') && filteredCommands.length > 0);
   }, [input]);
 
-  useEffect(() => {
+  const loadModels = useCallback(() => {
+    setIsLoadingModels(true);
+    setModelsError(null);
     let defaultModel = '';
     api.config.get()
-      .then(cfg => { defaultModel = cfg.defaultModel; })
+      .then(cfg => {
+        defaultModel = cfg.defaultModel;
+        setDefaultMaxSteps(cfg.maxSteps);
+      })
       .catch(() => {})
       .finally(() => {
         api.models.list().then(data => {
@@ -81,9 +88,16 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
             const exists = defaultModel && data.models.find(m => m.id === defaultModel);
             setSelectedModel(exists ? defaultModel : data.models[0].id);
           }
-        }).catch(() => {});
+          if (data.models.length === 0) setModelsError('Nenhum modelo disponível.');
+        }).catch((err: Error) => {
+          setModelsError(err.message || 'Não foi possível carregar os modelos.');
+        }).finally(() => setIsLoadingModels(false));
       });
   }, []);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
 
   useEffect(() => {
     if (socket) {
@@ -97,20 +111,29 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
   }, [socket]);
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    isNearBottomRef.current = true;
+    setShowScrollBottom(false);
+    const el = scrollRef.current;
+    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(scrollToBottom, 100);
+    if (!isNearBottomRef.current) return;
+    const timer = setTimeout(() => {
+      const el = scrollRef.current;
+      el?.scrollTo({ top: el.scrollHeight, behavior: isStreaming ? 'auto' : 'smooth' });
+    }, 50);
     return () => clearTimeout(timer);
-  }, [messages, scrollToBottom]);
+  }, [messages, isStreaming]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      setShowScrollBottom(distFromBottom > 100);
+      const isNearBottom = distFromBottom <= 100;
+      isNearBottomRef.current = isNearBottom;
+      setShowScrollBottom(!isNearBottom);
     };
     el.addEventListener('scroll', onScroll);
     return () => el.removeEventListener('scroll', onScroll);
@@ -186,7 +209,9 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || isLoadingHistory || (!text.startsWith('/') && !selectedModel)) return;
+    isNearBottomRef.current = true;
+    setShowScrollBottom(false);
     setInput('');
 
     // Check for slash commands
@@ -205,7 +230,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-    send(text, selectedModel, customMaxSteps);
+    send(text, selectedModel, customMaxSteps ?? defaultMaxSteps);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -259,6 +284,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
 
   // File attachment handlers
   const handleFileAttach = useCallback(async (files: FileList | File[]) => {
+    if (isStreaming) return;
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
@@ -274,7 +300,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
     } finally {
       setIsUploading(false);
     }
-  }, [basePath, addSystemMessage]);
+  }, [basePath, addSystemMessage, isStreaming]);
 
   const removeAttachedFile = useCallback((file: string) => {
     setAttachedFiles(prev => prev.filter(f => f !== file));
@@ -305,8 +331,11 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
   }, [handleFileAttach]);
 
   return (
-    <div className="flex flex-col h-full relative">
-      <StepProgressBar currentStep={currentStep} totalSteps={totalSteps} isStreaming={isStreaming} currentToolName={currentToolName} />
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <StepProgressBar currentStep={currentStep} totalSteps={totalSteps} status={approval ? 'awaiting_approval' : status} currentToolName={currentToolName} />
+      <div className="sr-only" role="status" aria-live="polite">
+        {approval ? 'O agente aguarda sua aprovação.' : status === 'completed' ? 'Tarefa concluída.' : status === 'error' ? 'A tarefa falhou.' : status === 'cancelled' ? 'Tarefa interrompida.' : status === 'running' ? 'Agente em execução.' : ''}
+      </div>
 
       {/* Drag overlay */}
       {isDragging && (
@@ -319,33 +348,60 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
       )}
 
       {/* Messages area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-        <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-24 text-center">
-              <div className="h-14 w-14 rounded-2xl bg-zinc-800/80 border border-zinc-700/40 flex items-center justify-center mb-5">
-                <Sparkles className="h-7 w-7 text-blue-400" />
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} role="log" aria-label="Conversa com o agente" aria-busy={isStreaming}>
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 py-6 sm:py-10 space-y-5">
+          {isLoadingHistory && (
+            <div className="flex min-h-[45vh] flex-col items-center justify-center gap-3 text-zinc-500">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+              <p className="text-xs">Carregando conversa...</p>
+            </div>
+          )}
+          {!isLoadingHistory && historyError && (
+            <div className="mx-auto flex min-h-[40vh] max-w-sm flex-col items-center justify-center text-center">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-red-500/20 bg-red-500/10">
+                <AlertCircle className="h-5 w-5 text-red-400" />
               </div>
-              <h2 className="text-lg font-semibold text-zinc-200 mb-2">O que vamos construir hoje?</h2>
-              <p className="text-sm text-zinc-500 max-w-sm leading-relaxed">
+              <p className="text-sm font-medium text-zinc-200">Não foi possível carregar a conversa</p>
+              <p className="mt-1 text-xs leading-relaxed text-zinc-500">{historyError}</p>
+              <Button variant="outline" size="sm" onClick={reloadHistory} className="mt-4 gap-2">
+                <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
+              </Button>
+            </div>
+          )}
+          {!isLoadingHistory && !historyError && messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center min-h-[55vh] text-center">
+              <div className="h-16 w-16 rounded-2xl bg-blue-500/10 border border-blue-500/20 shadow-lg shadow-blue-950/20 flex items-center justify-center mb-6">
+                <Sparkles className="h-7 w-7 text-blue-300" />
+              </div>
+              <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-100 mb-2">O que vamos construir hoje?</h2>
+              <p className="text-sm text-zinc-400 max-w-lg leading-relaxed">
                 Descreva uma tarefa e o agente executará de forma autônoma. Ele pode ler, escrever e pesquisar arquivos, rodar comandos e revisar o resultado.
               </p>
-              <p className="text-xs text-zinc-600 mt-3">Digite <code className="text-zinc-400">/help</code> para ver os comandos</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-7">
+                {['Analise este projeto e sugira melhorias', 'Crie uma nova página responsiva'].map(suggestion => (
+                  <button key={suggestion} onClick={() => { setInput(suggestion); textareaRef.current?.focus(); }} className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-left text-sm text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-200 transition-colors">
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-600 mt-4">Use <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400">/help</code> para ver todos os comandos</p>
             </div>
           )}
           {messages.map((msg, i) => (
             <MessageBubble
-              key={msg.timestamp ?? i}
+              key={msg.id}
               role={msg.isUser ? 'user' : (msg.role === 'system' ? 'system' : 'assistant')}
               content={msg.content}
               toolCalls={msg.toolCalls}
               isStreaming={isStreaming && i === messages.length - 1 && !msg.isUser}
+              createdFiles={msg.createdFiles}
+              createdFileCount={msg.createdFileCount}
+              basePath={basePath}
             />
           ))}
           {isStreaming && messages.length > 0 && !messages[messages.length - 1].content && (!messages[messages.length - 1].toolCalls || messages[messages.length - 1].toolCalls!.length === 0) && (
             <TypingIndicator toolName={currentToolName} />
           )}
-          <div ref={messagesEndRef} />
         </div>
       </div>
 
@@ -353,15 +409,16 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
       {showScrollBottom && (
         <button
           onClick={scrollToBottom}
-          className="absolute bottom-24 right-6 h-8 w-8 rounded-full bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center shadow-lg hover:bg-zinc-700 transition-colors z-10 backdrop-blur-sm"
+          className="absolute bottom-36 sm:bottom-28 right-4 sm:right-8 h-10 w-10 rounded-full bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center shadow-lg hover:bg-zinc-700 transition-colors z-10 backdrop-blur-sm"
+          aria-label="Ir para a mensagem mais recente"
         >
           <ChevronDown className="h-4 w-4 text-zinc-400" />
         </button>
       )}
 
       {/* Input area */}
-      <div className="border-t border-zinc-800/60 bg-zinc-950/50 backdrop-blur-md">
-        <div className="max-w-3xl mx-auto p-3">
+      <div className="shrink-0 border-t border-zinc-800/70 bg-zinc-950/85 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">
+        <div className="max-w-4xl mx-auto px-3 py-3 sm:px-6 sm:py-4">
           {/* Attached files preview */}
           {attachedFiles.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
@@ -369,7 +426,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
                 <div key={file} className="flex items-center gap-1 px-2 py-1 bg-zinc-800 border border-zinc-700/50 rounded-md text-xs text-zinc-300">
                   <Paperclip className="h-3 w-3 text-zinc-500" />
                   <span className="truncate max-w-[150px]">{file}</span>
-                  <button onClick={() => removeAttachedFile(file)} className="ml-1 text-zinc-500 hover:text-zinc-300">
+                  <button onClick={() => removeAttachedFile(file)} className="ml-1 text-zinc-500 hover:text-zinc-300" aria-label={`Remover anexo ${file}`}>
                     <X className="h-3 w-3" />
                   </button>
                 </div>
@@ -377,7 +434,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
             </div>
           )}
 
-          <div className="flex items-end gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 focus-within:ring-1 focus-within:ring-zinc-600 focus-within:border-zinc-700 transition-all relative">
+          <div className="bg-zinc-900/90 border border-zinc-700/70 rounded-2xl p-2 shadow-xl shadow-black/20 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500/50 transition-all relative">
             {/* Hidden file input */}
             <input
               ref={fileInputRef}
@@ -391,60 +448,43 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
                 }
               }}
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="shrink-0 h-8 w-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors text-zinc-500 hover:text-zinc-300 disabled:opacity-50"
-              title="Anexar arquivo"
-            >
-              {isUploading ? (
-                <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+            <div className="flex items-end gap-2">
+              <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isStreaming} className="shrink-0 h-10 w-10 flex items-center justify-center rounded-xl hover:bg-zinc-800 transition-colors text-zinc-500 hover:text-zinc-200 disabled:opacity-50" title="Anexar arquivo" aria-label={isUploading ? 'Enviando arquivo' : 'Anexar arquivo'}>
+                {isUploading ? <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip className="h-4 w-4" />}
+              </button>
+              <textarea ref={textareaRef} value={input} onChange={handleTextareaChange} onKeyDown={handleKeyDown} placeholder={modelsError ? 'Modelos indisponíveis no momento' : 'Descreva o que você quer criar ou modificar...'} rows={1} aria-label="Mensagem para o agente" aria-autocomplete="list" aria-controls={showCommands ? 'slash-command-list' : undefined} aria-activedescendant={showCommands ? `slash-command-${commandIndex}` : undefined} className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder:text-zinc-600 min-h-10 max-h-[160px] py-2.5 leading-5" />
+              {isStreaming ? (
+                <Button size="icon" variant="destructive" onClick={cancel} className="shrink-0 h-10 w-10 rounded-xl" aria-label="Interromper agente"><Square className="h-3.5 w-3.5" /></Button>
               ) : (
-                <Paperclip className="h-4 w-4" />
+                <Button size="icon" onClick={handleSend} disabled={!input.trim() || !selectedModel || isLoadingModels || isLoadingHistory} className="shrink-0 h-10 w-10 rounded-xl" aria-label="Enviar mensagem"><Send className="h-4 w-4" /></Button>
               )}
-            </button>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleTextareaChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Descreva uma tarefa para o agente..."
-              rows={1}
-              className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder:text-zinc-600 min-h-[32px] max-h-[160px] py-1.5"
-            />
-            <select
-              value={selectedModel}
-              onChange={e => setSelectedModel(e.target.value)}
-              className="bg-zinc-800 border border-zinc-700/50 rounded-lg px-2 py-1 text-[11px] text-zinc-400 max-w-[160px] truncate shrink-0 focus:outline-none"
-              title={models.find(m => m.id === selectedModel)
-                ? `${models.find(m => m.id === selectedModel)!.displayName || selectedModel} — ${models.find(m => m.id === selectedModel)?.costPerStep ?? 1} cr/step`
-                : selectedModel
-              }
-            >
-              {models.map(m => (
-                <option key={m.id} value={m.id}>
-                  {(m.displayName || m.id.length > 25 ? (m.displayName || m.id.slice(0, 25) + '...') : m.id)} ({m.costPerStep ?? 1} cr/etapa)
-                </option>
-              ))}
-            </select>
-            {isStreaming ? (
-              <Button size="icon" variant="destructive" onClick={cancel} className="shrink-0 h-8 w-8 rounded-lg">
-                <Square className="h-3.5 w-3.5" />
-              </Button>
-            ) : (
-              <Button size="icon" onClick={handleSend} disabled={!input.trim()} className="shrink-0 h-8 w-8 rounded-lg">
-                <Send className="h-3.5 w-3.5" />
-              </Button>
-            )}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 px-1 pt-2 mt-1 border-t border-zinc-800/80">
+              <label className="flex items-center gap-1.5 min-w-0 text-xs text-zinc-500">
+                <Globe className="h-3.5 w-3.5 shrink-0" />
+                <span className="sr-only">Modelo</span>
+                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={isLoadingModels || !!modelsError} className="bg-transparent max-w-[210px] sm:max-w-xs truncate text-xs text-zinc-400 focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60" title={models.find(m => m.id === selectedModel) ? `${models.find(m => m.id === selectedModel)!.displayName || selectedModel} - ${models.find(m => m.id === selectedModel)?.costPerStep ?? 1} cr/etapa` : selectedModel}>
+                  {isLoadingModels && <option value="">Carregando modelos...</option>}
+                  {modelsError && <option value="">Modelos indisponíveis</option>}
+                  {models.map(m => <option key={m.id} value={m.id}>{m.displayName || m.id} ({m.costPerStep ?? 1} cr/etapa)</option>)}
+                </select>
+              </label>
+              {modelsError && <button type="button" onClick={loadModels} className="text-[11px] text-red-400 hover:text-red-300">Tentar novamente</button>}
+              <span className="hidden sm:block text-[11px] text-zinc-600">Enter envia · Shift + Enter quebra linha</span>
+            </div>
 
             {/* Slash command autocomplete dropdown */}
             {showCommands && filteredCommands.length > 0 && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl overflow-hidden z-20">
+              <div id="slash-command-list" className="absolute bottom-full left-0 right-0 mb-2 bg-zinc-900 border border-zinc-700/70 rounded-xl shadow-2xl overflow-hidden z-20" role="listbox" aria-label="Comandos disponíveis">
                 {filteredCommands.map((cmd, i) => (
                   <button
                     key={cmd.name}
+                    id={`slash-command-${i}`}
+                    role="option"
+                    aria-selected={i === commandIndex}
                     className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800 transition-colors',
+                      'w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-zinc-800 transition-colors',
                       i === commandIndex && 'bg-zinc-800'
                     )}
                     onClick={() => {
@@ -455,7 +495,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
                     onMouseEnter={() => setCommandIndex(i)}
                   >
                     <span className="text-sm font-mono text-blue-400">{cmd.name}</span>
-                    <span className="text-xs text-zinc-500">{cmd.description}</span>
+                    <span className="text-xs text-zinc-400">{cmd.description}</span>
                   </button>
                 ))}
               </div>

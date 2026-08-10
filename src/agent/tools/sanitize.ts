@@ -17,7 +17,7 @@ export function safeWorkspacePath(workspaceDir: string, relativePath: string): s
   // root via ".." or drive change (e.g. "D:\evil" on Windows). `relative()`
   // returns a path starting with ".." when fullPath is outside the workspace.
   const relFromWorkspace = relative(normalizedWorkspace, fullPath).replace(/\\/g, '/');
-  if (relFromWorkspace.startsWith('..')) {
+  if (relFromWorkspace === '..' || relFromWorkspace.startsWith('../')) {
     throw new Error(`Path traversal blocked: ${relativePath} resolves outside workspace`);
   }
 
@@ -39,7 +39,7 @@ export function assertPathInsideWorkspace(workspaceDir: string, candidatePath: s
   }
 
   const relFromWorkspace = relative(normalizedWorkspace, fullPath).replace(/\\/g, '/');
-  if (relFromWorkspace.startsWith('..')) {
+  if (relFromWorkspace === '..' || relFromWorkspace.startsWith('../')) {
     throw new Error(`Path blocked: ${label} resolves outside workspace`);
   }
 

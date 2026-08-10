@@ -1,6 +1,7 @@
 import type { ToolCallInfo } from '../hooks/useChat';
 import ToolCallDisplay from './ToolCallDisplay';
 import MarkdownRenderer from './MarkdownRenderer';
+import GeneratedFilesCard from './GeneratedFilesCard';
 import { Bot, User, Info } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -9,16 +10,19 @@ interface Props {
   content: string;
   toolCalls?: ToolCallInfo[];
   isStreaming?: boolean;
+  createdFiles?: string[];
+  createdFileCount?: number;
+  basePath?: string;
 }
 
-export default function MessageBubble({ role, content, toolCalls, isStreaming }: Props) {
+export default function MessageBubble({ role, content, toolCalls, isStreaming, createdFiles, createdFileCount, basePath }: Props) {
   const isUser = role === 'user';
   const isSystem = role === 'system';
   const hasToolCalls = toolCalls && toolCalls.length > 0;
   const hasContent = content.trim().length > 0;
 
   return (
-    <div className={cn('flex gap-3 animate-in', isUser ? 'justify-end' : 'justify-start')}>
+    <article className={cn('flex gap-2.5 sm:gap-3 animate-in', isUser ? 'justify-end' : 'justify-start')} aria-label={isUser ? 'Sua mensagem' : isSystem ? 'Mensagem do sistema' : 'Resposta do agente'}>
       {!isUser && !isSystem && (
         <div className="shrink-0 mt-1">
           <div className="h-7 w-7 rounded-lg bg-zinc-800/80 border border-zinc-700/40 flex items-center justify-center">
@@ -33,16 +37,16 @@ export default function MessageBubble({ role, content, toolCalls, isStreaming }:
           </div>
         </div>
       )}
-      <div className={cn('space-y-2 min-w-0', isUser ? 'max-w-[75%]' : 'flex-1 max-w-[90%]')}>
+      <div className={cn('space-y-2 min-w-0', isUser ? 'max-w-[88%] sm:max-w-[75%]' : 'flex-1 max-w-[92%]')}>
         {hasContent && (
           <div
             className={cn(
-              'rounded-xl px-4 py-2.5 text-sm leading-relaxed',
+               'rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm',
               isUser
-                ? 'bg-blue-600 text-white'
+                 ? 'bg-blue-600 text-white rounded-tr-md'
                 : isSystem
                   ? 'bg-zinc-800/40 border border-zinc-700/30 text-zinc-400 text-xs italic'
-                  : 'bg-zinc-800/80 border border-zinc-700/40 text-zinc-100'
+                   : 'bg-zinc-900/80 border border-zinc-800 text-zinc-100 rounded-tl-md'
             )}
           >
             {isUser ? (
@@ -73,6 +77,9 @@ export default function MessageBubble({ role, content, toolCalls, isStreaming }:
             ))}
           </div>
         )}
+        {!isUser && !isSystem && createdFiles && createdFiles.length > 0 && (
+          <GeneratedFilesCard files={createdFiles} totalCount={createdFileCount} basePath={basePath} />
+        )}
       </div>
       {isUser && (
         <div className="shrink-0 mt-1">
@@ -81,6 +88,6 @@ export default function MessageBubble({ role, content, toolCalls, isStreaming }:
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 }

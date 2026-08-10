@@ -16,6 +16,15 @@ import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-
 
 const log = createLogger('ChatAPI');
 
+function compactToolValue(value: unknown): unknown {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized.length > 5000 ? `${serialized.slice(0, 5000)}...` : value;
+  } catch {
+    return String(value);
+  }
+}
+
 export function createChatRouter(db: Database.Database, taskManager: TaskManager, creditManager: CreditManager, compactionService: CompactionService) {
   const router = Router();
   const messagesRepo = new MessagesRepository(db);
@@ -168,24 +177,15 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
         res.status(400).json({ error: `Invalid message role: ${msg.role}` });
         return;
       }
-      messagesRepo.create(effectiveSessionId, msg.role, msg.content);
     }
 
-    // Auto-compact if the conversation is getting too long
-    const selectedModel = model ?? configRepo.getAll().defaultModel;
-    try {
-      const didCompact = await compactionService.autoCompactIfNeeded(effectiveSessionId, selectedModel);
-      if (didCompact) {
-        log.info('Auto-compacted session before sending to agent', { sessionId: effectiveSessionId });
-      }
-    } catch (err: any) {
-      log.warn('Auto-compaction check failed, continuing anyway', { error: err.message });
+    const latestMessage = messages[messages.length - 1];
+    if (latestMessage.role !== 'user') {
+      res.status(400).json({ error: 'The latest message must be from the user' });
+      return;
     }
-
-    // Build the full conversation context (including any previous summary)
-    const conversationContext = compactionService.getConversationContext(effectiveSessionId);
-
     const appConfig = configRepo.getAll();
+    const selectedModel = model ?? appConfig.defaultModel;
 
     try {
       const availableModels = await resolveModels(appConfig.apiBaseUrl);
@@ -199,6 +199,21 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     } catch (err: any) {
       log.warn('Could not validate model, proceeding anyway', { error: err.message });
     }
+
+    // The payload contains conversation context; only the newest user turn is new.
+    messagesRepo.create(effectiveSessionId, latestMessage.role, latestMessage.content);
+
+    try {
+      const didCompact = await compactionService.autoCompactIfNeeded(effectiveSessionId, selectedModel);
+      if (didCompact) {
+        log.info('Auto-compacted session before sending to agent', { sessionId: effectiveSessionId });
+      }
+    } catch (err: any) {
+      log.warn('Auto-compaction check failed, continuing anyway', { error: err.message });
+    }
+
+    // Build the full conversation context after persisting and compacting the new turn.
+    const conversationContext = compactionService.getConversationContext(effectiveSessionId);
 
     const description = messages[messages.length - 1].content;
     log.info('Creating task for chat', { selectedModel, descriptionLength: description.length, contextLength: conversationContext.length });
@@ -227,14 +242,73 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       res.write(`data: ${JSON.stringify({ type: 'task-start', taskId: task.id })}\n\n`);
 
       let totalEvents = 0;
+      const createdFiles = new Set<string>();
+      let assistantContent = '';
+      const persistedToolCalls: Array<Record<string, unknown>> = [];
       for await (const event of eventStream) {
         totalEvents++;
+        if (event.type === 'text-delta' && typeof event.content === 'string') {
+          assistantContent += event.content;
+        }
+        if (event.type === 'tool-call') {
+          persistedToolCalls.push({
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            input: compactToolValue(event.input),
+            status: 'running',
+          });
+        }
+        if (event.type === 'tool-result') {
+          const index = persistedToolCalls.findIndex(call => call.toolCallId === event.toolCallId);
+          const result = {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            result: compactToolValue(event.result),
+            stepNumber: event.stepNumber,
+            durationMs: event.durationMs,
+            status: 'completed',
+          };
+          if (index >= 0) persistedToolCalls[index] = { ...persistedToolCalls[index], ...result };
+          else persistedToolCalls.push(result);
+        }
+        if (event.type === 'tool-result' && event.toolName === 'writeFile') {
+          const result = event.result as { success?: boolean; path?: unknown } | undefined;
+          if (result?.success && typeof result.path === 'string') {
+            createdFiles.add(result.path.replace(/\\/g, '/'));
+          }
+        }
+        if (event.type === 'tool-result' && event.toolName === 'invokeSubAgent') {
+          const result = event.result as { createdFiles?: unknown } | undefined;
+          if (Array.isArray(result?.createdFiles)) {
+            for (const path of result.createdFiles) {
+              if (typeof path === 'string') createdFiles.add(path.replace(/\\/g, '/'));
+            }
+          }
+        }
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
 
       log.info('Stream finished', { taskId: task.id, totalEvents });
 
-      res.write(`data: ${JSON.stringify({ type: 'finish', taskId: task.id })}\n\n`);
+      const allCreatedFiles = [...createdFiles];
+      const finalTask = taskManager.getTask(task.id);
+      if (finalTask?.status === 'cancelled') {
+        res.write(`data: ${JSON.stringify({ type: 'cancelled', taskId: task.id })}\n\n`);
+        res.end();
+        return;
+      }
+      const finalContent = assistantContent || 'Tarefa concluída sem uma resposta em texto.';
+      messagesRepo.create(effectiveSessionId, 'assistant', finalContent, JSON.stringify({
+        calls: persistedToolCalls,
+        createdFiles: allCreatedFiles.slice(0, 5),
+        createdFileCount: allCreatedFiles.length,
+      }));
+      res.write(`data: ${JSON.stringify({
+        type: 'finish',
+        taskId: task.id,
+        createdFiles: allCreatedFiles.slice(0, 5),
+        createdFileCount: allCreatedFiles.length,
+      })}\n\n`);
       res.end();
     } catch (err: any) {
       log.error('Stream error in chat', { taskId: task.id, error: err.message, stack: err.stack });

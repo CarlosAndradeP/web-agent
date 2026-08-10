@@ -54,6 +54,15 @@ export default function Layout() {
     }
   }, [showCreateDialog]);
 
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
+
   const handleTabChange = useCallback((tab: Tab) => {
     if (tab === 'admin' && !isAdmin) return;
     setActiveTab(tab);
@@ -142,9 +151,9 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
+    <div className="flex h-screen h-dvh bg-zinc-950/95 text-zinc-100 overflow-hidden">
       {/* Desktop sidebar + resize handle */}
-      <div className="hidden md:flex shrink-0 border-r border-zinc-800/60" style={{ width: sidebarWidth }}>
+      <div className="hidden md:flex shrink-0 border-r border-zinc-800/70 shadow-2xl shadow-black/10" style={{ width: sidebarWidth }}>
         <Sidebar {...sidebarProps} />
       </div>
       <div
@@ -159,15 +168,15 @@ export default function Layout() {
       {/* Mobile sidebar overlay */}
       {mobileMenuOpen && (
         <>
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden animate-in" onClick={() => setMobileMenuOpen(false)} />
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden w-72 animate-in shadow-2xl">
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden animate-in" onClick={() => setMobileMenuOpen(false)} aria-hidden="true" />
+          <div className="fixed inset-y-0 left-0 z-50 md:hidden w-[min(86vw,320px)] animate-in shadow-2xl" role="dialog" aria-modal="true" aria-label="Menu principal">
             <Sidebar {...sidebarProps} />
           </div>
         </>
       )}
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <Header
           onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
           menuOpen={mobileMenuOpen}
@@ -175,17 +184,17 @@ export default function Layout() {
           sessionName={activeProject?.name}
         />
 
-        <main className="flex-1 overflow-hidden">
+        <main className="min-h-0 flex-1 overflow-hidden" aria-label="Conteúdo principal">
           <div className={activeTab === 'chat' ? 'h-full' : 'h-full hidden'}>
             {effectiveSessionId ? (
               <ChatPanel key={effectiveSessionId} sessionId={effectiveSessionId} onStreamingChange={setIsChatStreaming} onNewSession={handleNewSession} onCreditsRequired={openCreditsPanel} basePath={activeProject?.folderPath} />
             ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center space-y-3">
-                  <div className="h-12 w-12 rounded-xl bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center mx-auto">
+              <div className="flex items-center justify-center h-full p-6">
+                <div className="text-center space-y-4 max-w-sm rounded-2xl border border-zinc-800/70 bg-zinc-900/40 p-8 shadow-xl shadow-black/10">
+                  <div className="h-12 w-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
                     <span className="text-lg">+</span>
                   </div>
-                  <p className="text-sm text-zinc-500">Selecione ou crie um projeto para começar</p>
+                  <div><h2 className="text-base font-semibold">Comece por um projeto</h2><p className="text-sm text-zinc-500 mt-1">Selecione um projeto existente ou crie um novo no menu lateral.</p></div>
                 </div>
               </div>
             )}

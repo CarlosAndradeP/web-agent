@@ -46,8 +46,11 @@ export class FileWatcher {
 
     const emitFileChanged = (filePath: string, type: 'create' | 'modify' | 'delete') => {
       const room = userRoomFor(filePath);
-      const emitter = room && this.io ? this.io.to(room) : this.io;
-      if (emitter) emitter.emit('file:changed', { path: filePath, type });
+      if (!room || !this.io) return;
+      const parts = relative(this.workspaceDir, filePath).split(/[/\\]/);
+      const workspaceRelativePath = parts.slice(1).join('/');
+      if (!workspaceRelativePath) return;
+      this.io.to(room).emit('file:changed', { path: workspaceRelativePath, type });
     };
 
     this.watcher.on('add', (path) => {
@@ -71,6 +74,16 @@ export class FileWatcher {
       emitFileChanged(path, 'delete');
     });
 
+    this.watcher.on('addDir', (path) => {
+      log.debug('Directory added', { path });
+      emitFileChanged(path, 'create');
+    });
+
+    this.watcher.on('unlinkDir', (path) => {
+      log.debug('Directory deleted', { path });
+      emitFileChanged(path, 'delete');
+    });
+
     this.watcher.on('error', (err: unknown) => {
       log.error('File watcher error', { error: err instanceof Error ? err.message : String(err) });
     });
@@ -86,11 +99,9 @@ export class FileWatcher {
       const projectRelPath = parts.slice(1).join('/');
       // Scope the event to the owning user's room so other connected users do
       // not see another user's project folder paths.
-      const emitter = userRoom ? this.io.to(userRoom) : this.io;
-      emitter.emit('project:node-detected', {
+      if (!userRoom) return;
+      this.io.to(userRoom).emit('project:node-detected', {
         folderPath: projectRelPath,
-        username,
-        fullPath: folderPath,
       });
       log.info('Node.js project detected (package.json created)', { folderPath: projectRelPath, username });
     }

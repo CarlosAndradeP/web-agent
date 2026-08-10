@@ -299,9 +299,9 @@ export default function AdminPanel() {
   ];
 
   return (
-    <div className="flex h-full">
-      <div className="w-48 border-r border-zinc-800 bg-zinc-900/50 p-2">
-        <nav className="space-y-0.5">
+    <div className="flex flex-col md:flex-row h-full">
+      <div className="md:w-48 border-b md:border-b-0 md:border-r border-zinc-800 bg-zinc-900/50 p-2 shrink-0">
+        <nav className="flex md:block gap-1 overflow-x-auto md:space-y-0.5" aria-label="Seções administrativas">
           {tabs.map(t => {
             const Icon = t.icon;
             return (
@@ -309,7 +309,7 @@ export default function AdminPanel() {
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all',
+                  'shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium transition-all',
                   tab === t.id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
                 )}
               >
@@ -323,7 +323,7 @@ export default function AdminPanel() {
 
       <div className="flex-1 overflow-hidden">
         {tab === 'users' && (
-          <div className="flex h-full">
+          <div className="flex flex-col lg:flex-row h-full">
             <ScrollArea className="flex-1 p-4">
               <h2 className="text-sm font-semibold mb-3">Usuários ({users.length})</h2>
               <div className="space-y-1">
@@ -349,7 +349,7 @@ export default function AdminPanel() {
             </ScrollArea>
 
             {selectedUser && (
-              <div className="w-80 border-l border-zinc-800 p-4 overflow-y-auto">
+              <div className="lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-800 p-4 overflow-y-auto max-h-[48%] lg:max-h-none">
                 <h2 className="text-sm font-semibold mb-3">{selectedUser.username}</h2>
                 <div className="space-y-3 text-xs">
                   <div className="flex justify-between">

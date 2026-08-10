@@ -174,9 +174,9 @@ export default function UserPanel({ initialTab = 'account' }: { initialTab?: Acc
   };
 
   return (
-    <div className="flex h-full">
-      <div className="w-48 border-r border-zinc-800 bg-zinc-900/50 p-2">
-        <nav className="space-y-0.5">
+    <div className="flex flex-col md:flex-row h-full">
+      <div className="md:w-48 border-b md:border-b-0 md:border-r border-zinc-800 bg-zinc-900/50 p-2 shrink-0">
+        <nav className="flex md:block gap-1 overflow-x-auto md:space-y-0.5" aria-label="Seções da conta">
           {tabs.map(t => {
             const Icon = t.icon;
             return (
@@ -184,7 +184,7 @@ export default function UserPanel({ initialTab = 'account' }: { initialTab?: Acc
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all',
+                  'shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium transition-all',
                   tab === t.id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
                 )}
               >
@@ -198,7 +198,7 @@ export default function UserPanel({ initialTab = 'account' }: { initialTab?: Acc
 
       <div className="flex-1 overflow-hidden">
         {tab === 'account' && (
-          <ScrollArea className="h-full p-6">
+            <ScrollArea className="h-full p-4 sm:p-6">
             <h2 className="text-sm font-semibold mb-4">Informações da conta</h2>
             <div className="max-w-md space-y-4">
               <div>

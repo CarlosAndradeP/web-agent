@@ -9,10 +9,11 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tree: FileEntry[];
+  rootPath: string;
   onPublished?: (project: Project) => void;
 }
 
-export default function PublishProjectDialog({ open, onOpenChange, tree, onPublished }: Props) {
+export default function PublishProjectDialog({ open, onOpenChange, tree, rootPath, onPublished }: Props) {
   const [name, setName] = useState('');
   const [folderPath, setFolderPath] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -45,7 +46,7 @@ export default function PublishProjectDialog({ open, onOpenChange, tree, onPubli
     onOpenChange(false);
   };
 
-  const folders = extractFolders(tree);
+  const folders = [rootPath, ...extractFolders(tree)].filter((path, index, values) => path !== '.' && values.indexOf(path) === index);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -120,7 +121,7 @@ function extractFolders(tree: FileEntry[], prefix = ''): string[] {
   const folders: string[] = [];
   for (const entry of tree) {
     if (entry.type === 'directory') {
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = entry.path || (prefix ? `${prefix}/${entry.name}` : entry.name);
       folders.push(path);
       if (entry.children) {
         folders.push(...extractFolders(entry.children, path));

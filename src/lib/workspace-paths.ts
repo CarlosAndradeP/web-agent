@@ -3,7 +3,12 @@ import { config } from '../config.js';
 import { safeWorkspacePath } from '../agent/tools/sanitize.js';
 
 export function getUserWorkspaceDir(username: string): string {
-  return resolve(config.workspaceBaseDir, username);
+  // Existing installations may contain usernames created before the stricter
+  // registration policy. Keep safe single-segment names working.
+  if (!username || username === '.' || username === '..' || /[/\\\0]/.test(username) || isAbsolute(username)) {
+    throw new Error('Invalid username for workspace path');
+  }
+  return safeWorkspacePath(config.workspaceBaseDir, username);
 }
 
 export function resolveUserWorkspacePath(username: string, relativePath: string, options: { allowRoot?: boolean } = {}): string {
