@@ -12,9 +12,31 @@ declare global {
 
 const scriptLoads = new Map<string, Promise<void>>();
 
+function browserOnlyOfficeUrl(publicUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(publicUrl);
+  } catch {
+    throw new Error('ONLYOFFICE_PUBLIC_URL não é uma URL válida');
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('ONLYOFFICE_PUBLIC_URL deve usar HTTP ou HTTPS');
+  }
+
+  // Browsers refuse to load the Document Server API over HTTP when Web Agent
+  // itself is on HTTPS. Prefer the secure endpoint when it is available under
+  // the same host; plain-HTTP local development remains unchanged.
+  if (window.location.protocol === 'https:' && url.protocol === 'http:') {
+    url.protocol = 'https:';
+  }
+
+  return url.toString().replace(/\/+$/, '');
+}
+
 function loadOnlyOffice(publicUrl: string): Promise<void> {
   if (window.DocsAPI) return Promise.resolve();
-  const scriptUrl = `${publicUrl.replace(/\/+$/, '')}/web-apps/apps/api/documents/api.js`;
+  const scriptUrl = `${browserOnlyOfficeUrl(publicUrl)}/web-apps/apps/api/documents/api.js`;
   const existing = scriptLoads.get(scriptUrl);
   if (existing) return existing;
 

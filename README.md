@@ -86,7 +86,7 @@ npm run dev:frontend
 - JWT-signed editor configuration, short-lived storage links, and authenticated save callbacks
 - Production agent image includes python-docx, docxtpl, lxml, and Pillow; ONLYOFFICE provides document rendering, visual review, and export
 
-The default browser URL for the editor is `http://localhost:8082`. When users access Web Agent from another machine, set `ONLYOFFICE_PUBLIC_URL` to the public HTTPS URL that exposes the document server.
+The default browser URL for the editor is `http://localhost:8082`. When users access Web Agent from another machine, set `ONLYOFFICE_PUBLIC_URL` to the public HTTPS URL that exposes the document server. In particular, an HTTPS Web Agent deployment must not be configured with an HTTP ONLYOFFICE URL, because browsers block the editor API as mixed content. The frontend also upgrades the configured URL to HTTPS in that situation as a defensive fallback.
 
 The Docker Compose stack starts ONLYOFFICE Docs together with Web Agent. The URLs remain configurable so production installations can expose the editor through their own HTTPS domain or move it to another host when desired.
 
