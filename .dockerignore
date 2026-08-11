@@ -2,4 +2,21 @@
 README.md
 CLAUDE.md
 .claude
+.git
+.gitignore
+.env
+.env.*
+node_modules
+frontend/node_modules
+dist
+frontend/dist
+workspace
+data
+project-links
+.word-smoke-test*
+*.db
+*.db-wal
+*.db-shm
+*.zip
+npm-debug.log*
 

@@ -113,6 +113,14 @@ export interface Project {
     createdAt: string;
     updatedAt: string;
 }
+export interface WordWorkspace {
+    id: string;
+    userId: string;
+    sessionId: string;
+    model: string;
+    createdAt: string;
+    updatedAt: string;
+}
 export interface CreditTransaction {
     id: string;
     userId: string;

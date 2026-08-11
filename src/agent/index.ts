@@ -32,6 +32,7 @@ export interface CreateAgentOptions {
   approvalManager?: ApprovalManager;
   userId?: string;
   conversationContext?: Array<ModelMessage>;
+  workspaceProfile?: 'development' | 'word';
 }
 
 export function createAgent(options: CreateAgentOptions) {
@@ -55,7 +56,7 @@ export function createAgent(options: CreateAgentOptions) {
   const isGlmModel = options.model.toLowerCase().includes('glm');
   const maxOutputTokens = isGlmModel ? 16384 : 8192;
 
-  const systemPrompt = buildSystemPrompt(options.projectInfo ?? null);
+  const systemPrompt = buildSystemPrompt(options.projectInfo ?? null, options.workspaceProfile ?? 'development');
 
   const agent = new ToolLoopAgent({
     model: provider.chatModel(options.model) as any,

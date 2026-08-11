@@ -183,5 +183,17 @@ CREATE TABLE IF NOT EXISTS orchestrator_tasks (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS word_workspaces (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_word_workspaces_user_id ON word_workspaces(user_id);
+CREATE INDEX IF NOT EXISTS idx_word_workspaces_session_id ON word_workspaces(session_id);
 `;
 //# sourceMappingURL=schema.js.map

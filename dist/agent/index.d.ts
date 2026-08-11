@@ -24,6 +24,7 @@ export interface CreateAgentOptions {
     approvalManager?: ApprovalManager;
     userId?: string;
     conversationContext?: Array<ModelMessage>;
+    workspaceProfile?: 'development' | 'word';
 }
 export declare function createAgent(options: CreateAgentOptions): {
     agent: ToolLoopAgent<never, Record<string, any>, never>;

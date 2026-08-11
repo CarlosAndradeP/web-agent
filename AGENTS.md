@@ -72,7 +72,7 @@ Backend scripts delegate to frontend via `cd frontend && npm run ...`. No worksp
 - **Repository class pattern:** Each DB table has a repository class with typed methods, instantiated with `db` instance. Types imported from `types/index.ts`, not redefined
 - **Agent tool factory pattern:** Each tool is `createXTool(workspaceDir)` returning `{ description, parameters, execute }` — workspace-scoped
 - **Approval wrapping:** `buildToolSet()` can wrap any tool with `ApprovalManager` based on `approvalMode` (`none`/`all`/`custom`)
-- **Config with Docker rewrite:** `src/config.ts` auto-rewrites API URLs to `host.docker.internal` when running in Docker
+- **API URL configuration:** `API_BASE_URL` is used exactly as configured, including in Docker, and overrides the SQLite API URL setting when defined
 - **Auth-aware fetch:** `authFetch()` in `AuthContext` wraps fetch with Authorization header. Registered with `api.ts` via `setAuthFetch()` on mount. No global `window.fetch` patching
 - **Socket.IO singleton:** One connection managed by `AuthContext`. All hooks read via `getSocket()`. Never call `io()` outside `lib/socket.ts`
 - **Multi-turn conversation:** Agent receives full conversation history as `messages: ModelMessage[]` (not just the last prompt). Context includes prior compaction summary as a `system` role message. Falls back to `prompt: string` if no context exists
@@ -94,7 +94,7 @@ Backend scripts delegate to frontend via `cd frontend && npm run ...`. No worksp
 
 ## Environment Configuration
 
-See `.env.example`. Key variables: `API_BASE_URL` (LLM provider), `API_KEY`, `PORT` (default 89), `WORKSPACE_BASE_DIR`, `DATA_DIR`, `MAX_STEPS` (default 100), `DEFAULT_MODEL`, `AGENT_TYPE` (main/sub/none), `DOCKER_CONTAINER`, `ACCESS_TOKEN_SECRET` / `REFRESH_TOKEN_SECRET` (recommended, separate; legacy `JWT_SECRET` maps to both), `ADMIN_PASSWORD`, `INITIAL_CREDITS` (default 100), `PUBLIC_BASE_URL`. Docker auto-rewrites localhost IPs to `host.docker.internal`.
+See `.env.example`. Key variables: `API_BASE_URL` (LLM provider, used exactly as configured), `API_KEY`, `PORT` (default 89), `WORKSPACE_BASE_DIR`, `DATA_DIR`, `MAX_STEPS` (default 100), `DEFAULT_MODEL`, `AGENT_TYPE` (main/sub/none), `DOCKER_CONTAINER`, `ACCESS_TOKEN_SECRET` / `REFRESH_TOKEN_SECRET` (recommended, separate; legacy `JWT_SECRET` maps to both), `ADMIN_PASSWORD`, `INITIAL_CREDITS` (default 100), `PUBLIC_BASE_URL`.
 
 **Required in production** (`NODE_ENV=production`): `JWT_SECRET` (or both `ACCESS_TOKEN_SECRET` + `REFRESH_TOKEN_SECRET`) and `ADMIN_PASSWORD` must be set — the server refuses to start without them. In development, fallback defaults are used with a warning.
 

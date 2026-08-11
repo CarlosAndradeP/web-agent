@@ -653,7 +653,7 @@ for (const p of allProjects) {
 
 | Variável | Default | Descrição |
 |----------|---------|-----------|
-| `API_BASE_URL` | `http://192.168.3.5:11431/v1` | URL base da API LLM |
+| `API_BASE_URL` | `http://192.168.3.5:11431/v1` | URL base da API LLM, usada exatamente como configurada e prioritária sobre o valor salvo no SQLite quando definida |
 | `API_KEY` | — | Chave de API |
 | `PORT` | `89` | Porta do servidor |
 | `WORKSPACE_DIR` | `./workspace` | Diretório workspace (legacy) |
@@ -666,7 +666,7 @@ for (const p of allProjects) {
 | `ADMIN_PASSWORD` | `admin123` | Senha do admin bootstrap |
 | `INITIAL_CREDITS` | `100` | Créditos para novos usuários |
 | `PUBLIC_BASE_URL` | — | URL base pública (ex: `http://myserver.com`) — usada para gerar URLs de projetos no prompt do agente |
-| `DOCKER_CONTAINER` | — | Flag para URL rewriting em Docker |
+| `DOCKER_CONTAINER` | — | Flag que indica execução em Docker; não altera `API_BASE_URL` |
 
 ---
 

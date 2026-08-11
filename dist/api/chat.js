@@ -4,6 +4,7 @@ import { ConfigRepository } from '../db/repositories/config.js';
 import { SessionsRepository } from '../db/repositories/sessions.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
+import { WordWorkspacesRepository } from '../db/repositories/word-workspaces.js';
 import { resolveModels } from '../services/model-resolver.js';
 import { config } from '../config.js';
 import { mkdirSync } from 'node:fs';
@@ -26,6 +27,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
     const sessionsRepo = new SessionsRepository(db);
     const usersRepo = new UsersRepository(db);
     const projectsRepo = new ProjectsRepository(db);
+    const wordWorkspacesRepo = new WordWorkspacesRepository(db);
     // POST /compact — Compress conversation context for a session
     router.post('/compact', async (req, res) => {
         const { sessionId } = req.body;
@@ -122,10 +124,19 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
             return;
         }
         let projectInfo;
+        let workspaceProfile = 'development';
         if (effectiveSessionId) {
             try {
+                const wordWorkspace = wordWorkspacesRepo.findBySessionId(effectiveSessionId);
+                if (wordWorkspace && wordWorkspace.userId === userId) {
+                    const wordDir = resolveUserWorkspacePath(username, 'Word', { allowRoot: true });
+                    mkdirSync(wordDir, { recursive: true });
+                    workspaceDir = wordDir;
+                    workspaceProfile = 'word';
+                    log.info('Using dedicated Word workspace directory', { sessionId: effectiveSessionId, workspaceDir });
+                }
                 const projectRow = db.prepare('SELECT * FROM projects WHERE session_id = ?').get(effectiveSessionId);
-                if (projectRow && projectRow.folder_path) {
+                if (workspaceProfile !== 'word' && projectRow && projectRow.folder_path) {
                     const projectDir = resolveUserWorkspacePath(username, projectRow.folder_path, { allowRoot: true });
                     mkdirSync(projectDir, { recursive: true });
                     workspaceDir = projectDir;
@@ -200,7 +211,7 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         const conversationContext = compactionService.getConversationContext(effectiveSessionId);
         const description = messages[messages.length - 1].content;
         log.info('Creating task for chat', { selectedModel, descriptionLength: description.length, contextLength: conversationContext.length });
-        const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo, conversationContext);
+        const task = taskManager.createTask(effectiveSessionId, description, selectedModel, maxSteps, userId, workspaceDir, projectInfo, conversationContext, workspaceProfile);
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');

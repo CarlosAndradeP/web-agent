@@ -1,6 +1,4 @@
 import 'dotenv/config';
-declare const IS_DOCKER: boolean;
-declare function rewriteUrlForDocker(url: string): string;
 export declare const config: {
     port: number;
     apiBaseUrl: string;
@@ -25,6 +23,9 @@ export declare const config: {
     mercadoPagoWebhookSecret: string;
     pixCreditPriceBrl: number;
     dailyBonusCredits: number;
+    onlyofficePublicUrl: string;
+    onlyofficeInternalUrl: string;
+    onlyofficeStorageUrl: string;
+    onlyofficeJwtSecret: string;
 };
-export { rewriteUrlForDocker, IS_DOCKER };
 //# sourceMappingURL=config.d.ts.map

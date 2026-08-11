@@ -1,4 +1,4 @@
-import { config as envConfig, rewriteUrlForDocker } from '../../config.js';
+import { config as envConfig } from '../../config.js';
 const DEFAULTS = {
     default_model: envConfig.defaultModel,
     max_steps: String(envConfig.maxSteps),
@@ -19,14 +19,16 @@ export class ConfigRepository {
         this.db = db;
     }
     get(key) {
+        // An explicitly supplied deployment URL is authoritative. This prevents a
+        // stale value saved in SQLite from overriding API_BASE_URL after a deploy.
+        if (key === 'api_base_url' && process.env.API_BASE_URL) {
+            return envConfig.apiBaseUrl;
+        }
         const row = this.db.prepare('SELECT value FROM config WHERE key = ?').get(key);
         let value = row?.value ?? DEFAULTS[key];
         if (key === 'default_model' && value && LEGACY_MODEL_MAP[value]) {
             value = LEGACY_MODEL_MAP[value];
             this.set(key, value);
-        }
-        if (key === 'api_base_url' && value) {
-            value = rewriteUrlForDocker(value);
         }
         return value;
     }

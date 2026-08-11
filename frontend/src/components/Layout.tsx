@@ -7,6 +7,7 @@ import AdminPanel from './AdminPanel';
 import UserPanel from './UserPanel';
 import Header from './Header';
 import AutonomousPanel from './AutonomousPanel';
+import WordWorkspace from './WordWorkspace';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -18,7 +19,7 @@ import { useResizable } from '../hooks/useResizable';
 import { api } from '../lib/api';
 import type { Project } from '../types';
 
-type Tab = 'chat' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
+type Tab = 'chat' | 'word' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
@@ -181,7 +182,7 @@ export default function Layout() {
           onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
           menuOpen={mobileMenuOpen}
           isRunning={isChatStreaming}
-          sessionName={activeProject?.name}
+          sessionName={activeTab === 'word' ? 'Word' : activeProject?.name}
         />
 
         <main className="min-h-0 flex-1 overflow-hidden" aria-label="Conteúdo principal">
@@ -201,6 +202,9 @@ export default function Layout() {
           </div>
           <div className={activeTab === 'autonomous' ? 'h-full' : 'h-full hidden'}>
             <AutonomousPanel sessionId={effectiveSessionId} onCreditsRequired={openCreditsPanel} />
+          </div>
+          <div className={activeTab === 'word' ? 'h-full' : 'h-full hidden'}>
+            <WordWorkspace onStreamingChange={setIsChatStreaming} onCreditsRequired={openCreditsPanel} />
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">

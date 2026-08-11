@@ -19,12 +19,13 @@ Multi-user web development platform with an autonomous AI agent. Each user gets 
 
 ```bash
 cp .env.example .env
-# Edit .env — MUST set: API_BASE_URL, API_KEY, JWT_SECRET, ADMIN_PASSWORD
+# Edit .env — MUST set: API_BASE_URL, API_KEY, JWT_SECRET, ADMIN_PASSWORD,
+# and ONLYOFFICE_JWT_SECRET
 docker compose up -d --build
 # Access http://localhost:89
 ```
 
-> **Security:** `JWT_SECRET` and `ADMIN_PASSWORD` are required in production. The server refuses to start without them.
+> **Security:** `JWT_SECRET`, `ADMIN_PASSWORD`, and `ONLYOFFICE_JWT_SECRET` are required in production. The server refuses to start without them.
 
 ### Local Development
 
@@ -74,6 +75,20 @@ npm run dev:frontend
 - Port recycling pool (9000–65535) — ports released on stop/unmount
 - Publish directly from FileManager
 - Projects with mount failures are marked as `error`
+
+### Word workspace
+- Dedicated `Word` navigation entry directly below Chat
+- Per-user storage at `workspace/<username>/Word/Documentos` and `workspace/<username>/Word/Modelos`
+- First-run AI model selection with a dedicated document-agent session
+- Full browser editing through the self-hosted ONLYOFFICE Docs Community service
+- Multi-architecture ONLYOFFICE 9.4 image pinned for reproducible AMD64/ARM64 deployments
+- Create blank DOCX files, upload existing documents, add reusable templates, download, and delete
+- JWT-signed editor configuration, short-lived storage links, and authenticated save callbacks
+- Production agent image includes python-docx, docxtpl, lxml, and Pillow; ONLYOFFICE provides document rendering, visual review, and export
+
+The default browser URL for the editor is `http://localhost:8082`. When users access Web Agent from another machine, set `ONLYOFFICE_PUBLIC_URL` to the public HTTPS URL that exposes the document server.
+
+The Docker Compose stack starts ONLYOFFICE Docs together with Web Agent. The URLs remain configurable so production installations can expose the editor through their own HTTPS domain or move it to another host when desired.
 
 ### FileManager
 - Explorer-style navigation with clickable breadcrumbs
@@ -140,7 +155,7 @@ npm run dev:frontend
 
 | Variable | Default | Description |
 |---|---|---|
-| `API_BASE_URL` | `http://192.168.3.5:11431/v1` (rewritten to `host.docker.internal` in Docker) | LLM provider API URL (OpenAI-compatible) |
+| `API_BASE_URL` | `http://192.168.3.5:11431/v1` | LLM provider API URL (OpenAI-compatible), used exactly as configured and authoritative over the SQLite setting when defined |
 | `API_KEY` | — | LLM API key |
 | `PORT` | `89` | Server port |
 | `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory (each user gets `workspace/<username>/`) |

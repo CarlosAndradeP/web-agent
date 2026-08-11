@@ -28,6 +28,7 @@ export class TaskManager {
   private taskProjectInfo = new Map<string, ProjectInfo>();
   private taskUserIds = new Map<string, string>();
   private taskConversationContext = new Map<string, Array<ModelMessage>>();
+  private taskWorkspaceProfiles = new Map<string, 'development' | 'word'>();
 
   constructor(private db: Database.Database, creditManager: CreditManager, approvalManager?: ApprovalManager) {
     this.tasksRepo = new TasksRepository(db);
@@ -60,7 +61,7 @@ export class TaskManager {
     log.info('Socket.IO instance set');
   }
 
-  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo, conversationContext?: Array<ModelMessage>): Task {
+  createTask(sessionId: string, description: string, model: string | null, maxSteps?: number, userId?: string, workspaceDir?: string, projectInfo?: ProjectInfo, conversationContext?: Array<ModelMessage>, workspaceProfile: 'development' | 'word' = 'development'): Task {
     log.info('Creating task', { sessionId, description: description.slice(0, 100), model, maxSteps, userId, contextLength: conversationContext?.length });
     const task = this.tasksRepo.create(sessionId, description, model, maxSteps);
     if (userId) {
@@ -77,6 +78,7 @@ export class TaskManager {
     if (conversationContext && conversationContext.length > 0) {
       this.taskConversationContext.set(task.id, conversationContext);
     }
+    this.taskWorkspaceProfiles.set(task.id, workspaceProfile);
     if (this.io) {
       const room = userId ? `user:${userId}` : undefined;
       const emitter = room ? this.io.to(room) : this.io;
@@ -100,6 +102,7 @@ export class TaskManager {
     const userId = task.userId;
     const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
     const conversationContext = this.taskConversationContext.get(taskId) ?? undefined;
+    const workspaceProfile = this.taskWorkspaceProfiles.get(taskId) ?? 'development';
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -122,6 +125,7 @@ export class TaskManager {
         approvalManager: this.approvalManager ?? undefined,
         userId,
         conversationContext,
+        workspaceProfile,
       });
 
       const self = this;
@@ -161,6 +165,7 @@ export class TaskManager {
       this.taskProjectInfo.delete(taskId);
       this.taskUserIds.delete(taskId);
       this.taskConversationContext.delete(taskId);
+      this.taskWorkspaceProfiles.delete(taskId);
     }
   }
 
@@ -178,6 +183,7 @@ export class TaskManager {
     const userId = task.userId;
     const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
     const conversationContext = this.taskConversationContext.get(taskId) ?? undefined;
+    const workspaceProfile = this.taskWorkspaceProfiles.get(taskId) ?? 'development';
 
     const abortController = new AbortController();
     this.activeControllers.set(taskId, abortController);
@@ -199,6 +205,7 @@ export class TaskManager {
       approvalManager: this.approvalManager ?? undefined,
       userId,
       conversationContext,
+      workspaceProfile,
     });
 
     log.info('Agent created, calling stream()...', { taskId, model });
@@ -231,6 +238,7 @@ export class TaskManager {
       const taskProjectInfo = this.taskProjectInfo;
       const taskUserIds = this.taskUserIds;
       const taskConversationContext = this.taskConversationContext;
+      const taskWorkspaceProfiles = this.taskWorkspaceProfiles;
       const insertStep = this.insertStep.bind(this);
       const emitToTaskUser = this.emitToTaskUser.bind(this);
 
@@ -328,6 +336,7 @@ export class TaskManager {
           taskProjectInfo.delete(taskId);
           taskUserIds.delete(taskId);
           taskConversationContext.delete(taskId);
+          taskWorkspaceProfiles.delete(taskId);
         }
       }
 
@@ -337,6 +346,7 @@ export class TaskManager {
       this.taskProjectInfo.delete(taskId);
       this.taskUserIds.delete(taskId);
       this.taskConversationContext.delete(taskId);
+      this.taskWorkspaceProfiles.delete(taskId);
       this.tasksRepo.updateStatus(taskId, 'failed', null, err.message);
       this.emitToTaskUser(taskId, 'task:failed', { taskId, error: err.message });
       log.error('Failed to create agent stream', { taskId, error: err.message, stack: err.stack });
