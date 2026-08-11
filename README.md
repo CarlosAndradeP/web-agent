@@ -88,6 +88,8 @@ npm run dev:frontend
 
 The default browser URL for the editor is `http://localhost:8082`. When users access Web Agent from another machine, set `ONLYOFFICE_PUBLIC_URL` to the public HTTPS URL that exposes the document server.
 
+The Docker Compose stack starts ONLYOFFICE Docs together with Web Agent. The URLs remain configurable so production installations can expose the editor through their own HTTPS domain or move it to another host when desired.
+
 ### FileManager
 - Explorer-style navigation with clickable breadcrumbs
 - Double-click folder to navigate into

@@ -23,8 +23,8 @@ services:
       - AGENT_COMMAND_UID=33
       - AGENT_COMMAND_GID=33
       - ONLYOFFICE_PUBLIC_URL=${ONLYOFFICE_PUBLIC_URL:-http://localhost:8082}
-      - ONLYOFFICE_INTERNAL_URL=http://onlyoffice-documentserver
-      - ONLYOFFICE_STORAGE_URL=http://web-agent:89
+      - ONLYOFFICE_INTERNAL_URL=${ONLYOFFICE_INTERNAL_URL:-http://onlyoffice-documentserver}
+      - ONLYOFFICE_STORAGE_URL=${ONLYOFFICE_STORAGE_URL:-http://web-agent:89}
       - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET must be set in .env}
     extra_hosts:
       - "host.docker.internal:host-gateway"
