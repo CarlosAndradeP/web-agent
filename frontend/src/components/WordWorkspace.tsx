@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Download, FilePlus2, FileText, FolderOpen, LayoutTemplate, Loader2, MessageSquareText, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
+import { Bot, Download, FilePlus2, FileText, FolderOpen, LayoutTemplate, Loader2, Maximize2, MessageSquareText, Minimize2, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
 import ChatPanel from './ChatPanel';
 import OnlyOfficeEditor from './OnlyOfficeEditor';
 import { Button } from './ui/button';
@@ -28,6 +28,7 @@ export default function WordWorkspace({ onStreamingChange, onCreditsRequired }: 
   const [newName, setNewName] = useState('Novo documento.docx');
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [editorMaximized, setEditorMaximized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +59,22 @@ export default function WordWorkspace({ onStreamingChange, onCreditsRequired }: 
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!editorMaximized) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const restoreEditor = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setEditorMaximized(false);
+    };
+
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', restoreEditor);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', restoreEditor);
+    };
+  }, [editorMaximized]);
 
   const runAction = useCallback(async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -173,6 +190,11 @@ export default function WordWorkspace({ onStreamingChange, onCreditsRequired }: 
           </div>
           <Button variant="ghost" size="icon" onClick={() => documentUploadRef.current?.click()} className="h-8 w-8 md:hidden" aria-label="Enviar documento"><Upload className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="icon" onClick={() => templateUploadRef.current?.click()} className="h-8 w-8 md:hidden" aria-label="Adicionar modelo"><LayoutTemplate className="h-3.5 w-3.5" /></Button>
+          {activeDocument && (
+            <Button variant="ghost" size="icon" onClick={() => setEditorMaximized(true)} className="h-8 w-8" aria-label="Maximizar editor" title="Maximizar editor">
+              <Maximize2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" onClick={() => refresh()} disabled={busy} className="h-8 w-8" aria-label="Atualizar documentos"><RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} /></Button>
           <Button onClick={() => setShowCreate(true)} size="sm" className="h-8 rounded-lg text-xs"><Plus className="mr-1 h-3.5 w-3.5" />Novo</Button>
         </div>
@@ -204,9 +226,27 @@ export default function WordWorkspace({ onStreamingChange, onCreditsRequired }: 
           </div>
         </aside>
 
-        <section className={cn('min-h-0 bg-zinc-950', mobilePane === 'agent' && 'hidden xl:block')}>
+        <section className={cn(
+          'relative min-h-0 bg-zinc-950',
+          mobilePane === 'agent' && !editorMaximized && 'hidden xl:block',
+          editorMaximized && 'fixed inset-0 z-[100] h-dvh w-screen',
+        )}>
           {activeDocument ? (
-            <OnlyOfficeEditor key={activeDocument} path={activeDocument} onSaved={handleEditorSaved} />
+            <>
+              <OnlyOfficeEditor key={activeDocument} path={activeDocument} onSaved={handleEditorSaved} />
+              {editorMaximized && (
+                <button
+                  type="button"
+                  onClick={() => setEditorMaximized(false)}
+                  className="absolute right-3 top-3 z-[110] flex h-9 items-center gap-2 rounded-lg border border-zinc-600/80 bg-zinc-900/95 px-3 text-xs font-medium text-zinc-100 shadow-xl backdrop-blur hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  aria-label="Restaurar editor"
+                  title="Restaurar editor (Esc)"
+                >
+                  <Minimize2 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Restaurar</span>
+                </button>
+              )}
+            </>
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center">
               <div><FilePlus2 className="mx-auto h-10 w-10 text-zinc-800" /><h3 className="mt-3 text-sm font-medium text-zinc-300">Crie ou envie um documento</h3><p className="mt-1 text-xs text-zinc-600">O editor completo aparecerá aqui.</p><Button onClick={() => setShowCreate(true)} size="sm" className="mt-4">Novo documento</Button></div>
