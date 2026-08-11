@@ -228,25 +228,35 @@ export default function WordWorkspace({ onStreamingChange, onCreditsRequired }: 
         </aside>
 
         <section className={cn(
-          'relative min-h-0 bg-zinc-950',
+          'relative flex min-h-0 flex-col bg-zinc-950',
           mobilePane === 'agent' && !editorMaximized && 'hidden xl:block',
           editorMaximized && 'fixed inset-0 z-[100] h-dvh w-screen',
         )}>
           {activeDocument ? (
             <>
-              <OnlyOfficeEditor key={activeDocument} path={activeDocument} onSaved={handleEditorSaved} />
-              {editorMaximized && (
+              <div className={cn(
+                'h-10 shrink-0 items-center justify-between border-b border-zinc-700 bg-zinc-900 px-3',
+                editorMaximized ? 'flex' : 'hidden',
+              )}>
+                <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-300">
+                  <FileText className="h-4 w-4 shrink-0 text-blue-400" />
+                  <span className="truncate">{activeDocument.split('/').pop()}</span>
+                  <span className="hidden text-zinc-600 sm:inline">Modo maximizado</span>
+                </div>
                 <button
                   type="button"
                   onClick={() => setEditorMaximized(false)}
-                  className="absolute right-3 top-3 z-[110] flex h-9 items-center gap-2 rounded-lg border border-zinc-600/80 bg-zinc-900/95 px-3 text-xs font-medium text-zinc-100 shadow-xl backdrop-blur hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-zinc-600 bg-zinc-800 px-3 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   aria-label="Restaurar editor"
                   title="Restaurar editor (Esc)"
                 >
                   <Minimize2 className="h-4 w-4" />
-                  <span className="hidden sm:inline">Restaurar</span>
+                  <span>Restaurar</span>
                 </button>
-              )}
+              </div>
+              <div className="min-h-0 flex-1">
+                <OnlyOfficeEditor key={activeDocument} path={activeDocument} onSaved={handleEditorSaved} />
+              </div>
             </>
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center">
