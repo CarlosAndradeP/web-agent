@@ -129,6 +129,30 @@ function callbackJwtIsValid(req: Request): boolean {
   }
 }
 
+function resolveOnlyOfficeDownloadUrl(rawUrl: string): URL {
+  const downloadUrl = new URL(rawUrl);
+  const internalUrl = new URL(config.onlyofficeInternalUrl);
+  const publicUrl = new URL(config.onlyofficePublicUrl);
+
+  if (!['http:', 'https:'].includes(downloadUrl.protocol) || downloadUrl.username || downloadUrl.password) {
+    throw new Error('Invalid ONLYOFFICE download URL');
+  }
+
+  if (downloadUrl.origin === internalUrl.origin) return downloadUrl;
+  // The frontend upgrades HTTP to HTTPS when Web Agent itself is served over
+  // HTTPS, so compare the configured public authority independently of that
+  // browser-only protocol adjustment.
+  if (downloadUrl.host !== publicUrl.host) {
+    throw new Error(`Unexpected ONLYOFFICE download origin: ${downloadUrl.origin}`);
+  }
+
+  // Document Server builds callback download URLs from the browser-facing Host
+  // header. Inside Docker that public address may be unreachable (and differs
+  // from ONLYOFFICE_INTERNAL_URL), so keep the signed cache path but fetch it
+  // through the trusted internal service address.
+  return new URL(`${downloadUrl.pathname}${downloadUrl.search}`, internalUrl.origin);
+}
+
 export function createWordPublicRouter(db: Database.Database) {
   const router = Router();
 
@@ -158,9 +182,7 @@ export function createWordPublicRouter(db: Database.Database) {
 
       const statusCode = Number(req.body?.status);
       if ((statusCode === 2 || statusCode === 6) && typeof req.body?.url === 'string') {
-        const downloadUrl = new URL(req.body.url);
-        const allowedOrigin = new URL(config.onlyofficeInternalUrl).origin;
-        if (downloadUrl.origin !== allowedOrigin) throw new Error('Unexpected ONLYOFFICE download origin');
+        const downloadUrl = resolveOnlyOfficeDownloadUrl(req.body.url);
 
         const response = await fetch(downloadUrl, { signal: AbortSignal.timeout(60_000), redirect: 'error' });
         if (!response.ok) throw new Error(`ONLYOFFICE download failed with ${response.status}`);
