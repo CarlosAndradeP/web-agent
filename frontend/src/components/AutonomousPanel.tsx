@@ -17,14 +17,14 @@ interface Toast {
 }
 
 export default function AutonomousPanel({ sessionId, onCreditsRequired }: { sessionId: string; onCreditsRequired?: () => void }) {
-  const { status, steps, tasks, logs, isLoading, start, stop, pause, resume, uploadMd, refresh } = useOrchestrator(sessionId);
+  const { status, steps, tasks, logs, isLoading, error, start, stop, pause, resume, uploadMd, refresh } = useOrchestrator(sessionId);
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('plan');
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
   const addToast = (type: Toast['type'], message: string) => {
     const id = Date.now() + Math.random();
@@ -67,8 +67,15 @@ export default function AutonomousPanel({ sessionId, onCreditsRequired }: { sess
   const runningTaskCount = tasks.filter(t => t.status === 'running').length;
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950">
+    <div className="relative flex flex-col h-full bg-zinc-950">
       <OrchestratorHeader status={status} isLoading={isLoading} />
+
+      {error && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-red-500/20 bg-red-500/10 px-4 py-2 text-xs text-red-300">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate" title={error}>{error}</span>
+        </div>
+      )}
 
       <div className="flex items-center gap-1 px-3 pt-2 border-b border-zinc-800/60 shrink-0">
         <button

@@ -268,7 +268,7 @@ export default function WordWorkspace({ onStreamingChange, onCreditsRequired }: 
         <aside className={cn('min-h-0 border-l border-zinc-800 bg-zinc-950 xl:block', mobilePane === 'editor' ? 'hidden xl:block' : 'block')}>
           <div className="flex h-10 items-center gap-2 border-b border-zinc-800 px-3 text-xs font-medium text-zinc-300"><MessageSquareText className="h-3.5 w-3.5 text-blue-400" />Agente de documentos</div>
           <div className="h-[calc(100%-2.5rem)] min-h-0">
-            <ChatPanel sessionId={status.workspace!.sessionId} basePath="Word/Documentos" workspaceRootPath="Word" initialModel={status.workspace!.model} onModelChange={handleModelChange} onStreamingChange={onStreamingChange} onCreditsRequired={onCreditsRequired} />
+            <ChatPanel sessionId={status.workspace!.sessionId} basePath="Word/Documentos" workspaceRootPath="Word" initialModel={status.workspace!.model} onModelChange={handleModelChange} onStreamingChange={onStreamingChange} onCreditsRequired={onCreditsRequired} workspaceProfile="word" />
           </div>
         </aside>
       </div>

@@ -3,6 +3,7 @@ import { createProvider } from '../../agent/provider.js';
 import { createReadFileTool } from '../../agent/tools/read-file.js';
 import { createListFilesTool } from '../../agent/tools/list-files.js';
 import { createSearchFilesTool } from '../../agent/tools/search-files.js';
+import { createRunCommandTool } from '../../agent/tools/run-command.js';
 import { buildAuxiliarPrompt } from '../prompts/auxiliar-prompt.js';
 
 const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
@@ -15,6 +16,7 @@ export function createAuxiliarAgent(workspaceDir: string, apiBaseUrl: string, ap
     readFile: createReadFileTool(workspaceDir),
     listFiles: createListFilesTool(workspaceDir),
     searchFiles: createSearchFilesTool(workspaceDir),
+    runCommand: createRunCommandTool(workspaceDir),
   };
 
   const agent = new ToolLoopAgent({

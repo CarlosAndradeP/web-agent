@@ -297,7 +297,7 @@ export const api = {
       }),
   },
   orchestrator: {
-    status: () => fetchJSON<OrchestratorStatusInfo>(`${BASE}/orchestrator/status`),
+    status: (sessionId?: string) => fetchJSON<OrchestratorStatusInfo>(`${BASE}/orchestrator/status${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`),
     sessionStatus: (sessionId: string) =>
       fetchJSON<{ session: OrchestratorSessionInfo; isRunning: boolean }>(`${BASE}/orchestrator/${sessionId}/status`),
     start: (data: { sessionId?: string; objective: string; mdFiles?: string[] }) =>
@@ -305,6 +305,22 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    prepareMd: async (sessionId: string | undefined, files: File[]) => {
+      const formData = new FormData();
+      if (sessionId) formData.append('sessionId', sessionId);
+      for (const file of files) formData.append('files', file);
+      const fetcher = _authFetch ?? fetch;
+      const res = await fetcher(`${BASE}/orchestrator/prepare-md`, {
+        method: 'POST',
+        headers: getAuthHeadersNoContentType(),
+        body: formData,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || `Upload error: ${res.status}`);
+      }
+      return res.json() as Promise<{ uploaded: string[] }>;
+    },
     stop: (sessionId: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/orchestrator/${sessionId}/stop`, { method: 'POST' }),
     pause: (sessionId: string) =>
@@ -318,12 +334,13 @@ export const api = {
     uploadMd: async (sessionId: string, files: File[]) => {
       const formData = new FormData();
       for (const file of files) formData.append('files', file);
-      const res = await fetch(`${BASE}/orchestrator/${sessionId}/upload-md`, {
+      const fetcher = _authFetch ?? fetch;
+      const res = await fetcher(`${BASE}/orchestrator/${sessionId}/upload-md`, {
         method: 'POST',
         headers: getAuthHeadersNoContentType(),
         body: formData,
       });
-      if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+      if (!res.ok) throw await responseError(res);
       return res.json() as Promise<{ success: boolean; mdFiles: string[] }>;
     },
   },

@@ -52,6 +52,12 @@ export class OrchestratorHeartbeat {
       return;
     }
 
+    if (activeSessions.length > 0 && (!state.isRunning || !state.currentSessionId || !activeSessions.includes(state.currentSessionId))) {
+      log.warn('Reconciling global orchestrator state with active runners', { activeSessions, previousSessionId: state.currentSessionId });
+      this.stateRepo.setRunning(true, activeSessions[0]);
+      return;
+    }
+
     const lastHeartbeat = new Date(state.lastHeartbeat).getTime();
     const now = Date.now();
     const elapsed = now - lastHeartbeat;
@@ -61,7 +67,7 @@ export class OrchestratorHeartbeat {
         elapsedMs: elapsed,
         activeSessions,
       });
-      this.manager.shutdownAll();
+      this.manager.shutdownAll(false);
       for (const sid of activeSessions) {
         this.sessionsRepo.updateStatus(sid, 'failed');
       }

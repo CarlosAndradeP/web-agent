@@ -23,10 +23,11 @@ AVAILABLE TOOLS:
 - readFile: Read file contents
 - listFiles: List workspace directory contents
 - searchFiles: Search for patterns in files
+- runCommand: Run non-destructive build, test, lint, or syntax-check commands
 
 CONSTRAINTS:
 - All file paths are relative to the workspace directory.
-- You are READ-ONLY. Never create or modify files.`;
+- You are READ-ONLY. Never create or modify source files, install packages, or start long-lived processes. Verification commands may create ordinary tool caches or build output.`;
 
 export function buildRevisorPrompt(projectType?: string, objective?: string): string {
   let prompt = REVISOR_SYSTEM_PROMPT;

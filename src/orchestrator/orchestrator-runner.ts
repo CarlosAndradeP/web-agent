@@ -26,6 +26,8 @@ const SUB_AGENT_TIMEOUT_MS = 900_000;
 const SUB_AGENT_STEP_TIMEOUT_MS = 180_000;
 const MAX_PARALLEL_TASKS = 1;
 const MAX_REPLAN_ATTEMPTS = 1;
+const MAX_SPEC_CONTEXT_CHARS = 100_000;
+const IGNORED_SCAN_DIRECTORIES = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', 'vendor', '.cache']);
 
 const FALLBACK_MODEL = 'openai/gpt-oss-120b';
 
@@ -74,6 +76,7 @@ export class OrchestratorRunner {
     if (this.running) throw new Error('Orchestrator is already running');
     const session = this.sessionsRepo.findById(sessionId);
     if (!session) throw new Error('Orchestrator session not found');
+    this.ensureCreditsAvailable(session.userId);
 
     this.running = true;
     this.currentSessionId = sessionId;
@@ -98,10 +101,11 @@ export class OrchestratorRunner {
     if (this.running) throw new Error('Orchestrator is already running');
     const session = this.sessionsRepo.findById(sessionId);
     if (!session) throw new Error('Orchestrator session not found');
+    this.ensureCreditsAvailable(session.userId);
     log.info('Resuming orchestrator', { sessionId });
     this.running = true;
     this.currentSessionId = sessionId;
-    this.totalStepsUsed = 0;
+    this.totalStepsUsed = session.totalStepsUsed;
     this.taskRetryCount.clear();
     this.replanCount.clear();
     this.appConfigCache = null;
@@ -109,6 +113,7 @@ export class OrchestratorRunner {
     this.sessionsRepo.updateStatus(sessionId, 'running');
     this.stateRepo.setRunning(true, sessionId);
     this.startHeartbeat();
+    this.emitEvent('orchestrator:status', { sessionId, status: 'running', progressPercent: session.progressPercent });
     this.runPhasedWorkflow(session).catch((err: any) => {
       log.error('Orchestrator loop failed on resume', { sessionId, error: err.message });
       this.handleFatalError(sessionId, err.message);
@@ -122,22 +127,21 @@ export class OrchestratorRunner {
     this.stopHeartbeat();
     this.abortController?.abort();
     this.sessionsRepo.updateStatus(sessionId, 'paused');
-    this.stateRepo.setRunning(false, null);
+    this.stateRepo.clearRunningSession(sessionId);
     this.emitEvent('orchestrator:status', { sessionId, status: 'paused', progressPercent: this.getCurrentProgress() });
   }
 
   stop(sessionId: string): void {
-    if (!this.running) return;
+    if (this.currentSessionId !== sessionId) return;
     log.info('Stopping orchestrator', { sessionId });
     this.running = false;
     this.stopHeartbeat();
     this.abortController?.abort();
-    if (this.currentSessionId) {
-      this.sessionsRepo.updateStatus(this.currentSessionId, 'idle');
-    }
-    this.stateRepo.setRunning(false, null);
-    this.emitEvent('orchestrator:status', { sessionId: this.currentSessionId, status: 'idle', progressPercent: this.getCurrentProgress() });
+    this.sessionsRepo.updateStatus(sessionId, 'idle');
+    this.stateRepo.clearRunningSession(sessionId);
+    this.emitEvent('orchestrator:status', { sessionId, status: 'idle', progressPercent: this.getCurrentProgress() });
     this.currentSessionId = null;
+    this.abortController = null;
   }
 
   shutdown(): void {
@@ -147,7 +151,7 @@ export class OrchestratorRunner {
     this.abortController?.abort();
     if (this.currentSessionId) {
       this.sessionsRepo.updateStatus(this.currentSessionId, 'paused');
-      this.stateRepo.setRunning(false, null);
+      this.stateRepo.clearRunningSession(this.currentSessionId);
     }
     this.currentSessionId = null;
   }
@@ -163,21 +167,24 @@ export class OrchestratorRunner {
 
       await this.executePendingTasks(session);
 
-      if (await this.verifyProject(session)) {
+      if (!this.running || this.abortController?.signal.aborted) return;
+
+      const verificationPassed = await this.verifyProject(session);
+      if (!this.running || this.abortController?.signal.aborted) return;
+
+      if (verificationPassed) {
         this.sessionsRepo.updateStatus(session.id, 'completed');
         this.sessionsRepo.updateProgress(session.id, 100, 'All tasks completed and verified');
-        this.stateRepo.setRunning(false, null);
         this.running = false;
         this.emitEvent('orchestrator:complete', { sessionId: session.id, status: 'completed' });
         this.emitEvent('orchestrator:progress', { sessionId: session.id, progressPercent: 100, currentStep: 'All tasks completed' });
+        this.stopHeartbeat();
+        this.stateRepo.clearRunningSession(session.id);
+        this.currentSessionId = null;
+        this.abortController = null;
         log.info('Orchestrator completed project', { sessionId: session.id });
       } else {
-        const pendingAfter = this.tasksRepo.findPending(session.id);
-        if (pendingAfter.length > 0) {
-          await this.executePendingTasks(session);
-        } else {
-          this.handleFatalError(session.id, 'Project verification failed after all tasks attempted');
-        }
+        this.handleFatalError(session.id, 'Project verification failed after all tasks attempted');
       }
     } catch (err: any) {
       if (this.abortController?.signal.aborted) {
@@ -200,9 +207,12 @@ export class OrchestratorRunner {
       try {
         const mdFilePaths = JSON.parse(session.mdFiles) as string[];
         for (const fp of mdFilePaths) {
+          if (mdContent.length >= MAX_SPEC_CONTEXT_CHARS) break;
           try {
             const content = await this.readFileSafe(workspaceDir, fp);
-            mdContent += `\n--- FILE: ${fp} ---\n${content}\n`;
+            const remaining = MAX_SPEC_CONTEXT_CHARS - mdContent.length;
+            mdContent += `\n--- FILE: ${fp} ---\n${content.slice(0, Math.max(0, remaining))}\n`;
+            if (content.length > remaining) log.warn('Specification context truncated', { path: fp, maxChars: MAX_SPEC_CONTEXT_CHARS });
           } catch (e: any) {
             log.warn('Could not read md file', { path: fp, error: e.message });
           }
@@ -220,6 +230,7 @@ export class OrchestratorRunner {
       architectureReport = archResult.text ?? '';
       log.info('Architect scan complete', { sessionId: session.id, reportLen: architectureReport.length });
     } catch (e: any) {
+      if (this.isCreditsError(e) || this.isStepLimitError(e)) throw e;
       log.warn('Architect pre-scan failed, proceeding without it', { error: e.message });
     }
 
@@ -238,7 +249,7 @@ export class OrchestratorRunner {
       if (t.acceptanceCriteria && t.acceptanceCriteria.length > 0) {
         enrichedDescription += `\n\nACCEPTANCE CRITERIA:\n${t.acceptanceCriteria.map((c, idx) => `${idx + 1}. ${c}`).join('\n')}`;
       }
-      this.tasksRepo.create(session.id, {
+      const createdTask = this.tasksRepo.create(session.id, {
         name: t.name,
         description: enrichedDescription,
         role: t.role ?? 'programador',
@@ -246,7 +257,7 @@ export class OrchestratorRunner {
         stepNumber: i + 1,
       });
 
-      this.emitTaskEvent(`plan-${i}`, session.id, 'pending', t.name, t.role ?? 'programador', enrichedDescription, dependsOnName);
+      this.emitTaskEvent(createdTask.id, session.id, 'pending', t.name, t.role ?? 'programador', enrichedDescription, dependsOnName);
     }
 
     this.sessionsRepo.updateProgress(session.id, 5, `Plan created: ${plan.length} tasks`);
@@ -289,15 +300,18 @@ Requirements:
       const provider = this.getOrCreateProvider(appConfig.apiBaseUrl, appConfig.apiKey, 'orchestrator');
       const model = provider.chatModel('z-ai/glm-5.2');
 
-      const result = await generateText({
-        model,
-        prompt,
-        maxOutputTokens: 16384,
-        abortSignal: this.abortController?.signal,
-      });
+      const result = await this.callWithRetry(() => generateText({
+          model,
+          prompt,
+          maxOutputTokens: 16384,
+          abortSignal: this.abortController?.signal,
+          timeout: { totalMs: SUB_AGENT_TIMEOUT_MS },
+        }), 'orchestrator-plan');
 
       planText = result.text;
+      this.deductCreditForStep(session.userId, 'z-ai/glm-5.2');
       this.totalStepsUsed += 1;
+      this.sessionsRepo.incrementStepsUsed(session.id, 1);
       this.updateStepResult(step.id, planText.slice(0, 5000), 'completed', null, 0);
       this.stateRepo.incrementSteps(1);
     } catch (err: any) {
@@ -440,7 +454,8 @@ Requirements:
   private updateProgress(session: OrchestratorSession): void {
     const all = this.tasksRepo.findBySession(session.id);
     const completed = all.filter(t => t.status === 'completed').length;
-    const progress = all.length > 0 ? Math.round((completed / all.length) * 90) : 0;
+    const superseded = all.filter(t => t.status === 'superseded').length;
+    const progress = all.length > 0 ? Math.round(((completed + superseded) / all.length) * 90) : 0;
     const failed = all.filter(t => t.status === 'failed').length;
     this.sessionsRepo.updateProgress(session.id, progress, `${completed}/${all.length} done, ${failed} failed`);
     this.emitEvent('orchestrator:progress', { sessionId: session.id, progressPercent: progress, currentStep: `${completed}/${all.length} tasks` });
@@ -451,6 +466,8 @@ Requirements:
     this.emitTaskEvent(task.id, session.id, 'running', task.name, task.role, task.description, task.dependsOn);
     this.sessionsRepo.updateProgress(session.id, this.getCurrentProgress(), `Running: ${task.name}`);
     const startTime = Date.now();
+    const attemptStep = this.recordStep(task.role, this.getModelForRole(task.role as OrchestratorRole), 'delegate', task.description.slice(0, 5000));
+    if (attemptStep) this.stepsRepo.updateResult(attemptStep.id, null, 'running', null, null);
 
     const retryCount = this.taskRetryCount.get(task.id) ?? 0;
     const context = this.buildTaskContext(session, task, retryCount);
@@ -464,21 +481,27 @@ Requirements:
         default: result = await this.callSubAgentWithContext(session, 'programador', context); break;
       }
 
-      this.deductCreditsForTask(session.userId, task.role, result);
+      if (this.abortController?.signal.aborted || !this.running) {
+        throw new Error('Aborted by orchestrator stop');
+      }
 
       if (result.success) {
         this.tasksRepo.updateResult(task.id, result.text, 'completed', null, JSON.stringify(result));
+        this.updateStepResult(attemptStep?.id ?? null, result.text.slice(0, 5000), 'completed', null, Date.now() - startTime);
+        this.stateRepo.incrementSteps(Math.max(1, result.stepsUsed));
         this.emitTaskEvent(task.id, session.id, 'completed', task.name, task.role);
         this.emitEvent('orchestrator:step', {
-          sessionId: session.id, stepNumber: task.stepNumber, role: task.role, model: this.getModelForRole(task.role as any),
+          sessionId: session.id, stepId: attemptStep?.id, stepNumber: attemptStep?.stepNumber ?? task.stepNumber, role: task.role, model: result.modelUsed,
           action: 'delegate', input: task.description.slice(0, 500), output: result.text.slice(0, 1000), status: 'completed', durationMs: Date.now() - startTime,
         });
       } else {
+        const resultError = result.errors.map(e => e.message).join('; ') || 'Unknown error';
+        this.updateStepResult(attemptStep?.id ?? null, result.text.slice(0, 5000), 'failed', resultError, Date.now() - startTime);
         if (retryCount < TASK_MAX_RETRIES) {
           this.taskRetryCount.set(task.id, retryCount + 1);
           log.warn('Task failed, will retry with error feedback', { taskId: task.id, retry: retryCount + 1 });
           this.tasksRepo.updateResult(task.id, result.text, 'pending',
-            `Failed (attempt ${retryCount + 1}): ${result.errors.map(e => e.message).join('; ') || 'Unknown error'}. Will retry with different approach.`, null);
+            `Failed (attempt ${retryCount + 1}): ${resultError}. Will retry with different approach.`, null);
           this.emitTaskEvent(task.id, session.id, 'pending', task.name, task.role, task.description, task.dependsOn, 'Will retry');
         } else {
           this.tasksRepo.updateResult(task.id, result.text, 'failed', `Failed after ${TASK_MAX_RETRIES} retries`, null);
@@ -489,6 +512,28 @@ Requirements:
         }
       }
     } catch (err: any) {
+      if (this.abortController?.signal.aborted || !this.running) {
+        this.updateStepResult(attemptStep?.id ?? null, null, 'failed', 'Execution interrupted', Date.now() - startTime);
+        this.tasksRepo.updateResult(task.id, '', 'pending', 'Execution interrupted; it can be resumed safely', null);
+        return;
+      }
+
+      const creditsExhausted = err.message?.includes('Credits exhausted') || err.message?.includes('Insufficient credits');
+      if (creditsExhausted) {
+        this.updateStepResult(attemptStep?.id ?? null, null, 'failed', err.message, Date.now() - startTime);
+        this.tasksRepo.updateResult(task.id, '', 'failed', err.message, null);
+        this.emitTaskEvent(task.id, session.id, 'failed', task.name, task.role, task.description, task.dependsOn, err.message);
+        throw err;
+      }
+
+      if (this.isStepLimitError(err)) {
+        this.updateStepResult(attemptStep?.id ?? null, null, 'failed', err.message, Date.now() - startTime);
+        this.tasksRepo.updateResult(task.id, '', 'failed', err.message, null);
+        this.handleFatalError(session.id, err.message);
+        return;
+      }
+
+      this.updateStepResult(attemptStep?.id ?? null, null, 'failed', err.message, Date.now() - startTime);
       if (retryCount < TASK_MAX_RETRIES) {
         this.taskRetryCount.set(task.id, retryCount + 1);
         this.tasksRepo.updateResult(task.id, '', 'pending', `Error: ${err.message} (will retry)`, null);
@@ -532,6 +577,15 @@ Requirements:
       retryHistory = `Previous attempt failed: ${task.errorMessage}`;
     }
 
+    let specificationFiles: string[] = [];
+    const latestSession = this.sessionsRepo.findById(session.id);
+    if (latestSession?.mdFiles) {
+      try {
+        const parsed = JSON.parse(latestSession.mdFiles);
+        if (Array.isArray(parsed)) specificationFiles = parsed.filter((item): item is string => typeof item === 'string');
+      } catch {}
+    }
+
     return {
       objective: session.objective,
       taskName: task.name,
@@ -541,6 +595,7 @@ Requirements:
       previousResults,
       currentFileState: '',
       retryHistory,
+      specificationFiles,
     };
   }
 
@@ -552,6 +607,10 @@ Requirements:
     parts.push(`=== OVERALL PLAN ===\n${context.planSummary}\n`);
 
     parts.push(`=== CURRENT TASK ===\nName: ${context.taskName}\nRole: ${context.role}\nDescription: ${context.taskDescription}\n`);
+
+    if (context.specificationFiles.length > 0) {
+      parts.push(`=== SPECIFICATION FILES ===\nRead these workspace files when they are relevant; they are authoritative project requirements:\n${context.specificationFiles.map(path => `- ${path}`).join('\n')}\n`);
+    }
 
     if (context.previousResults.length > 0) {
       parts.push(`=== CONTEXT FROM PREVIOUS TASKS ===`);
@@ -573,41 +632,63 @@ Requirements:
   // ====== ADAPTIVE REPLANNING ======
 
   private async attemptReplan(session: OrchestratorSession, failedTask: any): Promise<void> {
-    const replanAttempts = this.replanCount.get(failedTask.id) ?? 0;
-    if (replanAttempts >= MAX_REPLAN_ATTEMPTS) {
+    const alreadyReplanned = this.tasksRepo.findBySession(session.id).some(task => task.status === 'superseded');
+    const replanAttempts = this.replanCount.get(session.id) ?? 0;
+    if (alreadyReplanned || replanAttempts >= MAX_REPLAN_ATTEMPTS) {
       log.info('Replan limit reached for task, skipping', { taskId: failedTask.id });
       return;
     }
 
-    this.replanCount.set(failedTask.id, replanAttempts + 1);
+    this.replanCount.set(session.id, replanAttempts + 1);
     log.info('Attempting adaptive replan for failed task', { taskId: failedTask.id, taskName: failedTask.name });
 
     try {
+      const persistedFailure = this.tasksRepo.findById(failedTask.id);
       const archResult = await this.callSubAgent(session, 'arquiteto',
-        `Task "${failedTask.name}" has failed ${TASK_MAX_RETRIES} times.\nError: ${failedTask.errorMessage ?? 'Unknown'}\n\n` +
+        `Task "${failedTask.name}" has failed ${TASK_MAX_RETRIES} times.\nError: ${persistedFailure?.errorMessage ?? failedTask.errorMessage ?? 'Unknown'}\n\n` +
         `Analyze the current workspace and suggest 2-3 smaller, more specific replacement tasks that accomplish the same goal.\n` +
         `For each replacement task, provide:\n` +
         `- name: concise task name\n- description: what to do, with specific file targets\n- role: programador, auxiliar, or revisor`);
 
+      if (!archResult.success || !archResult.text.trim()) {
+        throw new Error(archResult.errors[0]?.message ?? 'Architect returned no recovery plan');
+      }
+
       const suggestions = this.parseReplanSuggestions(archResult.text);
       const maxStep = this.tasksRepo.findBySession(session.id).reduce((max: number, t: any) => Math.max(max, t.stepNumber ?? 0), 0);
+      let replacementDependency = failedTask.dependsOn;
+      let finalReplacementName = '';
       for (let i = 0; i < suggestions.length; i++) {
-        this.tasksRepo.create(session.id, {
-          name: suggestions[i].name,
+        const replacementName = `${failedTask.name} · recuperação ${i + 1}: ${suggestions[i].name}`;
+        const replacementTask = this.tasksRepo.create(session.id, {
+          name: replacementName,
           description: suggestions[i].description,
           role: suggestions[i].role ?? 'programador',
-          dependsOn: failedTask.dependsOn,
+          dependsOn: replacementDependency,
           stepNumber: maxStep + i + 1,
         });
-        this.emitTaskEvent(`replan-${maxStep + i + 1}`, session.id, 'pending', suggestions[i].name, suggestions[i].role ?? 'programador', suggestions[i].description, failedTask.dependsOn);
+        this.emitTaskEvent(replacementTask.id, session.id, 'pending', replacementName, suggestions[i].role ?? 'programador', suggestions[i].description, replacementDependency);
+        replacementDependency = replacementName;
+        finalReplacementName = replacementName;
       }
+      this.tasksRepo.replaceDependency(session.id, failedTask.name, finalReplacementName);
+      this.tasksRepo.updateResult(
+        failedTask.id,
+        persistedFailure?.output ?? '',
+        'superseded',
+        `Superseded by ${suggestions.length} recovery task(s)`,
+        persistedFailure?.resultJson ?? null,
+      );
+      this.emitTaskEvent(failedTask.id, session.id, 'superseded', failedTask.name, failedTask.role, failedTask.description, failedTask.dependsOn, 'Replaced by recovery tasks');
       log.info('Replacement tasks created', { count: suggestions.length, originalTask: failedTask.name });
+      this.emitEvent('orchestrator:plan', { sessionId: session.id, taskCount: this.tasksRepo.findBySession(session.id).length, replanned: true });
       this.emitEvent('orchestrator:step', {
         sessionId: session.id, role: 'orchestrator', action: 'fix',
         input: `Replan for failed: ${failedTask.name}`, output: `Created ${suggestions.length} replacement tasks`,
         status: 'completed',
       });
     } catch (err: any) {
+      if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
       log.warn('Replan attempt failed', { taskId: failedTask.id, error: err.message });
     }
   }
@@ -682,38 +763,44 @@ Requirements:
         let agentResult: any;
         const timeoutOpts = { totalMs: SUB_AGENT_TIMEOUT_MS, stepMs: SUB_AGENT_STEP_TIMEOUT_MS };
         const abortSignal = this.abortController?.signal;
+        const onStepFinish = async () => {
+          this.deductCreditForStep(session.userId, modelId);
+          this.totalStepsUsed += 1;
+          this.sessionsRepo.incrementStepsUsed(session.id, 1);
+          if (this.totalStepsUsed >= MAX_TOTAL_STEPS) throw new Error(`Maximum total steps reached (${MAX_TOTAL_STEPS})`);
+        };
 
         switch (role) {
           case 'arquiteto': {
             const agent = createArquitetoAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts }), `arquiteto:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `arquiteto:${modelId}`);
             break;
           }
           case 'auxiliar': {
             const agent = createAuxiliarAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts }), `auxiliar:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `auxiliar:${modelId}`);
             break;
           }
           case 'revisor': {
             const agent = createRevisorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts }), `revisor:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `revisor:${modelId}`);
             break;
           }
           default: {
             const agent = createProgramadorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts }), `programador:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `programador:${modelId}`);
             break;
           }
         }
 
-        text = this.extractTextFromResult(agentResult) || 'No output';
+        text = this.extractTextFromResult(agentResult);
         agentSteps = agentResult?.steps ?? [];
         stepsUsed = agentSteps.length;
-        this.totalStepsUsed += stepsUsed;
         log.info('Sub-agent completed', { role, modelId, stepsUsed, totalStepsUsed: this.totalStepsUsed, wasFallback: !isPrimary });
 
         return this.buildSubAgentResult(text, agentSteps, stepsUsed, shouldScan, workspaceDir, beforeFiles, modelId);
       } catch (err: any) {
+        if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
         const isRateLimit = this.isRateLimitError(err);
         const isLastModel = modelId === modelChain[modelChain.length - 1];
 
@@ -762,38 +849,44 @@ Requirements:
         let agentResult: any;
         const timeoutOpts = { totalMs: SUB_AGENT_TIMEOUT_MS, stepMs: SUB_AGENT_STEP_TIMEOUT_MS };
         const abortSignal = this.abortController?.signal;
+        const onStepFinish = async () => {
+          this.deductCreditForStep(session.userId, modelId);
+          this.totalStepsUsed += 1;
+          this.sessionsRepo.incrementStepsUsed(session.id, 1);
+          if (this.totalStepsUsed >= MAX_TOTAL_STEPS) throw new Error(`Maximum total steps reached (${MAX_TOTAL_STEPS})`);
+        };
 
         switch (role) {
           case 'arquiteto': {
             const agent = createArquitetoAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts }), `arquiteto:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `arquiteto:${modelId}`);
             break;
           }
           case 'auxiliar': {
             const agent = createAuxiliarAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts }), `auxiliar:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `auxiliar:${modelId}`);
             break;
           }
           case 'revisor': {
             const agent = createRevisorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts }), `revisor:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `revisor:${modelId}`);
             break;
           }
           default: {
             const agent = createProgramadorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
-            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts }), `programador:${modelId}`);
+            agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `programador:${modelId}`);
             break;
           }
         }
 
-        text = this.extractTextFromResult(agentResult) || 'No output';
+        text = this.extractTextFromResult(agentResult);
         agentSteps = agentResult?.steps ?? [];
         stepsUsed = agentSteps.length;
-        this.totalStepsUsed += stepsUsed;
         log.info('Sub-agent completed', { role, modelId, stepsUsed, wasFallback: !isPrimary });
 
         return this.buildSubAgentResult(text, agentSteps, stepsUsed, shouldScan, workspaceDir, beforeFiles, modelId);
       } catch (err: any) {
+        if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
         const isRateLimit = this.isRateLimitError(err);
         const isLastModel = modelId === modelChain[modelChain.length - 1];
 
@@ -848,14 +941,15 @@ Requirements:
         output: (typeof s.result === 'string' ? s.result : JSON.stringify(s.result ?? '')).slice(0, 500),
       }));
 
+    const hasConclusiveOutput = text.trim().length > 0;
     return {
       text: text.slice(0, 10000),
       filesCreated: created,
       filesModified: modified,
       commandsRun,
-      errors: [],
+      errors: hasConclusiveOutput ? [] : [{ message: 'Sub-agent returned no conclusive output', step: stepsUsed }],
       stepsUsed,
-      success: true,
+      success: hasConclusiveOutput,
       modelUsed,
     };
   }
@@ -873,6 +967,7 @@ Requirements:
       for (const entry of entries) {
         const relPath = subPath ? `${subPath}/${entry.name}` : entry.name;
         if (entry.isDirectory()) {
+          if (IGNORED_SCAN_DIRECTORIES.has(entry.name)) continue;
           const subFiles = await this.scanWorkspace(dir, relPath);
           for (const [p, info] of subFiles) files.set(p, info);
         } else {
@@ -1003,6 +1098,7 @@ Requirements:
         return await fn();
       } catch (err: any) {
         lastError = err;
+        if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
         const errorClassification = this.classifyError(err);
 
         if (errorClassification.type === 'permanent') {
@@ -1109,7 +1205,7 @@ Requirements:
     const tasks = this.tasksRepo.findBySession(session.id);
     const anyFailed = tasks.some(t => t.status === 'failed');
     if (anyFailed) return false;
-    const allCompleted = tasks.every(t => t.status === 'completed');
+    const allCompleted = tasks.length > 0 && tasks.every(t => t.status === 'completed' || t.status === 'superseded');
     if (!allCompleted) return false;
 
     try {
@@ -1123,6 +1219,9 @@ Requirements:
     }
 
     log.info('Running intelligent project verification', { sessionId: session.id });
+    const verificationStartedAt = Date.now();
+    const verificationStep = this.recordStep('revisor', this.getModelForRole('revisor'), 'review', `Final verification for: ${session.objective}`);
+    if (verificationStep) this.stepsRepo.updateResult(verificationStep.id, null, 'running', null, null);
     try {
       const verifyResult = await this.callSubAgent(session, 'revisor',
         `VERIFICATION TASK: Read all files in the workspace and verify the implementation is correct.
@@ -1141,23 +1240,33 @@ Reply with "PASS" if everything looks correct, or "FAIL: [reason]" if there are 
 Be thorough but fair — minor style issues are acceptable, but broken code is not.`);
 
       const verifyText = verifyResult.text ?? '';
-      if (!verifyText.trim()) {
+      if (!verifyResult.success || !verifyText.trim()) {
+        const reason = verifyResult.errors[0]?.message ?? 'Verifier returned no explicit verdict';
+        this.updateStepResult(verificationStep?.id ?? null, verifyText.slice(0, 5000), 'failed', reason, Date.now() - verificationStartedAt);
         log.warn('Project verification returned empty text, treating as failed (no positive confirmation)', { sessionId: session.id });
         return false;
       }
-      const upper = verifyText.toUpperCase();
-      const hasPass = upper.includes('PASS');
-      const hasFail = /\bFAIL\b/.test(upper);
-      if (hasPass && !hasFail) {
+      const hasExplicitPassVerdict = /^\s*PASS\b/i.test(verifyText);
+      if (hasExplicitPassVerdict) {
+        this.updateStepResult(verificationStep?.id ?? null, verifyText.slice(0, 5000), 'completed', null, Date.now() - verificationStartedAt);
+        this.stateRepo.incrementSteps(Math.max(1, verifyResult.stepsUsed));
+        this.emitEvent('orchestrator:step', {
+          sessionId: session.id, stepId: verificationStep?.id, stepNumber: verificationStep?.stepNumber,
+          role: 'revisor', model: verifyResult.modelUsed, action: 'review', input: 'Final project verification',
+          output: verifyText.slice(0, 1000), status: 'completed', durationMs: Date.now() - verificationStartedAt,
+        });
         log.info('Project verification PASSED', { sessionId: session.id });
         return true;
       } else {
         const failReason = verifyText.slice(0, 500);
+        this.updateStepResult(verificationStep?.id ?? null, verifyText.slice(0, 5000), 'failed', failReason, Date.now() - verificationStartedAt);
         log.warn('Project verification FAILED', { sessionId: session.id, reason: failReason });
         this.sessionsRepo.updateProgress(session.id, 95, `Verification issue: ${failReason}`);
         return false;
       }
     } catch (err: any) {
+      this.updateStepResult(verificationStep?.id ?? null, null, 'failed', err.message, Date.now() - verificationStartedAt);
+      if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
       log.warn('Verification call failed, treating as failed (no positive confirmation)', { error: err.message });
       return false;
     }
@@ -1214,38 +1323,48 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
   }
 
   private handleFatalError(sessionId: string, errorMessage: string): void {
+    if (this.currentSessionId !== sessionId) return;
+    const progress = this.getCurrentProgress();
     this.running = false;
+    this.stopHeartbeat();
     this.sessionsRepo.updateStatus(sessionId, 'failed');
-    this.sessionsRepo.updateProgress(sessionId, this.getCurrentProgress(), `Fatal error: ${errorMessage}`);
-    this.stateRepo.setRunning(false, null);
+    this.sessionsRepo.updateProgress(sessionId, progress, `Fatal error: ${errorMessage}`);
+    this.stateRepo.clearRunningSession(sessionId);
     this.emitEvent('orchestrator:complete', { sessionId, status: 'failed' });
     this.emitEvent('orchestrator:error', { sessionId, error: errorMessage, role: 'orchestrator' });
     this.currentSessionId = null;
+    this.abortController = null;
   }
 
   private getCurrentProgress(): number {
     if (!this.currentSessionId) return 0;
     const all = this.tasksRepo.findBySession(this.currentSessionId);
     if (all.length === 0) return 0;
-    const completed = all.filter(t => t.status === 'completed').length;
+    const completed = all.filter(t => t.status === 'completed' || t.status === 'superseded').length;
     return Math.round((completed / all.length) * 100);
   }
 
-  private deductCreditsForTask(userId: string | undefined, role: string, result: SubAgentResult): void {
+  private ensureCreditsAvailable(userId: string | undefined): void {
+    if (!userId) return;
+    const user = this.usersRepo.findById(userId);
+    if (user?.role === 'admin') return;
+    if (!this.creditManager.hasCredits(userId)) throw new Error('Credits exhausted');
+  }
+
+  private deductCreditForStep(userId: string | undefined, modelId: string): void {
     if (!userId || !this.currentSessionId) return;
     const user = this.usersRepo.findById(userId);
     if (user?.role === 'admin') return;
-    if (result.stepsUsed <= 0) return;
-    try {
-      const model = result.modelUsed ?? this.getModelForRole(role as OrchestratorRole);
-      const costPerStep = this.creditManager.getCostPerStep(model);
-      const totalCost = result.stepsUsed * costPerStep;
-      this.creditManager.deductCredit(userId, `orchestrator:${this.currentSessionId}`, totalCost);
-    } catch (err: any) {
-      if (err.message?.includes('Insufficient') || err.message?.includes('exhausted')) {
-        throw new Error('Credits exhausted');
-      }
-    }
+    this.creditManager.deductCredit(userId, `orchestrator:${this.currentSessionId}`, this.creditManager.getCostPerStep(modelId));
+  }
+
+  private isCreditsError(err: any): boolean {
+    const message = String(err?.message ?? '').toLowerCase();
+    return message.includes('credits exhausted') || message.includes('insufficient credits');
+  }
+
+  private isStepLimitError(err: any): boolean {
+    return String(err?.message ?? '').includes('Maximum total steps reached');
   }
 
   private getModelForRole(role: OrchestratorRole): string {
@@ -1260,17 +1379,21 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
 
   private emitEvent(event: string, data: any): void {
     if (!this.io) return;
-    if (this.currentSessionId) this.io.to(`orchestrator:${this.currentSessionId}`).emit(event, data);
-    const session = this.currentSessionId ? this.sessionsRepo.findById(this.currentSessionId) : null;
-    if (session?.userId) this.io.to(`user:${session.userId}`).emit(event, data);
+    const sessionId = data?.sessionId ?? this.currentSessionId;
+    if (!sessionId) return;
+    const session = this.sessionsRepo.findById(sessionId);
+    let target = this.io.to(`orchestrator:${sessionId}`);
+    if (session?.userId) target = target.to(`user:${session.userId}`);
+    target.emit(event, data);
   }
 
   private emitTaskEvent(taskId: string, sessionId: string, status: string, name?: string, role?: string, description?: string, dependsOn?: string | null, errorMessage?: string | null): void {
     if (!this.io) return;
     const payload = { taskId, sessionId, status, name, role, description, dependsOn: dependsOn ?? null, errorMessage: errorMessage ?? null };
-    this.io.to(`orchestrator:${sessionId}`).emit('orchestrator:task', payload);
     const session = this.sessionsRepo.findById(sessionId);
-    if (session?.userId) this.io.to(`user:${session.userId}`).emit('orchestrator:task', payload);
+    let target = this.io.to(`orchestrator:${sessionId}`);
+    if (session?.userId) target = target.to(`user:${session.userId}`);
+    target.emit('orchestrator:task', payload);
   }
 
   private sleep(ms: number): Promise<void> {
@@ -1282,6 +1405,7 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
     this.heartbeatInterval = setInterval(() => {
       if (this.running) this.stateRepo.updateHeartbeat();
     }, 10_000);
+    this.heartbeatInterval.unref?.();
   }
 
   private stopHeartbeat(): void {

@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS orchestrator_sessions (
   current_step TEXT DEFAULT NULL,
   progress_percent INTEGER DEFAULT 0,
   error_count INTEGER DEFAULT 0,
+  total_steps_used INTEGER DEFAULT 0,
   auto_recover INTEGER DEFAULT 1,
   workspace_dir TEXT DEFAULT NULL,
   md_files TEXT DEFAULT NULL,

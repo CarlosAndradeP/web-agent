@@ -180,6 +180,7 @@ export interface OrchestratorSessionInfo {
   currentStep: string | null;
   progressPercent: number;
   errorCount: number;
+  totalStepsUsed: number;
   autoRecover: boolean;
   mdFiles: string[] | null;
   createdAt: string;
@@ -207,7 +208,7 @@ export interface OrchestratorStatusInfo {
   lastHeartbeat: string;
   currentSessionId: string | null;
   totalStepsCompleted: number;
-  session?: OrchestratorSessionInfo;
+  session?: OrchestratorSessionInfo | null;
 }
 
 export interface OrchestratorTaskInfo {
@@ -215,7 +216,7 @@ export interface OrchestratorTaskInfo {
   orchestratorSessionId: string;
   name: string;
   description: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'superseded';
   role: string;
   dependsOn: string | null;
   output: string | null;

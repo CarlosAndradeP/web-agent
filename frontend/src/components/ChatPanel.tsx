@@ -35,9 +35,10 @@ interface Props {
   workspaceRootPath?: string;
   initialModel?: string;
   onModelChange?: (model: string) => void;
+  workspaceProfile?: 'development' | 'word';
 }
 
-export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, onCreditsRequired, basePath, workspaceRootPath, initialModel, onModelChange }: Props) {
+export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, onCreditsRequired, basePath, workspaceRootPath, initialModel, onModelChange, workspaceProfile = 'development' }: Props) {
   const { messages, send, cancel, isStreaming, status, isLoadingHistory, historyError, reloadHistory, currentStep, totalSteps, currentToolName, addSystemMessage, addAttachedFiles, clearChat } = useChat(sessionId, { onCreditsRequired });
   const { socket } = useSocket();
 
@@ -64,6 +65,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isNearBottomRef = useRef(true);
+  const isWordWorkspace = workspaceProfile === 'word';
 
   // Filter slash commands based on current input
   const filteredCommands = input.startsWith('/')
@@ -383,12 +385,16 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
               <div className="h-16 w-16 rounded-2xl bg-blue-500/10 border border-blue-500/20 shadow-lg shadow-blue-950/20 flex items-center justify-center mb-6">
                 <Sparkles className="h-7 w-7 text-blue-300" />
               </div>
-              <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-100 mb-2">O que vamos construir hoje?</h2>
+              <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-100 mb-2">{isWordWorkspace ? 'Qual documento vamos preparar?' : 'O que vamos construir hoje?'}</h2>
               <p className="text-sm text-zinc-400 max-w-lg leading-relaxed">
-                Descreva uma tarefa e o agente executará de forma autônoma. Ele pode ler, escrever e pesquisar arquivos, rodar comandos e revisar o resultado.
+                {isWordWorkspace
+                  ? 'Descreva o documento, a revisão ou a formatação desejada. O agente trabalha exclusivamente em arquivos Word e valida o resultado.'
+                  : 'Descreva uma tarefa e o agente executará de forma autônoma. Ele pode ler, escrever e pesquisar arquivos, rodar comandos e revisar o resultado.'}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-7">
-                {['Analise este projeto e sugira melhorias', 'Crie uma nova página responsiva'].map(suggestion => (
+                {(isWordWorkspace
+                  ? ['Crie um relatório profissional em Word', 'Revise e padronize um documento existente']
+                  : ['Analise este projeto e sugira melhorias', 'Crie uma nova página responsiva']).map(suggestion => (
                   <button key={suggestion} onClick={() => { setInput(suggestion); textareaRef.current?.focus(); }} className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-left text-sm text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-200 transition-colors">
                     {suggestion}
                   </button>
@@ -462,7 +468,7 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
               <button onClick={() => fileInputRef.current?.click()} disabled={isUploading || isStreaming} className="shrink-0 h-10 w-10 flex items-center justify-center rounded-xl hover:bg-zinc-800 transition-colors text-zinc-500 hover:text-zinc-200 disabled:opacity-50" title="Anexar arquivo" aria-label={isUploading ? 'Enviando arquivo' : 'Anexar arquivo'}>
                 {isUploading ? <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip className="h-4 w-4" />}
               </button>
-              <textarea ref={textareaRef} value={input} onChange={handleTextareaChange} onKeyDown={handleKeyDown} placeholder={modelsError ? 'Modelos indisponíveis no momento' : 'Descreva o que você quer criar ou modificar...'} rows={1} aria-label="Mensagem para o agente" aria-autocomplete="list" aria-controls={showCommands ? 'slash-command-list' : undefined} aria-activedescendant={showCommands ? `slash-command-${commandIndex}` : undefined} className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder:text-zinc-600 min-h-10 max-h-[160px] py-2.5 leading-5" />
+              <textarea ref={textareaRef} value={input} onChange={handleTextareaChange} onKeyDown={handleKeyDown} placeholder={modelsError ? 'Modelos indisponíveis no momento' : (isWordWorkspace ? 'Descreva o documento ou a alteração desejada...' : 'Descreva o que você quer criar ou modificar...')} rows={1} aria-label="Mensagem para o agente" aria-autocomplete="list" aria-controls={showCommands ? 'slash-command-list' : undefined} aria-activedescendant={showCommands ? `slash-command-${commandIndex}` : undefined} className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder:text-zinc-600 min-h-10 max-h-[160px] py-2.5 leading-5" />
               {isStreaming ? (
                 <Button size="icon" variant="destructive" onClick={cancel} className="shrink-0 h-10 w-10 rounded-xl" aria-label="Interromper agente"><Square className="h-3.5 w-3.5" /></Button>
               ) : (

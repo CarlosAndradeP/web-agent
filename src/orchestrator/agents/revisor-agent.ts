@@ -3,6 +3,7 @@ import { createProvider } from '../../agent/provider.js';
 import { createReadFileTool } from '../../agent/tools/read-file.js';
 import { createListFilesTool } from '../../agent/tools/list-files.js';
 import { createSearchFilesTool } from '../../agent/tools/search-files.js';
+import { createRunCommandTool } from '../../agent/tools/run-command.js';
 import { buildRevisorPrompt } from '../prompts/revisor-prompt.js';
 
 const DEFAULT_MODEL = 'z-ai/glm-5.2';
@@ -15,6 +16,7 @@ export function createRevisorAgent(workspaceDir: string, apiBaseUrl: string, api
     readFile: createReadFileTool(workspaceDir),
     listFiles: createListFilesTool(workspaceDir),
     searchFiles: createSearchFilesTool(workspaceDir),
+    runCommand: createRunCommandTool(workspaceDir),
   };
 
   const agent = new ToolLoopAgent({

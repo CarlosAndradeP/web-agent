@@ -12,6 +12,7 @@ import type { ApprovalMode } from '../../types/index.js';
 import type { ApprovalManager } from '../../services/approval-manager.js';
 import { createLogger } from '../../services/logger.js';
 import { v4 as uuid } from 'uuid';
+import type { WorkspaceProfile } from '../instructions.js';
 
 const log = createLogger('ToolSet');
 
@@ -50,8 +51,10 @@ export function buildToolSet(options: {
   approvalManager?: ApprovalManager;
   userId?: string;
   abortSignal?: AbortSignal;
+  workspaceProfile?: WorkspaceProfile;
 }) {
-  log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode });
+  const workspaceProfile = options.workspaceProfile ?? 'development';
+  log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode, workspaceProfile });
 
   const allTools: Record<string, any> = {
     writeFile: createWriteFileTool(options.workspaceDir),
@@ -65,7 +68,13 @@ export function buildToolSet(options: {
     installPackage: createInstallPackageTool(options.workspaceDir),
   };
 
-  if (options.apiBaseUrl && options.apiKey) {
+  // The Word agent is deliberately isolated from programming-oriented delegation
+  // and package installation. Its document prompt and available tools must agree.
+  if (workspaceProfile === 'word') {
+    delete allTools.installPackage;
+  }
+
+  if (workspaceProfile === 'development' && options.apiBaseUrl && options.apiKey) {
     allTools.invokeSubAgent = createInvokeSubAgentTool({
       workspaceDir: options.workspaceDir,
       apiBaseUrl: options.apiBaseUrl,

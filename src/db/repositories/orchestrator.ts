@@ -13,7 +13,7 @@ export class OrchestratorSessionsRepository {
     ).run(id, sessionId ?? null, userId ?? null, 'idle', objective, workspaceDir, now, now);
     return {
       id, sessionId: sessionId ?? undefined, userId, status: 'idle', objective, currentStep: null, progressPercent: 0,
-      errorCount: 0, autoRecover: true, workspaceDir, mdFiles: null, createdAt: now, updatedAt: now,
+      errorCount: 0, totalStepsUsed: 0, autoRecover: true, workspaceDir, mdFiles: null, createdAt: now, updatedAt: now,
     };
   }
 
@@ -24,7 +24,7 @@ export class OrchestratorSessionsRepository {
   }
 
   findBySessionId(sessionId: string): OrchestratorSession | undefined {
-    const row = this.db.prepare('SELECT * FROM orchestrator_sessions WHERE session_id = ?').get(sessionId) as any;
+    const row = this.db.prepare('SELECT * FROM orchestrator_sessions WHERE session_id = ? ORDER BY created_at DESC LIMIT 1').get(sessionId) as any;
     if (!row) return undefined;
     return this.mapRow(row);
   }
@@ -59,6 +59,12 @@ export class OrchestratorSessionsRepository {
     this.db.prepare('UPDATE orchestrator_sessions SET error_count = error_count + 1, updated_at = ? WHERE id = ?').run(now, id);
   }
 
+  incrementStepsUsed(id: string, count: number): void {
+    if (count <= 0) return;
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE orchestrator_sessions SET total_steps_used = total_steps_used + ?, updated_at = ? WHERE id = ?').run(count, now, id);
+  }
+
   updateMdFiles(id: string, mdFilesJson: string): void {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE orchestrator_sessions SET md_files = ?, updated_at = ? WHERE id = ?').run(mdFilesJson, now, id);
@@ -78,6 +84,7 @@ export class OrchestratorSessionsRepository {
       currentStep: row.current_step,
       progressPercent: row.progress_percent,
       errorCount: row.error_count,
+      totalStepsUsed: row.total_steps_used ?? 0,
       autoRecover: row.auto_recover === 1,
       workspaceDir: row.workspace_dir,
       mdFiles: row.md_files,
@@ -157,6 +164,7 @@ export class OrchestratorStateRepository {
   }
 
   setRunning(isRunning: boolean, sessionId?: string | null): void {
+    this.get();
     const now = new Date().toISOString();
     this.db.prepare(
       "UPDATE orchestrator_state SET is_running = ?, current_session_id = ?, last_heartbeat = ? WHERE id = 'singleton'"
@@ -164,12 +172,22 @@ export class OrchestratorStateRepository {
   }
 
   updateHeartbeat(): void {
+    this.get();
     const now = new Date().toISOString();
     this.db.prepare("UPDATE orchestrator_state SET last_heartbeat = ? WHERE id = 'singleton'").run(now);
   }
 
   incrementSteps(count: number = 1): void {
+    this.get();
     this.db.prepare("UPDATE orchestrator_state SET total_steps_completed = total_steps_completed + ? WHERE id = 'singleton'").run(count);
+  }
+
+  clearRunningSession(sessionId: string): void {
+    this.get();
+    const now = new Date().toISOString();
+    this.db.prepare(
+      "UPDATE orchestrator_state SET is_running = 0, current_session_id = NULL, last_heartbeat = ? WHERE id = 'singleton' AND current_session_id = ?"
+    ).run(now, sessionId);
   }
 
   private mapRow(row: any): OrchestratorState {
@@ -249,12 +267,12 @@ export class OrchestratorTasksRepository {
     return rows.map(this.mapRow);
   }
 
-  updateStatus(id: string, status: 'pending' | 'running' | 'completed' | 'failed'): void {
+  updateStatus(id: string, status: 'pending' | 'running' | 'completed' | 'failed' | 'superseded'): void {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE orchestrator_tasks SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
   }
 
-  updateResult(id: string, output: string | null, status: 'pending' | 'running' | 'completed' | 'failed', errorMessage?: string | null, resultJson?: string | null): void {
+  updateResult(id: string, output: string | null, status: 'pending' | 'running' | 'completed' | 'failed' | 'superseded', errorMessage?: string | null, resultJson?: string | null): void {
     const now = new Date().toISOString();
     this.db
       .prepare('UPDATE orchestrator_tasks SET output = ?, status = ?, error_message = ?, result_json = ?, updated_at = ? WHERE id = ?')
@@ -263,6 +281,13 @@ export class OrchestratorTasksRepository {
 
   deleteBySession(sessionId: string): void {
     this.db.prepare('DELETE FROM orchestrator_tasks WHERE orchestrator_session_id = ?').run(sessionId);
+  }
+
+  replaceDependency(sessionId: string, previousTaskName: string, replacementTaskName: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(
+      'UPDATE orchestrator_tasks SET depends_on = ?, updated_at = ? WHERE orchestrator_session_id = ? AND depends_on = ?'
+    ).run(replacementTaskName, now, sessionId, previousTaskName);
   }
 
   private mapRow(row: any): OrchestratorTask {

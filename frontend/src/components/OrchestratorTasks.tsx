@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { OrchestratorTaskInfo } from '../types';
-import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, Clock, Link2, FileCode, Code, Eye, Shield, BrainCircuit } from 'lucide-react';
+import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, Clock, Link2, FileCode, Code, Eye, Shield, BrainCircuit, MinusCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface Props {
@@ -21,6 +21,7 @@ function StatusIcon({ status }: { status: string }) {
     case 'completed': return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />;
     case 'running': return <Loader2 className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />;
     case 'failed': return <AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />;
+    case 'superseded': return <MinusCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />;
     case 'pending':
     default: return <Clock className="h-3.5 w-3.5 text-zinc-600 shrink-0" />;
   }
@@ -110,9 +111,10 @@ export default function OrchestratorTasks({ tasks, isRunning }: Props) {
     running: sorted.filter(t => t.status === 'running').length,
     pending: sorted.filter(t => t.status === 'pending').length,
     failed: sorted.filter(t => t.status === 'failed').length,
+    superseded: sorted.filter(t => t.status === 'superseded').length,
   };
   const total = sorted.length;
-  const progress = total > 0 ? Math.round(((counts.completed + counts.failed) / total) * 100) : 0;
+  const progress = total > 0 ? Math.round(((counts.completed + counts.failed + counts.superseded) / total) * 100) : 0;
 
   return (
     <div className="flex flex-col h-full">
@@ -124,12 +126,14 @@ export default function OrchestratorTasks({ tasks, isRunning }: Props) {
             {counts.running > 0 && <span className="flex items-center gap-1 text-blue-400"><Loader2 className="h-3 w-3 animate-spin" />{counts.running}</span>}
             {counts.pending > 0 && <span className="flex items-center gap-1 text-zinc-500"><Clock className="h-3 w-3" />{counts.pending}</span>}
             {counts.failed > 0 && <span className="flex items-center gap-1 text-red-400"><AlertCircle className="h-3 w-3" />{counts.failed}</span>}
+            {counts.superseded > 0 && <span className="flex items-center gap-1 text-amber-400" title="Tarefas substituídas pelo replanejamento"><MinusCircle className="h-3 w-3" />{counts.superseded}</span>}
           </div>
           <span className="text-[10px] text-zinc-600 font-mono">{progress}%</span>
         </div>
         <div className="h-1 bg-zinc-800 rounded-full overflow-hidden flex">
           <div className="h-full bg-emerald-500" style={{ width: `${total > 0 ? (counts.completed / total) * 100 : 0}%` }} />
           <div className="h-full bg-red-500/60" style={{ width: `${total > 0 ? (counts.failed / total) * 100 : 0}%` }} />
+          <div className="h-full bg-amber-500/60" style={{ width: `${total > 0 ? (counts.superseded / total) * 100 : 0}%` }} />
           {isRunning && <div className="h-full flex-1 bg-blue-500/30 animate-pulse" style={{ width: '2px' }} />}
         </div>
       </div>

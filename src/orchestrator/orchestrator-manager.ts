@@ -6,6 +6,7 @@ import { createLogger } from '../services/logger.js';
 import type { ProjectRouter } from '../services/project-router.js';
 import type { ProjectsRepository } from '../db/repositories/projects.js';
 import type { UsersRepository } from '../db/repositories/users.js';
+import { OrchestratorSessionsRepository } from '../db/repositories/orchestrator.js';
 
 const log = createLogger('OrchestratorManager');
 
@@ -17,6 +18,7 @@ export class OrchestratorManager {
   private runners = new Map<string, OrchestratorRunner>();
   private io: Server | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private sessionsRepo: OrchestratorSessionsRepository;
 
   constructor(
     private db: Database.Database,
@@ -25,6 +27,7 @@ export class OrchestratorManager {
     private projectsRepo: ProjectsRepository,
     private usersRepo: UsersRepository,
   ) {
+    this.sessionsRepo = new OrchestratorSessionsRepository(db);
     this.cleanupTimer = setInterval(() => this.pruneInactive(), 60000);
     if (this.cleanupTimer.unref) this.cleanupTimer.unref();
   }
@@ -72,7 +75,12 @@ export class OrchestratorManager {
     const runner = this.createRunner();
     if (this.io) runner.setIo(this.io);
     this.runners.set(sessionId, runner);
-    await runner.resume(sessionId);
+    try {
+      await runner.resume(sessionId);
+    } catch (err) {
+      this.runners.delete(sessionId);
+      throw err;
+    }
   }
 
   /**
@@ -82,7 +90,10 @@ export class OrchestratorManager {
     const runner = this.runners.get(sessionId);
     if (runner) {
       runner.pause(sessionId);
+      return;
     }
+    const session = this.sessionsRepo.findById(sessionId);
+    if (session?.status === 'running') this.sessionsRepo.updateStatus(sessionId, 'paused');
   }
 
   /**
@@ -93,6 +104,11 @@ export class OrchestratorManager {
     if (runner) {
       runner.stop(sessionId);
       this.runners.delete(sessionId);
+      return;
+    }
+    const session = this.sessionsRepo.findById(sessionId);
+    if (session && (session.status === 'running' || session.status === 'paused')) {
+      this.sessionsRepo.updateStatus(sessionId, 'idle');
     }
   }
 
@@ -144,9 +160,7 @@ export class OrchestratorManager {
    * Call this on startup.
    */
   async recoverSessions(): Promise<void> {
-    const { OrchestratorSessionsRepository } = await import('../db/repositories/orchestrator.js');
-    const sessionsRepo = new OrchestratorSessionsRepository(this.db);
-    const running = sessionsRepo.listRunning();
+    const running = this.sessionsRepo.listRunning();
 
     log.info('Recovering orchestrator sessions', { count: running.length });
 
@@ -158,6 +172,8 @@ export class OrchestratorManager {
         this.runners.set(session.id, runner);
         await runner.resume(session.id);
       } catch (err: any) {
+        this.runners.delete(session.id);
+        this.sessionsRepo.updateStatus(session.id, 'paused');
         log.error('Failed to recover session', { sessionId: session.id, error: err.message });
       }
     }
@@ -166,7 +182,7 @@ export class OrchestratorManager {
   /**
    * Graceful shutdown of all runners.
    */
-  shutdownAll(): void {
+  shutdownAll(stopCleanupTimer: boolean = true): void {
     log.info('Shutting down all orchestrator runners', { count: this.runners.size });
     for (const [sessionId, runner] of this.runners) {
       try {
@@ -176,7 +192,7 @@ export class OrchestratorManager {
       }
     }
     this.runners.clear();
-    if (this.cleanupTimer) {
+    if (stopCleanupTimer && this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }

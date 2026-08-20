@@ -62,7 +62,7 @@ export function registerSocketEvents(socket: Socket, io: Server, approvalManager
       log.warn('Orchestrator subscribe — session not found', { sessionId: data.sessionId });
       return;
     }
-    if (!isAdmin && session.userId && session.userId !== user?.userId) {
+    if (!isAdmin && session.userId !== user?.userId) {
       log.warn('Orchestrator subscribe denied — not owner', { sessionId: data.sessionId, userId: user?.userId });
       return;
     }
