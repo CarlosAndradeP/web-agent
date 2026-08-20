@@ -158,6 +158,7 @@ export interface OrchestratorSession {
     currentStep: string | null;
     progressPercent: number;
     errorCount: number;
+    totalStepsUsed: number;
     autoRecover: boolean;
     workspaceDir: string | null;
     mdFiles: string | null;
@@ -184,7 +185,7 @@ export interface OrchestratorTask {
     orchestratorSessionId: string;
     name: string;
     description: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'superseded';
     role: string;
     dependsOn: string | null;
     resultJson: string | null;
@@ -234,6 +235,7 @@ export interface TaskContext {
     }>;
     currentFileState: string;
     retryHistory: string | null;
+    specificationFiles: string[];
 }
 export interface PlanTask {
     name: string;

@@ -3,6 +3,7 @@ import { createProvider } from './provider.js';
 import { buildSystemPrompt } from './instructions.js';
 import { buildToolSet } from './tools/index.js';
 import { createLogger } from '../services/logger.js';
+import { config } from '../config.js';
 const log = createLogger('Agent');
 export function createAgent(options) {
     log.info('Creating agent', { model: options.model, maxSteps: options.maxSteps, workspaceDir: options.workspaceDir, agentType: options.agentType });
@@ -17,6 +18,7 @@ export function createAgent(options) {
         approvalManager: options.approvalManager,
         userId: options.userId,
         abortSignal: options.abortSignal,
+        workspaceProfile: options.workspaceProfile ?? 'development',
     });
     log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });
     const isGlmModel = options.model.toLowerCase().includes('glm');
@@ -28,8 +30,16 @@ export function createAgent(options) {
         tools,
         stopWhen: stepCountIs(options.maxSteps),
         maxOutputTokens,
+        // The SDK retries the current model call in place, so completed tool steps
+        // are not replayed while a rate-limited provider is cooling down.
+        maxRetries: options.maxRetries ?? config.agentMaxRetries,
     });
-    log.info('ToolLoopAgent instance created', { maxOutputTokens, maxSteps: options.maxSteps, hasProjectInfo: !!options.projectInfo });
+    log.info('ToolLoopAgent instance created', {
+        maxOutputTokens,
+        maxSteps: options.maxSteps,
+        maxRetries: options.maxRetries ?? config.agentMaxRetries,
+        hasProjectInfo: !!options.projectInfo,
+    });
     return { agent, abortSignal: options.abortSignal };
 }
 //# sourceMappingURL=index.js.map

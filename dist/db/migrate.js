@@ -10,6 +10,7 @@ export function migrate(db) {
         { table: 'projects', column: 'session_id', type: 'TEXT' },
         { table: 'messages', column: 'is_compacted', type: 'INTEGER DEFAULT 0' },
         { table: 'sessions', column: 'summary_text', type: 'TEXT DEFAULT NULL' },
+        { table: 'orchestrator_sessions', column: 'total_steps_used', type: 'INTEGER DEFAULT 0' },
     ];
     for (const stmt of alterStatements) {
         try {
@@ -47,43 +48,35 @@ export function migrate(db) {
     catch (err) {
         log.warn('approval_mode migration skipped', { error: err.message });
     }
-    const orchestratorRecreate = [
-        `CREATE TABLE IF NOT EXISTS orchestrator_sessions_new (
-      id TEXT PRIMARY KEY,
-      session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
-      user_id TEXT,
-      status TEXT NOT NULL DEFAULT 'idle',
-      objective TEXT NOT NULL,
-      current_step TEXT DEFAULT NULL,
-      progress_percent INTEGER DEFAULT 0,
-      error_count INTEGER DEFAULT 0,
-      auto_recover INTEGER DEFAULT 1,
-      workspace_dir TEXT DEFAULT NULL,
-      md_files TEXT DEFAULT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`,
-    ];
-    for (const stmt of orchestratorRecreate) {
-        try {
-            db.exec(stmt);
-        }
-        catch (err) {
-            log.warn('orchestrator_sessions_new creation skipped', { error: err.message });
-        }
-    }
     try {
         const hasOldTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestrator_sessions'").get();
-        const hasNewTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestrator_sessions_new'").get();
-        if (hasOldTable && hasNewTable) {
+        const columns = hasOldTable ? db.pragma('table_info(orchestrator_sessions)') : [];
+        const sessionIdColumn = columns.find(column => column.name === 'session_id');
+        const needsNullableSessionMigration = Boolean(sessionIdColumn?.notnull);
+        if (hasOldTable && needsNullableSessionMigration) {
             db.pragma('foreign_keys = OFF');
             try {
+                db.exec('DROP TABLE IF EXISTS orchestrator_sessions_new');
                 db.exec(`
-          INSERT OR IGNORE INTO orchestrator_sessions_new (id, session_id, user_id, status, objective, current_step, progress_percent, error_count, auto_recover, workspace_dir, md_files, created_at, updated_at)
-          SELECT id, NULLIF(session_id, ''), user_id, status, objective, current_step, progress_percent, error_count, auto_recover, workspace_dir, md_files, created_at, updated_at
+          CREATE TABLE orchestrator_sessions_new (
+            id TEXT PRIMARY KEY,
+            session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+            user_id TEXT,
+            status TEXT NOT NULL DEFAULT 'idle',
+            objective TEXT NOT NULL,
+            current_step TEXT DEFAULT NULL,
+            progress_percent INTEGER DEFAULT 0,
+            error_count INTEGER DEFAULT 0,
+            total_steps_used INTEGER DEFAULT 0,
+            auto_recover INTEGER DEFAULT 1,
+            workspace_dir TEXT DEFAULT NULL,
+            md_files TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT OR IGNORE INTO orchestrator_sessions_new (id, session_id, user_id, status, objective, current_step, progress_percent, error_count, total_steps_used, auto_recover, workspace_dir, md_files, created_at, updated_at)
+          SELECT id, NULLIF(session_id, ''), user_id, status, objective, current_step, progress_percent, error_count, total_steps_used, auto_recover, workspace_dir, md_files, created_at, updated_at
           FROM orchestrator_sessions;
-          DROP TABLE IF EXISTS orchestrator_steps;
-          DROP TABLE IF EXISTS orchestrator_state;
           DROP TABLE orchestrator_sessions;
           ALTER TABLE orchestrator_sessions_new RENAME TO orchestrator_sessions;
         `);
@@ -115,6 +108,7 @@ export function migrate(db) {
       current_step TEXT DEFAULT NULL,
       progress_percent INTEGER DEFAULT 0,
       error_count INTEGER DEFAULT 0,
+      total_steps_used INTEGER DEFAULT 0,
       auto_recover INTEGER DEFAULT 1,
       workspace_dir TEXT DEFAULT NULL,
       md_files TEXT DEFAULT NULL,

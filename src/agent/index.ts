@@ -6,6 +6,7 @@ import { buildToolSet } from './tools/index.js';
 import { createLogger } from '../services/logger.js';
 import type { ApprovalMode, AgentStep } from '../types/index.js';
 import type { ApprovalManager } from '../services/approval-manager.js';
+import { config } from '../config.js';
 
 const log = createLogger('Agent');
 
@@ -33,6 +34,7 @@ export interface CreateAgentOptions {
   userId?: string;
   conversationContext?: Array<ModelMessage>;
   workspaceProfile?: 'development' | 'word';
+  maxRetries?: number;
 }
 
 export function createAgent(options: CreateAgentOptions) {
@@ -65,9 +67,17 @@ export function createAgent(options: CreateAgentOptions) {
     tools,
     stopWhen: stepCountIs(options.maxSteps),
     maxOutputTokens,
+    // The SDK retries the current model call in place, so completed tool steps
+    // are not replayed while a rate-limited provider is cooling down.
+    maxRetries: options.maxRetries ?? config.agentMaxRetries,
   });
 
-  log.info('ToolLoopAgent instance created', { maxOutputTokens, maxSteps: options.maxSteps, hasProjectInfo: !!options.projectInfo });
+  log.info('ToolLoopAgent instance created', {
+    maxOutputTokens,
+    maxSteps: options.maxSteps,
+    maxRetries: options.maxRetries ?? config.agentMaxRetries,
+    hasProjectInfo: !!options.projectInfo,
+  });
 
   return { agent, abortSignal: options.abortSignal };
 }

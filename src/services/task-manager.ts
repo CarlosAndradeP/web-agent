@@ -12,6 +12,12 @@ import { v4 as uuid } from 'uuid';
 
 const log = createLogger('TaskManager');
 
+function streamChunkError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  if (typeof value === 'string' && value.trim()) return new Error(value);
+  return new Error('Agent stream failed');
+}
+
 export interface StreamEvent {
   type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'finish' | 'error' | 'credits-exhausted';
   taskId: string;
@@ -247,6 +253,8 @@ export class TaskManager {
       async function* eventStream(): AsyncIterableIterator<StreamEvent> {
         let stepNumber = 0;
         let stepStartTime = Date.now();
+        let sawFinish = false;
+        let sawAbort = false;
         const pendingTools = new Map<string, { toolName: string; toolInput: string; startedAt: number }>();
 
         try {
@@ -307,8 +315,15 @@ export class TaskManager {
                 taskId,
                 stepNumber,
               };
-            } else if (chunkType === 'finish' || chunkType === 'error' || chunkType === 'abort') {
-              // handled below
+            } else if (chunkType === 'finish') {
+              sawFinish = true;
+            } else if (chunkType === 'abort') {
+              sawAbort = true;
+            } else if (chunkType === 'error') {
+              // streamText reports terminal provider failures as data chunks
+              // instead of rejecting the iterator. Ignoring this used to make
+              // exhausted 429 retries look like successful task completion.
+              throw streamChunkError((chunk as any).error);
             }
           }
 
@@ -316,15 +331,17 @@ export class TaskManager {
           // cancelled rather than completed. Otherwise the cancelTask call and
           // the generator finally race, and the status ends up 'completed' for a
           // task the user explicitly stopped.
-          if (abortSignal?.aborted) {
+          if (abortSignal?.aborted || sawAbort) {
             const wasAlreadyCancelled = tasksRepo.findById(taskId)?.status === 'cancelled';
             tasksRepo.updateStatus(taskId, 'cancelled');
             if (!wasAlreadyCancelled) emitToTaskUser(taskId, 'task:cancelled', { taskId });
             log.info('Stream cancelled by signal', { taskId, totalSteps: stepNumber });
-          } else {
+          } else if (sawFinish) {
             tasksRepo.updateStatus(taskId, 'completed');
             emitToTaskUser(taskId, 'task:completed', { taskId });
             log.info('Stream completed', { taskId, totalSteps: stepNumber });
+          } else {
+            throw new Error('Agent stream ended without a finish event');
           }
         } catch (err: any) {
           tasksRepo.updateStatus(taskId, 'failed', null, err.message);

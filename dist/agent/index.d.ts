@@ -25,6 +25,7 @@ export interface CreateAgentOptions {
     userId?: string;
     conversationContext?: Array<ModelMessage>;
     workspaceProfile?: 'development' | 'word';
+    maxRetries?: number;
 }
 export declare function createAgent(options: CreateAgentOptions): {
     agent: ToolLoopAgent<never, Record<string, any>, never>;

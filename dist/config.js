@@ -36,6 +36,10 @@ if (!adminPassword) {
     }
     log.warn('ADMIN_PASSWORD not set — using insecure default "admin123". DO NOT use in production!');
 }
+const parsedAgentMaxRetries = Number.parseInt(process.env.AGENT_MAX_RETRIES || '5', 10);
+const agentMaxRetries = Number.isFinite(parsedAgentMaxRetries)
+    ? Math.min(10, Math.max(0, parsedAgentMaxRetries))
+    : 5;
 export const config = {
     port: parseInt(process.env.PORT || '89', 10),
     // Use the deployment value verbatim. It may be a LAN IP, Docker service
@@ -47,6 +51,7 @@ export const config = {
     dataDir: process.env.DATA_DIR || './data',
     projectLinkBaseDir: process.env.PROJECT_LINK_BASE_DIR || './data/project-links',
     maxSteps: parseInt(process.env.MAX_STEPS || '100', 10),
+    agentMaxRetries,
     defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.2',
     agentType: (process.env.AGENT_TYPE || 'none'),
     jwtSecret: accessTokenSecret,

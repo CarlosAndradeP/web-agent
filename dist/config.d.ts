@@ -8,6 +8,7 @@ export declare const config: {
     dataDir: string;
     projectLinkBaseDir: string;
     maxSteps: number;
+    agentMaxRetries: number;
     defaultModel: string;
     agentType: "main" | "sub" | "none";
     jwtSecret: string;

@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { ToolLoopAgent, stepCountIs } from 'ai';
 import { createProvider } from '../provider.js';
-import { SUB_AGENT_SYSTEM_PROMPT } from '../instructions.js';
+import { DEVELOPMENT_SUB_AGENT_SYSTEM_PROMPT } from '../prompts/sub-agent-prompt.js';
 import { createWriteFileTool } from './write-file.js';
 import { createReadFileTool } from './read-file.js';
 import { createListFilesTool } from './list-files.js';
@@ -37,7 +37,7 @@ export function createInvokeSubAgentTool(options) {
                 const model = provider.chatModel('z-ai/glm-5.2');
                 const subAgent = new ToolLoopAgent({
                     model,
-                    instructions: SUB_AGENT_SYSTEM_PROMPT,
+                    instructions: DEVELOPMENT_SUB_AGENT_SYSTEM_PROMPT,
                     tools: subTools,
                     stopWhen: stepCountIs(cappedSteps),
                     maxOutputTokens: 8192,

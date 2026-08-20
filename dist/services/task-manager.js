@@ -4,6 +4,13 @@ import { ConfigRepository } from '../db/repositories/config.js';
 import { createLogger } from '../services/logger.js';
 import { v4 as uuid } from 'uuid';
 const log = createLogger('TaskManager');
+function streamChunkError(value) {
+    if (value instanceof Error)
+        return value;
+    if (typeof value === 'string' && value.trim())
+        return new Error(value);
+    return new Error('Agent stream failed');
+}
 export class TaskManager {
     db;
     tasksRepo;
@@ -213,6 +220,8 @@ export class TaskManager {
             async function* eventStream() {
                 let stepNumber = 0;
                 let stepStartTime = Date.now();
+                let sawFinish = false;
+                let sawAbort = false;
                 const pendingTools = new Map();
                 try {
                     for await (const chunk of fullStream) {
@@ -275,25 +284,37 @@ export class TaskManager {
                                 stepNumber,
                             };
                         }
-                        else if (chunkType === 'finish' || chunkType === 'error' || chunkType === 'abort') {
-                            // handled below
+                        else if (chunkType === 'finish') {
+                            sawFinish = true;
+                        }
+                        else if (chunkType === 'abort') {
+                            sawAbort = true;
+                        }
+                        else if (chunkType === 'error') {
+                            // streamText reports terminal provider failures as data chunks
+                            // instead of rejecting the iterator. Ignoring this used to make
+                            // exhausted 429 retries look like successful task completion.
+                            throw streamChunkError(chunk.error);
                         }
                     }
                     // If the stream exited via abort (not natural finish), mark the task
                     // cancelled rather than completed. Otherwise the cancelTask call and
                     // the generator finally race, and the status ends up 'completed' for a
                     // task the user explicitly stopped.
-                    if (abortSignal?.aborted) {
+                    if (abortSignal?.aborted || sawAbort) {
                         const wasAlreadyCancelled = tasksRepo.findById(taskId)?.status === 'cancelled';
                         tasksRepo.updateStatus(taskId, 'cancelled');
                         if (!wasAlreadyCancelled)
                             emitToTaskUser(taskId, 'task:cancelled', { taskId });
                         log.info('Stream cancelled by signal', { taskId, totalSteps: stepNumber });
                     }
-                    else {
+                    else if (sawFinish) {
                         tasksRepo.updateStatus(taskId, 'completed');
                         emitToTaskUser(taskId, 'task:completed', { taskId });
                         log.info('Stream completed', { taskId, totalSteps: stepNumber });
+                    }
+                    else {
+                        throw new Error('Agent stream ended without a finish event');
                     }
                 }
                 catch (err) {

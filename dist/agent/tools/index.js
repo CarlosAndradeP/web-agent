@@ -33,7 +33,8 @@ function wrapWithApproval(tool, toolName, approvalManager, userId) {
     };
 }
 export function buildToolSet(options) {
-    log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode });
+    const workspaceProfile = options.workspaceProfile ?? 'development';
+    log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode, workspaceProfile });
     const allTools = {
         writeFile: createWriteFileTool(options.workspaceDir),
         readFile: createReadFileTool(options.workspaceDir),
@@ -45,7 +46,12 @@ export function buildToolSet(options) {
         webFetch: createWebFetchTool(),
         installPackage: createInstallPackageTool(options.workspaceDir),
     };
-    if (options.apiBaseUrl && options.apiKey) {
+    // The Word agent is deliberately isolated from programming-oriented delegation
+    // and package installation. Its document prompt and available tools must agree.
+    if (workspaceProfile === 'word') {
+        delete allTools.installPackage;
+    }
+    if (workspaceProfile === 'development' && options.apiBaseUrl && options.apiKey) {
         allTools.invokeSubAgent = createInvokeSubAgentTool({
             workspaceDir: options.workspaceDir,
             apiBaseUrl: options.apiBaseUrl,
