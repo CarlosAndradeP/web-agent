@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import type { UserPublic, CreditTransaction, AdminModelInfo, NodeProcessInfo } from '../types';
+import type { UserPublic, CreditTransaction, AdminModelInfo, NodeProcessInfo, LlmRateLimitStatus } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
@@ -48,12 +48,23 @@ export default function AdminPanel() {
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
   const [registrationEnabled, setRegistrationEnabled] = useState(true);
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [llmRateLimit, setLlmRateLimit] = useState<LlmRateLimitStatus>({
+    enabled: false,
+    requestsPerMinute: 60,
+    queuedRequests: 0,
+    requestsLastMinute: 0,
+    nextRequestInMs: 0,
+  });
+  const [llmRequestsPerMinute, setLlmRequestsPerMinute] = useState('60');
+  const [rateLimitSaved, setRateLimitSaved] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setSettingsLoading(true);
     try {
       const data = await api.admin.settings();
       setRegistrationEnabled(data.registrationEnabled);
+      setLlmRateLimit(data.llmRateLimit);
+      setLlmRequestsPerMinute(String(data.llmRateLimit.requestsPerMinute));
     } catch (err) {
       console.error('Failed to load settings:', err);
     } finally {
@@ -106,7 +117,7 @@ export default function AdminPanel() {
   useEffect(() => {
     setLoading(true);
     Promise.all([loadUsers(), loadStats(), loadModels(), loadNodeProcesses(), loadSettings()]).finally(() => setLoading(false));
-  }, [loadUsers, loadStats, loadModels, loadNodeProcesses]);
+  }, [loadUsers, loadStats, loadModels, loadNodeProcesses, loadSettings]);
 
   useEffect(() => {
     if (tab !== 'processes') return;
@@ -283,6 +294,35 @@ export default function AdminPanel() {
       setRegistrationEnabled(data.registrationEnabled);
     } catch (err) {
       console.error('Failed to toggle registration:', err);
+    }
+  };
+
+  const handleToggleLlmRateLimit = async () => {
+    setSettingsLoading(true);
+    try {
+      const data = await api.admin.updateSettings({ llmRateLimitEnabled: !llmRateLimit.enabled });
+      setLlmRateLimit(data.llmRateLimit);
+    } catch (err) {
+      console.error('Failed to toggle LLM rate limit:', err);
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const handleSaveLlmRateLimit = async () => {
+    const requestsPerMinute = Number(llmRequestsPerMinute);
+    if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 1 || requestsPerMinute > 10000) return;
+    setSettingsLoading(true);
+    try {
+      const data = await api.admin.updateSettings({ llmRequestsPerMinute: requestsPerMinute });
+      setLlmRateLimit(data.llmRateLimit);
+      setLlmRequestsPerMinute(String(data.llmRateLimit.requestsPerMinute));
+      setRateLimitSaved(true);
+      setTimeout(() => setRateLimitSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to save LLM rate limit:', err);
+    } finally {
+      setSettingsLoading(false);
     }
   };
 
@@ -705,6 +745,78 @@ export default function AdminPanel() {
                   {registrationEnabled ? <ToggleRight className="h-5 w-5" /> : <ToggleLeft className="h-5 w-5" />}
                   {registrationEnabled ? 'Ativo' : 'Inativo'}
                 </button>
+              </div>
+
+              <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-lg space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-medium text-zinc-200">Limite global da API de IA</div>
+                    <div className="text-[10px] text-zinc-500 mt-0.5">
+                      Distribui as chamadas em uma fila FIFO e evita rajadas no provedor
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleToggleLlmRateLimit}
+                    disabled={settingsLoading}
+                    className={cn(
+                      'flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0',
+                      llmRateLimit.enabled ? 'text-emerald-400' : 'text-zinc-500'
+                    )}
+                    title={llmRateLimit.enabled ? 'Clique para desativar o limite' : 'Clique para ativar o limite'}
+                  >
+                    {llmRateLimit.enabled ? <ToggleRight className="h-5 w-5" /> : <ToggleLeft className="h-5 w-5" />}
+                    {llmRateLimit.enabled ? 'Ativo' : 'Inativo'}
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="llm-requests-per-minute" className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                    Requisições por minuto
+                  </label>
+                  <div className="flex gap-2 max-w-sm">
+                    <Input
+                      id="llm-requests-per-minute"
+                      type="number"
+                      min={1}
+                      max={10000}
+                      step={1}
+                      value={llmRequestsPerMinute}
+                      onChange={event => setLlmRequestsPerMinute(event.target.value)}
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs min-w-20"
+                      onClick={handleSaveLlmRateLimit}
+                      disabled={settingsLoading || !Number.isInteger(Number(llmRequestsPerMinute)) || Number(llmRequestsPerMinute) < 1 || Number(llmRequestsPerMinute) > 10000}
+                    >
+                      {rateLimitSaved ? 'Salvo' : 'Salvar'}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 px-2" onClick={loadSettings} disabled={settingsLoading} title="Atualizar estado da fila">
+                      <RefreshCw className={cn('h-3.5 w-3.5', settingsLoading && 'animate-spin')} />
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-zinc-600">
+                    As chamadas são espaçadas em aproximadamente {Math.max(1, Math.ceil(60000 / Math.max(1, llmRateLimit.requestsPerMinute))).toLocaleString('pt-BR')} ms.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <div className="rounded-md bg-zinc-950/60 px-3 py-2">
+                    <div className="text-[9px] uppercase text-zinc-600">Na fila</div>
+                    <div className="text-sm font-semibold text-amber-400">{llmRateLimit.queuedRequests}</div>
+                  </div>
+                  <div className="rounded-md bg-zinc-950/60 px-3 py-2">
+                    <div className="text-[9px] uppercase text-zinc-600">Último minuto</div>
+                    <div className="text-sm font-semibold text-blue-400">{llmRateLimit.requestsLastMinute}</div>
+                  </div>
+                  <div className="rounded-md bg-zinc-950/60 px-3 py-2 col-span-2 md:col-span-1">
+                    <div className="text-[9px] uppercase text-zinc-600">Próxima chamada</div>
+                    <div className="text-sm font-semibold text-zinc-300">
+                      {llmRateLimit.nextRequestInMs > 0 ? `${(llmRateLimit.nextRequestInMs / 1000).toFixed(1)} s` : 'agora'}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </ScrollArea>

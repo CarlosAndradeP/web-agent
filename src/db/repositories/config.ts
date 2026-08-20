@@ -12,6 +12,8 @@ const DEFAULTS: Record<string, string> = {
   workspace_dir: envConfig.workspaceDir,
   agent_type: envConfig.agentType,
   registration_enabled: 'true',
+  llm_rate_limit_enabled: 'false',
+  llm_requests_per_minute: '60',
 };
 
 const LEGACY_MODEL_MAP: Record<string, string> = {

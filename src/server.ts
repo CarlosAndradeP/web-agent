@@ -39,6 +39,7 @@ import { authMiddleware } from './middleware/auth.js';
 import { adminMiddleware } from './middleware/admin.js';
 import { createLogger } from './services/logger.js';
 import { resolveUserWorkspacePath } from './lib/workspace-paths.js';
+import { llmRateLimiter } from './services/llm-rate-limiter.js';
 
 const log = createLogger('Server');
 const isProduction = process.env.NODE_ENV === 'production';
@@ -158,6 +159,10 @@ log.info('Initializing database', { dbPath });
 const db = initDatabase(dbPath);
 
 const configRepo = new ConfigRepository(db);
+llmRateLimiter.configure(
+  configRepo.get('llm_rate_limit_enabled') === 'true',
+  parseInt(configRepo.get('llm_requests_per_minute') ?? '60', 10),
+);
 const usersRepo = new UsersRepository(db);
 const creditsRepo = new CreditsRepository(db);
 const sessionsRepo = new SessionsRepository(db);
@@ -233,7 +238,7 @@ app.use('/api/auth', createAuthRouter(db, authLimiter, refreshLimiter));
 // These two endpoints use short-lived signed tokens instead of browser auth.
 app.use('/api/word', createWordPublicRouter(db));
 
-app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo, projectRouter));
+app.use('/api/admin', authMiddleware, adminMiddleware, createAdminRouter(db, usersRepo, creditsRepo, projectRouter, llmRateLimiter));
 
 app.use('/api/chat', authMiddleware, createChatRouter(db, taskManager, creditManager, compactionService));
 app.use('/api/models', authMiddleware, createModelsRouter(db, configRepo));

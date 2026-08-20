@@ -9,10 +9,11 @@ import { ConfigRepository } from '../db/repositories/config.js';
 import { ProjectRouter } from '../services/project-router.js';
 import { createLogger } from '../services/logger.js';
 import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
+import { LLM_RATE_LIMIT_BOUNDS, type LlmRateLimiter } from '../services/llm-rate-limiter.js';
 
 const log = createLogger('AdminAPI');
 
-export function createAdminRouter(db: Database.Database, usersRepo: UsersRepository, creditsRepo: CreditsRepository, projectRouter: ProjectRouter) {
+export function createAdminRouter(db: Database.Database, usersRepo: UsersRepository, creditsRepo: CreditsRepository, projectRouter: ProjectRouter, llmRateLimiter: LlmRateLimiter) {
   const router = Router();
   const modelConfigRepo = new ModelConfigRepository(db);
   const configRepo = new ConfigRepository(db);
@@ -236,21 +237,44 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
 
   router.get('/settings', (_req, res) => {
     const registrationEnabled = configRepo.get('registration_enabled') !== 'false';
-    res.json({ registrationEnabled });
+    res.json({ registrationEnabled, llmRateLimit: llmRateLimiter.getStatus() });
   });
 
   router.patch('/settings', (req, res) => {
-    const { registrationEnabled } = req.body;
+    const { registrationEnabled, llmRateLimitEnabled, llmRequestsPerMinute } = req.body;
     if (registrationEnabled !== undefined && typeof registrationEnabled !== 'boolean') {
       res.status(400).json({ error: 'registrationEnabled must be a boolean' });
+      return;
+    }
+    if (llmRateLimitEnabled !== undefined && typeof llmRateLimitEnabled !== 'boolean') {
+      res.status(400).json({ error: 'llmRateLimitEnabled must be a boolean' });
+      return;
+    }
+    if (llmRequestsPerMinute !== undefined && (
+      !Number.isInteger(llmRequestsPerMinute)
+      || llmRequestsPerMinute < LLM_RATE_LIMIT_BOUNDS.minRequestsPerMinute
+      || llmRequestsPerMinute > LLM_RATE_LIMIT_BOUNDS.maxRequestsPerMinute
+    )) {
+      res.status(400).json({
+        error: `llmRequestsPerMinute must be an integer between ${LLM_RATE_LIMIT_BOUNDS.minRequestsPerMinute} and ${LLM_RATE_LIMIT_BOUNDS.maxRequestsPerMinute}`,
+      });
       return;
     }
     if (registrationEnabled !== undefined) {
       configRepo.set('registration_enabled', String(registrationEnabled));
       log.info('Registration toggle updated', { registrationEnabled });
     }
+    if (llmRateLimitEnabled !== undefined) {
+      configRepo.set('llm_rate_limit_enabled', String(llmRateLimitEnabled));
+    }
+    if (llmRequestsPerMinute !== undefined) {
+      configRepo.set('llm_requests_per_minute', String(llmRequestsPerMinute));
+    }
+    const limiterEnabled = configRepo.get('llm_rate_limit_enabled') === 'true';
+    const requestsPerMinute = parseInt(configRepo.get('llm_requests_per_minute') ?? '60', 10);
+    const llmRateLimit = llmRateLimiter.configure(limiterEnabled, requestsPerMinute);
     const current = configRepo.get('registration_enabled') !== 'false';
-    res.json({ registrationEnabled: current });
+    res.json({ registrationEnabled: current, llmRateLimit });
   });
 
   router.get('/node-processes', (_req, res) => {

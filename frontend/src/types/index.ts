@@ -169,6 +169,19 @@ export interface NodeProcessInfo {
   username?: string;
 }
 
+export interface LlmRateLimitStatus {
+  enabled: boolean;
+  requestsPerMinute: number;
+  queuedRequests: number;
+  requestsLastMinute: number;
+  nextRequestInMs: number;
+}
+
+export interface AdminSettings {
+  registrationEnabled: boolean;
+  llmRateLimit: LlmRateLimitStatus;
+}
+
 export type OrchestratorSessionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed';
 export type OrchestratorRole = 'orchestrator' | 'auxiliar' | 'arquiteto' | 'programador' | 'revisor';
 

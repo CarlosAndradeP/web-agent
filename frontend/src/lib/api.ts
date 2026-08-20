@@ -1,4 +1,4 @@
-import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo, OrchestratorTaskInfo, WordWorkspaceStatus, WordWorkspaceInfo } from '../types';
+import type { AppConfig, ModelInfo, AdminModelInfo, Session, Task, Message, AgentStep, FileEntry, UserPublic, Project, CreditTransaction, NodeProcessInfo, OrchestratorStatusInfo, OrchestratorSessionInfo, OrchestratorStepInfo, OrchestratorTaskInfo, WordWorkspaceStatus, WordWorkspaceInfo, AdminSettings } from '../types';
 
 const BASE = '/api';
 
@@ -289,9 +289,9 @@ export const api = {
     restartNodeProcess: (uuid: string) =>
       fetchJSON<{ success: boolean }>(`${BASE}/admin/node-processes/${uuid}/restart`, { method: 'POST' }),
     settings: () =>
-      fetchJSON<{ registrationEnabled: boolean }>(`${BASE}/admin/settings`),
-    updateSettings: (data: { registrationEnabled?: boolean }) =>
-      fetchJSON<{ registrationEnabled: boolean }>(`${BASE}/admin/settings`, {
+      fetchJSON<AdminSettings>(`${BASE}/admin/settings`),
+    updateSettings: (data: { registrationEnabled?: boolean; llmRateLimitEnabled?: boolean; llmRequestsPerMinute?: number }) =>
+      fetchJSON<AdminSettings>(`${BASE}/admin/settings`, {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
