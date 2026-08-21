@@ -7,6 +7,7 @@ import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
 import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight, Server, Square, RotateCw, RefreshCw, CheckSquare, Square as SquareBox, Settings, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { cn } from '../lib/utils';
+import ModelBenchmarkPanel from './ModelBenchmarkPanel';
 
 type AdminTab = 'users' | 'models' | 'processes' | 'settings' | 'stats';
 
@@ -549,6 +550,8 @@ export default function AdminPanel() {
               <h2 className="text-sm font-semibold">Gerenciamento de modelos</h2>
               <span className="text-[10px] text-zinc-500">{models.length} modelos disponíveis</span>
             </div>
+
+            <ModelBenchmarkPanel models={models} onModelsChanged={loadModels} />
 
             {selectedModels.size > 0 && (
               <div className="flex items-center gap-2 mb-3 p-2 bg-zinc-800/50 rounded-md">

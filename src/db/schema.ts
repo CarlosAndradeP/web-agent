@@ -129,6 +129,31 @@ CREATE TABLE IF NOT EXISTS model_config (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS model_benchmark_runs (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'pending',
+  categories TEXT NOT NULL,
+  model_count INTEGER NOT NULL,
+  completed_models INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME DEFAULT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_benchmark_results (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES model_benchmark_runs(id) ON DELETE CASCADE,
+  model_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  success INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  quality_score INTEGER NOT NULL DEFAULT 0,
+  output_preview TEXT,
+  error_message TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS orchestrator_sessions (
   id TEXT PRIMARY KEY,
   session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,

@@ -272,6 +272,15 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ modelIds, enabled }),
       }),
+    modelBenchmarks: (limit = 5) =>
+      fetchJSON<{ runs: import('../types').ModelBenchmarkRun[] }>(`${BASE}/admin/models/benchmarks?limit=${limit}`),
+    modelBenchmark: (id: string) =>
+      fetchJSON<{ run: import('../types').ModelBenchmarkRun }>(`${BASE}/admin/models/benchmarks/${id}`),
+    startModelBenchmark: (data: { modelIds: string[]; categories: import('../types').BenchmarkCategory[]; repetitions: number }) =>
+      fetchJSON<{ run: import('../types').ModelBenchmarkRun }>(`${BASE}/admin/models/benchmarks`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     updateUser: (userId: string, data: { email?: string }) =>
       fetchJSON<{ success: boolean }>(`${BASE}/admin/users/${userId}`, {
         method: 'PATCH',

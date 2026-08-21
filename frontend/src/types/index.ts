@@ -171,6 +171,34 @@ export interface NodeProcessInfo {
   username?: string;
 }
 
+export type BenchmarkCategory = 'chat' | 'reasoning' | 'coding';
+
+export interface ModelBenchmarkResult {
+  id: string;
+  runId: string;
+  modelId: string;
+  category: BenchmarkCategory;
+  attempt: number;
+  success: boolean;
+  latencyMs: number | null;
+  qualityScore: number;
+  outputPreview: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface ModelBenchmarkRun {
+  id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  categories: BenchmarkCategory[];
+  modelCount: number;
+  completedModels: number;
+  createdBy: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  results: ModelBenchmarkResult[];
+}
+
 export interface LlmRateLimitStatus {
   enabled: boolean;
   requestsPerMinute: number;

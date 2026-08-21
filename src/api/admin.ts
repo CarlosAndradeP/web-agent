@@ -10,6 +10,8 @@ import { ProjectRouter } from '../services/project-router.js';
 import { createLogger } from '../services/logger.js';
 import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 import { LLM_RATE_LIMIT_BOUNDS, type LlmRateLimiter } from '../services/llm-rate-limiter.js';
+import { ModelBenchmarksRepository, type BenchmarkCategory } from '../db/repositories/model-benchmarks.js';
+import { ModelBenchmarkService } from '../services/model-benchmark.js';
 
 const log = createLogger('AdminAPI');
 
@@ -18,6 +20,8 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
   const modelConfigRepo = new ModelConfigRepository(db);
   const configRepo = new ConfigRepository(db);
   const projectsRepo = new ProjectsRepository(db);
+  const modelBenchmarksRepo = new ModelBenchmarksRepository(db);
+  const modelBenchmarkService = new ModelBenchmarkService(modelBenchmarksRepo);
 
   router.get('/users', (_req, res) => {
     const users = usersRepo.list();
@@ -239,6 +243,62 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
     const registrationEnabled = configRepo.get('registration_enabled') !== 'false';
     const agentSecurityMode = configRepo.get('agent_security_mode') === 'permissive' ? 'permissive' : 'protected';
     res.json({ registrationEnabled, agentSecurityMode, llmRateLimit: llmRateLimiter.getStatus() });
+  });
+
+  router.get('/models/benchmarks', (req, res) => {
+    const requestedLimit = Number(req.query.limit ?? 5);
+    const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 20) : 5;
+    res.json({ runs: modelBenchmarksRepo.latest(limit) });
+  });
+
+  router.get('/models/benchmarks/:id', (req, res) => {
+    const run = modelBenchmarksRepo.findById(req.params.id);
+    if (!run) {
+      res.status(404).json({ error: 'Benchmark não encontrado' });
+      return;
+    }
+    res.json({ run });
+  });
+
+  router.post('/models/benchmarks', async (req, res) => {
+    const requestedModelIds = req.body?.modelIds;
+    const requestedCategories = req.body?.categories;
+    const repetitions = Number(req.body?.repetitions ?? 1);
+    const allowedCategories: BenchmarkCategory[] = ['chat', 'reasoning', 'coding'];
+
+    if (!Array.isArray(requestedModelIds) || requestedModelIds.length === 0 || requestedModelIds.some(id => typeof id !== 'string')) {
+      res.status(400).json({ error: 'modelIds deve ser uma lista não vazia de modelos' });
+      return;
+    }
+    if (!Array.isArray(requestedCategories) || requestedCategories.length === 0 || requestedCategories.some(category => !allowedCategories.includes(category))) {
+      res.status(400).json({ error: 'categories deve conter chat, reasoning e/ou coding' });
+      return;
+    }
+    if (!Number.isInteger(repetitions) || repetitions < 1 || repetitions > 3) {
+      res.status(400).json({ error: 'repetitions deve ser um inteiro entre 1 e 3' });
+      return;
+    }
+
+    const activeRun = modelBenchmarksRepo.latest(1)[0];
+    if (activeRun && (activeRun.status === 'pending' || activeRun.status === 'running')) {
+      res.status(409).json({ error: 'Já existe um benchmark em execução', run: activeRun });
+      return;
+    }
+
+    try {
+      const appConfig = configRepo.getAll();
+      const available = new Set((await resolveModels(appConfig.apiBaseUrl, appConfig.apiKey)).map(model => model.id));
+      const modelIds = [...new Set<string>(requestedModelIds)].filter(id => available.has(id));
+      if (modelIds.length === 0) {
+        res.status(400).json({ error: 'Nenhum dos modelos informados está disponível na API' });
+        return;
+      }
+      const categories = [...new Set<BenchmarkCategory>(requestedCategories)];
+      const run = modelBenchmarkService.start(modelIds, categories, repetitions, appConfig, req.user?.userId);
+      res.status(202).json({ run });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   router.patch('/settings', (req, res) => {
