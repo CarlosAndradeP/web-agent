@@ -17,6 +17,7 @@ import { createProvider } from '../agent/provider.js';
 import { safeWorkspacePath } from '../agent/tools/sanitize.js';
 import { getUserWorkspaceDir } from '../lib/workspace-paths.js';
 import { createLogger, logSubAgentEvent } from '../services/logger.js';
+import { createAgentSecurityPolicy } from '../services/security-policy.js';
 
 const log = createLogger('OrchestratorRunner');
 
@@ -738,6 +739,7 @@ Requirements:
   private async callSubAgentWithContext(session: OrchestratorSession, role: string, context: TaskContext): Promise<SubAgentResult> {
     const enrichedPrompt = this.formatContextPrompt(context);
     const appConfig = this.getAppConfig();
+    const securityPolicy = createAgentSecurityPolicy(appConfig.agentSecurityMode);
     const workspaceDir = await this.resolveSessionWorkspaceDir(session);
     const projectType = await this.detectProjectType(workspaceDir);
     const objective = session.objective;
@@ -772,22 +774,22 @@ Requirements:
 
         switch (role) {
           case 'arquiteto': {
-            const agent = createArquitetoAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createArquitetoAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `arquiteto:${modelId}`);
             break;
           }
           case 'auxiliar': {
-            const agent = createAuxiliarAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createAuxiliarAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `auxiliar:${modelId}`);
             break;
           }
           case 'revisor': {
-            const agent = createRevisorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createRevisorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `revisor:${modelId}`);
             break;
           }
           default: {
-            const agent = createProgramadorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createProgramadorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: enrichedPrompt, abortSignal, timeout: timeoutOpts, onStepFinish }), `programador:${modelId}`);
             break;
           }
@@ -824,6 +826,7 @@ Requirements:
 
   private async callSubAgent(session: OrchestratorSession, role: string, taskDescription: string): Promise<SubAgentResult> {
     const appConfig = this.getAppConfig();
+    const securityPolicy = createAgentSecurityPolicy(appConfig.agentSecurityMode);
     const workspaceDir = await this.resolveSessionWorkspaceDir(session);
     const projectType = await this.detectProjectType(workspaceDir);
     const objective = session.objective;
@@ -858,22 +861,22 @@ Requirements:
 
         switch (role) {
           case 'arquiteto': {
-            const agent = createArquitetoAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createArquitetoAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `arquiteto:${modelId}`);
             break;
           }
           case 'auxiliar': {
-            const agent = createAuxiliarAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createAuxiliarAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `auxiliar:${modelId}`);
             break;
           }
           case 'revisor': {
-            const agent = createRevisorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createRevisorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `revisor:${modelId}`);
             break;
           }
           default: {
-            const agent = createProgramadorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId);
+            const agent = createProgramadorAgent(workspaceDir, appConfig.apiBaseUrl, appConfig.apiKey, projectType, objective, isPrimary ? undefined : modelId, securityPolicy);
             agentResult = await this.callWithRetry(() => agent.generate({ prompt: taskDescription, abortSignal, timeout: timeoutOpts, onStepFinish }), `programador:${modelId}`);
             break;
           }

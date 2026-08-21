@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { ApprovalMode, AppConfig, AppConfigPublic } from '../../types/index.js';
+import type { AgentSecurityMode, ApprovalMode, AppConfig, AppConfigPublic } from '../../types/index.js';
 import { config as envConfig } from '../../config.js';
 
 const DEFAULTS: Record<string, string> = {
@@ -14,6 +14,7 @@ const DEFAULTS: Record<string, string> = {
   registration_enabled: 'true',
   llm_rate_limit_enabled: 'false',
   llm_requests_per_minute: '60',
+  agent_security_mode: 'protected',
 };
 
 const LEGACY_MODEL_MAP: Record<string, string> = {
@@ -56,6 +57,7 @@ export class ConfigRepository {
       workspaceDir: this.get('workspace_dir')!,
       agentType: this.get('agent_type') ?? 'none',
       registrationEnabled: this.get('registration_enabled') ?? 'true',
+      agentSecurityMode: (this.get('agent_security_mode') === 'permissive' ? 'permissive' : 'protected') as AgentSecurityMode,
     };
   }
 
@@ -75,5 +77,6 @@ export class ConfigRepository {
     if (data.apiKey !== undefined && data.apiKey !== '') this.set('api_key', data.apiKey);
     if (data.workspaceDir !== undefined) this.set('workspace_dir', data.workspaceDir);
     if (data.agentType !== undefined) this.set('agent_type', data.agentType);
+    if (data.agentSecurityMode !== undefined) this.set('agent_security_mode', data.agentSecurityMode);
   }
 }

@@ -1,1 +1,1 @@
-{"version":3,"file":"install-package.d.ts","sourceRoot":"","sources":["../../../src/agent/tools/install-package.ts"],"names":[],"mappings":"AAyCA,wBAAgB,wBAAwB,CAAC,YAAY,EAAE,MAAM;;;;;;;GA6D5D"}
+{"version":3,"file":"install-package.d.ts","sourceRoot":"","sources":["../../../src/agent/tools/install-package.ts"],"names":[],"mappings":"AAMA,OAAO,EAAmC,KAAK,2BAA2B,EAAE,MAAM,mCAAmC,CAAC;AAoCtH,wBAAgB,wBAAwB,CAAC,YAAY,EAAE,MAAM,EAAE,cAAc,GAAE,2BAA6D;;;;;;;GAkE3I"}

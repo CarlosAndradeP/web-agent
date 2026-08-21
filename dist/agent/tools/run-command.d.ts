@@ -1,4 +1,5 @@
-export declare function createRunCommandTool(workspaceDir: string): import("ai").Tool<{
+import { type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
+export declare function createRunCommandTool(workspaceDir: string, securityPolicy?: AgentSecurityPolicySnapshot): import("ai").Tool<{
     command: string;
     timeout?: number | undefined;
 }, {

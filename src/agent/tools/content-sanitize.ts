@@ -22,7 +22,8 @@ const INJECTION_PATTERNS = [
   /instrucciones\s+nuevas\s*:/i,
 ];
 
-export function sanitizeForPrompt(content: string): string {
+export function sanitizeForPrompt(content: string, enabled = true): string {
+  if (!enabled) return content;
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();

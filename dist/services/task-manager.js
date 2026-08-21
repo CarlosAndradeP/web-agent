@@ -3,6 +3,7 @@ import { createAgent } from '../agent/index.js';
 import { ConfigRepository } from '../db/repositories/config.js';
 import { createLogger } from '../services/logger.js';
 import { v4 as uuid } from 'uuid';
+import { createAgentSecurityPolicy } from './security-policy.js';
 const log = createLogger('TaskManager');
 function streamChunkError(value) {
     if (value instanceof Error)
@@ -92,6 +93,7 @@ export class TaskManager {
         const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
         const conversationContext = this.taskConversationContext.get(taskId) ?? undefined;
         const workspaceProfile = this.taskWorkspaceProfiles.get(taskId) ?? 'development';
+        const securityPolicy = createAgentSecurityPolicy(appConfig.agentSecurityMode);
         const abortController = new AbortController();
         this.activeControllers.set(taskId, abortController);
         log.info('Running task (non-streaming)', { taskId, model, maxSteps: task.maxSteps, hasContext: !!conversationContext });
@@ -112,6 +114,7 @@ export class TaskManager {
                 userId,
                 conversationContext,
                 workspaceProfile,
+                securityPolicy,
             });
             const self = this;
             const creditManager = this.creditManager;
@@ -167,6 +170,7 @@ export class TaskManager {
         const projectInfo = this.taskProjectInfo.get(taskId) ?? undefined;
         const conversationContext = this.taskConversationContext.get(taskId) ?? undefined;
         const workspaceProfile = this.taskWorkspaceProfiles.get(taskId) ?? 'development';
+        const securityPolicy = createAgentSecurityPolicy(appConfig.agentSecurityMode);
         const abortController = new AbortController();
         this.activeControllers.set(taskId, abortController);
         log.info('Streaming task', { taskId, model, maxSteps: task.maxSteps, sessionId: task.sessionId, hasContext: !!conversationContext });
@@ -186,6 +190,7 @@ export class TaskManager {
             userId,
             conversationContext,
             workspaceProfile,
+            securityPolicy,
         });
         log.info('Agent created, calling stream()...', { taskId, model });
         const costPerStep = this.creditManager.getCostPerStep(model);

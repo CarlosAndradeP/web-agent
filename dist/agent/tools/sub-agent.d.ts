@@ -1,9 +1,11 @@
+import { type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
 export declare function createInvokeSubAgentTool(options: {
     workspaceDir: string;
     apiBaseUrl: string;
     apiKey: string;
     agentType?: string;
     abortSignal?: AbortSignal;
+    securityPolicy?: AgentSecurityPolicySnapshot;
 }): import("ai").Tool<{
     task: string;
     maxSteps?: number | undefined;

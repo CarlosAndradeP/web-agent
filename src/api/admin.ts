@@ -237,11 +237,12 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
 
   router.get('/settings', (_req, res) => {
     const registrationEnabled = configRepo.get('registration_enabled') !== 'false';
-    res.json({ registrationEnabled, llmRateLimit: llmRateLimiter.getStatus() });
+    const agentSecurityMode = configRepo.get('agent_security_mode') === 'permissive' ? 'permissive' : 'protected';
+    res.json({ registrationEnabled, agentSecurityMode, llmRateLimit: llmRateLimiter.getStatus() });
   });
 
   router.patch('/settings', (req, res) => {
-    const { registrationEnabled, llmRateLimitEnabled, llmRequestsPerMinute } = req.body;
+    const { registrationEnabled, llmRateLimitEnabled, llmRequestsPerMinute, agentSecurityMode } = req.body;
     if (registrationEnabled !== undefined && typeof registrationEnabled !== 'boolean') {
       res.status(400).json({ error: 'registrationEnabled must be a boolean' });
       return;
@@ -260,6 +261,10 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
       });
       return;
     }
+    if (agentSecurityMode !== undefined && agentSecurityMode !== 'protected' && agentSecurityMode !== 'permissive') {
+      res.status(400).json({ error: 'agentSecurityMode must be "protected" or "permissive"' });
+      return;
+    }
     if (registrationEnabled !== undefined) {
       configRepo.set('registration_enabled', String(registrationEnabled));
       log.info('Registration toggle updated', { registrationEnabled });
@@ -270,11 +275,22 @@ export function createAdminRouter(db: Database.Database, usersRepo: UsersReposit
     if (llmRequestsPerMinute !== undefined) {
       configRepo.set('llm_requests_per_minute', String(llmRequestsPerMinute));
     }
+    if (agentSecurityMode !== undefined) {
+      const previousMode = configRepo.get('agent_security_mode') === 'permissive' ? 'permissive' : 'protected';
+      configRepo.set('agent_security_mode', agentSecurityMode);
+      log.warn('Agent security mode updated', {
+        adminUserId: req.user?.userId,
+        ip: req.ip,
+        previousMode,
+        agentSecurityMode,
+      });
+    }
     const limiterEnabled = configRepo.get('llm_rate_limit_enabled') === 'true';
     const requestsPerMinute = parseInt(configRepo.get('llm_requests_per_minute') ?? '60', 10);
     const llmRateLimit = llmRateLimiter.configure(limiterEnabled, requestsPerMinute);
     const current = configRepo.get('registration_enabled') !== 'false';
-    res.json({ registrationEnabled: current, llmRateLimit });
+    const currentAgentSecurityMode = configRepo.get('agent_security_mode') === 'permissive' ? 'permissive' : 'protected';
+    res.json({ registrationEnabled: current, agentSecurityMode: currentAgentSecurityMode, llmRateLimit });
   });
 
   router.get('/node-processes', (_req, res) => {

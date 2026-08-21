@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validateCommand, buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
 import { logToolExecution } from '../../services/logger.js';
+import { PROTECTED_AGENT_SECURITY_POLICY } from '../../services/security-policy.js';
 const execFileAsync = promisify(execFile);
 const ALLOWED_NPM_SCOPE_PREFIXES = ['@'];
 const BLOCKED_PACKAGES = [
@@ -11,8 +12,8 @@ const BLOCKED_PACKAGES = [
     'vue-cli-plugin-exec',
     'babel-plugin-exec',
 ];
-function validatePackageName(pkg, manager) {
-    if (BLOCKED_PACKAGES.includes(pkg.toLowerCase())) {
+function validatePackageName(pkg, manager, policyEnabled) {
+    if (policyEnabled && BLOCKED_PACKAGES.includes(pkg.toLowerCase())) {
         return { allowed: false, reason: `Package "${pkg}" is blocked by security policy` };
     }
     if (manager === 'npm') {
@@ -32,9 +33,11 @@ function validatePackageName(pkg, manager) {
     }
     return { allowed: true };
 }
-export function createInstallPackageTool(workspaceDir) {
+export function createInstallPackageTool(workspaceDir, securityPolicy = PROTECTED_AGENT_SECURITY_POLICY) {
     return tool({
-        description: 'Install an npm or pip package in the workspace',
+        description: securityPolicy.packagePolicyEnabled
+            ? 'Install an npm or pip package in the workspace (npm lifecycle scripts disabled)'
+            : 'Install an npm or pip package in the workspace (npm lifecycle scripts allowed)',
         inputSchema: z.object({
             package: z.string().describe('Package name (e.g., "lodash" or "requests")'),
             manager: z.enum(['npm', 'pip']).describe('Package manager to use'),
@@ -42,15 +45,16 @@ export function createInstallPackageTool(workspaceDir) {
         execute: async ({ package: pkg, manager }) => {
             const startTime = Date.now();
             logToolExecution('installPackage', undefined, 'start', { input: { package: pkg, manager } });
-            const pkgCheck = validatePackageName(pkg, manager);
+            const pkgCheck = validatePackageName(pkg, manager, securityPolicy.packagePolicyEnabled);
             if (!pkgCheck.allowed) {
                 logToolExecution('installPackage', undefined, 'error', { error: pkgCheck.reason, input: { package: pkg }, durationMs: Date.now() - startTime });
                 return { stdout: '', stderr: pkgCheck.reason, exitCode: 126 };
             }
+            const ignoreScripts = securityPolicy.packagePolicyEnabled ? ' --ignore-scripts' : '';
             const command = manager === 'npm'
-                ? `npm install --prefix "${workspaceDir}" ${pkg} --ignore-scripts`
+                ? `npm install --prefix "${workspaceDir}" ${pkg}${ignoreScripts}`
                 : `pip install --no-cache-dir ${pkg}`;
-            const policyResult = validateCommand(command, workspaceDir);
+            const policyResult = validateCommand(command, workspaceDir, securityPolicy.commandPolicyEnabled);
             if (!policyResult.allowed) {
                 logToolExecution('installPackage', undefined, 'error', { error: policyResult.reason, input: { package: pkg }, durationMs: Date.now() - startTime });
                 return { stdout: '', stderr: policyResult.reason, exitCode: 126 };
@@ -58,7 +62,10 @@ export function createInstallPackageTool(workspaceDir) {
             try {
                 let stdout, stderr;
                 if (manager === 'npm') {
-                    ({ stdout, stderr } = await execFileAsync('npm', ['install', '--prefix', workspaceDir, pkg, '--ignore-scripts'], {
+                    const npmArgs = ['install', '--prefix', workspaceDir, pkg];
+                    if (securityPolicy.packagePolicyEnabled)
+                        npmArgs.push('--ignore-scripts');
+                    ({ stdout, stderr } = await execFileAsync('npm', npmArgs, {
                         timeout: 60000,
                         maxBuffer: 1024 * 1024 * 5,
                         cwd: workspaceDir,

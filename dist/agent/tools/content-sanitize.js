@@ -21,7 +21,9 @@ const INJECTION_PATTERNS = [
     /(nova|nuevas?)\s+instru(c|ç)(o|õ)es\s*:/i,
     /instrucciones\s+nuevas\s*:/i,
 ];
-export function sanitizeForPrompt(content) {
+export function sanitizeForPrompt(content, enabled = true) {
+    if (!enabled)
+        return content;
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trim();

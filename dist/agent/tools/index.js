@@ -10,6 +10,7 @@ import { createInstallPackageTool } from './install-package.js';
 import { createInvokeSubAgentTool } from './sub-agent.js';
 import { createLogger } from '../../services/logger.js';
 import { v4 as uuid } from 'uuid';
+import { PROTECTED_AGENT_SECURITY_POLICY } from '../../services/security-policy.js';
 const log = createLogger('ToolSet');
 function wrapWithApproval(tool, toolName, approvalManager, userId) {
     const originalExecute = tool.execute;
@@ -34,17 +35,18 @@ function wrapWithApproval(tool, toolName, approvalManager, userId) {
 }
 export function buildToolSet(options) {
     const workspaceProfile = options.workspaceProfile ?? 'development';
-    log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode, workspaceProfile });
+    const securityPolicy = options.securityPolicy ?? PROTECTED_AGENT_SECURITY_POLICY;
+    log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode, workspaceProfile, securityMode: securityPolicy.mode });
     const allTools = {
         writeFile: createWriteFileTool(options.workspaceDir),
-        readFile: createReadFileTool(options.workspaceDir),
+        readFile: createReadFileTool(options.workspaceDir, securityPolicy),
         listFiles: createListFilesTool(options.workspaceDir),
         deleteFile: createDeleteFileTool(options.workspaceDir),
-        runCommand: createRunCommandTool(options.workspaceDir),
-        executeCode: createExecuteCodeTool(options.workspaceDir),
+        runCommand: createRunCommandTool(options.workspaceDir, securityPolicy),
+        executeCode: createExecuteCodeTool(options.workspaceDir, securityPolicy),
         searchFiles: createSearchFilesTool(options.workspaceDir),
-        webFetch: createWebFetchTool(),
-        installPackage: createInstallPackageTool(options.workspaceDir),
+        webFetch: createWebFetchTool(securityPolicy),
+        installPackage: createInstallPackageTool(options.workspaceDir, securityPolicy),
     };
     // The Word agent is deliberately isolated from programming-oriented delegation
     // and package installation. Its document prompt and available tools must agree.
@@ -58,9 +60,10 @@ export function buildToolSet(options) {
             apiKey: options.apiKey,
             agentType: options.agentType,
             abortSignal: options.abortSignal,
+            securityPolicy,
         });
     }
-    if (options.approvalMode === 'none' || !options.approvalManager) {
+    if (!securityPolicy.approvalsEnabled || options.approvalMode === 'none' || !options.approvalManager) {
         log.info('Approval mode: none — all tools execute immediately');
         return allTools;
     }

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import type { UserPublic, CreditTransaction, AdminModelInfo, NodeProcessInfo, LlmRateLimitStatus } from '../types';
+import type { UserPublic, CreditTransaction, AdminModelInfo, NodeProcessInfo, LlmRateLimitStatus, AgentSecurityMode } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { ScrollArea } from './ui/scroll-area';
-import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight, Server, Square, RotateCw, RefreshCw, CheckSquare, Square as SquareBox, Settings } from 'lucide-react';
+import { Users, CreditCard, BarChart3, Cpu, ToggleLeft, ToggleRight, Server, Square, RotateCw, RefreshCw, CheckSquare, Square as SquareBox, Settings, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 type AdminTab = 'users' | 'models' | 'processes' | 'settings' | 'stats';
@@ -47,6 +47,7 @@ export default function AdminPanel() {
 
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
   const [registrationEnabled, setRegistrationEnabled] = useState(true);
+  const [agentSecurityMode, setAgentSecurityMode] = useState<AgentSecurityMode>('protected');
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [llmRateLimit, setLlmRateLimit] = useState<LlmRateLimitStatus>({
     enabled: false,
@@ -63,6 +64,7 @@ export default function AdminPanel() {
     try {
       const data = await api.admin.settings();
       setRegistrationEnabled(data.registrationEnabled);
+      setAgentSecurityMode(data.agentSecurityMode);
       setLlmRateLimit(data.llmRateLimit);
       setLlmRequestsPerMinute(String(data.llmRateLimit.requestsPerMinute));
     } catch (err) {
@@ -309,6 +311,26 @@ export default function AdminPanel() {
     }
   };
 
+  const handleToggleAgentSecurity = async () => {
+    const nextMode: AgentSecurityMode = agentSecurityMode === 'protected' ? 'permissive' : 'protected';
+    if (nextMode === 'permissive') {
+      const confirmation = window.prompt(
+        'O modo permissivo desativa as proteções operacionais dos agentes para novas tarefas.\n\nDigite ATIVAR MODO PERMISSIVO para confirmar.'
+      );
+      if (confirmation !== 'ATIVAR MODO PERMISSIVO') return;
+    }
+
+    setSettingsLoading(true);
+    try {
+      const data = await api.admin.updateSettings({ agentSecurityMode: nextMode });
+      setAgentSecurityMode(data.agentSecurityMode);
+    } catch (err) {
+      console.error('Failed to toggle agent security mode:', err);
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
   const handleSaveLlmRateLimit = async () => {
     const requestsPerMinute = Number(llmRequestsPerMinute);
     if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 1 || requestsPerMinute > 10000) return;
@@ -359,6 +381,17 @@ export default function AdminPanel() {
             );
           })}
         </nav>
+        {agentSecurityMode === 'permissive' && (
+          <button
+            type="button"
+            onClick={() => setTab('settings')}
+            className="flex mt-3 w-full items-start gap-2 rounded-md border border-red-900/70 bg-red-950/50 px-2.5 py-2 text-left text-[10px] text-red-300"
+            title="Abrir ajustes de segurança"
+          >
+            <ShieldAlert className="h-4 w-4 shrink-0" />
+            <span><strong className="block">Modo permissivo</strong>Novas tarefas estão com proteções reduzidas.</span>
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -724,6 +757,45 @@ export default function AdminPanel() {
             <h2 className="text-sm font-semibold mb-4">Ajustes</h2>
 
             <div className="space-y-4">
+              <div className={cn(
+                'p-4 rounded-lg border space-y-3',
+                agentSecurityMode === 'protected'
+                  ? 'bg-emerald-950/20 border-emerald-900/60'
+                  : 'bg-red-950/30 border-red-900/70'
+              )}>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    {agentSecurityMode === 'protected'
+                      ? <ShieldCheck className="h-5 w-5 text-emerald-400 shrink-0" />
+                      : <ShieldAlert className="h-5 w-5 text-red-400 shrink-0" />}
+                    <div>
+                      <div className="text-xs font-medium text-zinc-100">Proteções do agente</div>
+                      <div className="text-[10px] text-zinc-400 mt-0.5 max-w-2xl">
+                        {agentSecurityMode === 'protected'
+                          ? 'Aprovações configuradas, política de comandos, filtros de código, rede e prompt estão ativos.'
+                          : 'Modo permissivo: novas tarefas ignoram aprovações e restrições operacionais. Autenticação, ownership, workspace e segredos permanecem protegidos.'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleAgentSecurity}
+                    disabled={settingsLoading}
+                    className={cn(
+                      'flex items-center gap-1.5 text-xs font-medium transition-colors shrink-0 disabled:opacity-50',
+                      agentSecurityMode === 'protected' ? 'text-emerald-400' : 'text-red-400'
+                    )}
+                    title={agentSecurityMode === 'protected' ? 'Ativar modo permissivo' : 'Reativar proteções do agente'}
+                  >
+                    {agentSecurityMode === 'protected' ? <ToggleRight className="h-5 w-5" /> : <ToggleLeft className="h-5 w-5" />}
+                    {agentSecurityMode === 'protected' ? 'Protegido' : 'Permissivo'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-zinc-500">
+                  A alteração vale para novas tarefas e novas execuções do orquestrador. Execuções em andamento mantêm o modo capturado no início.
+                </p>
+              </div>
+
               <div className="flex items-center justify-between p-4 bg-zinc-900 border border-zinc-800 rounded-lg">
                 <div>
                   <div className="text-xs font-medium text-zinc-200">Cadastro de usuários</div>

@@ -4,10 +4,11 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { validateCommand, buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
 import { logToolExecution } from '../../services/logger.js';
+import { PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
 
 const execAsync = promisify(exec);
 
-export function createRunCommandTool(workspaceDir: string) {
+export function createRunCommandTool(workspaceDir: string, securityPolicy: AgentSecurityPolicySnapshot = PROTECTED_AGENT_SECURITY_POLICY) {
   return tool({
     description: 'Execute a shell command in the workspace directory',
     inputSchema: z.object({
@@ -18,7 +19,7 @@ export function createRunCommandTool(workspaceDir: string) {
       const startTime = Date.now();
       logToolExecution('runCommand', undefined, 'start', { input: { command: command.slice(0, 200), timeout } });
 
-      const policyResult = validateCommand(command, workspaceDir);
+      const policyResult = validateCommand(command, workspaceDir, securityPolicy.commandPolicyEnabled);
       if (!policyResult.allowed) {
         logToolExecution('runCommand', undefined, 'error', { error: policyResult.reason, input: { command: command.slice(0, 200) }, durationMs: Date.now() - startTime });
         return { stdout: '', stderr: policyResult.reason!, exitCode: 126 };

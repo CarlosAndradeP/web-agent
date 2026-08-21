@@ -1,4 +1,4 @@
-export declare function validateCommand(command: string, workspaceDir?: string): {
+export declare function validateCommand(command: string, workspaceDir?: string, policyEnabled?: boolean): {
     allowed: boolean;
     reason?: string;
 };

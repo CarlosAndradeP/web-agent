@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { sanitizeForPrompt } from './content-sanitize.js';
 import { resolve4, resolve6 } from 'node:dns/promises';
 import { logToolExecution } from '../../services/logger.js';
+import { PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
 
 const BLOCKED_HOSTS = [
   'localhost', '127.0.0.1', '0.0.0.0', '::1',
@@ -24,9 +25,10 @@ const BLOCKED_IP_PREFIXES = [
   '100.68.', '100.69.', '100.70.', '100.71.',
 ];
 
-function isBlockedIP(ip: string): boolean {
+function isBlockedIP(ip: string, policyEnabled = true): boolean {
   // Check against prefix list
   for (const prefix of BLOCKED_IP_PREFIXES) {
+    if (!policyEnabled && !['169.254.', '127.', '0.'].includes(prefix)) continue;
     if (ip.startsWith(prefix)) return true;
   }
 
@@ -45,16 +47,16 @@ function isBlockedIP(ip: string): boolean {
   if (/^0000:0000:0000:0000:0000:ffff:/i.test(ip)) return true;
   // IPv6 link-local fe80::/10 and unique-local fc00::/7 (private ranges)
   if (/^fe[89ab][0-9a-f]{2}:/i.test(ip)) return true;
-  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
+  if (policyEnabled && /^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
 
   return false;
 }
 
-async function resolveAndCheckIP(hostname: string): Promise<boolean> {
+async function resolveAndCheckIP(hostname: string, policyEnabled: boolean): Promise<boolean> {
   try {
     const addresses = await resolve4(hostname);
     for (const addr of addresses) {
-      if (isBlockedIP(addr)) return true;
+      if (isBlockedIP(addr, policyEnabled)) return true;
     }
   } catch {
     // DNS resolution may fail — try IPv6
@@ -62,7 +64,7 @@ async function resolveAndCheckIP(hostname: string): Promise<boolean> {
   try {
     const addresses = await resolve6(hostname);
     for (const addr of addresses) {
-      if (isBlockedIP(addr)) return true;
+      if (isBlockedIP(addr, policyEnabled)) return true;
     }
   } catch {
     // Both failed — if hostname is not an IP, allow (could be external)
@@ -70,7 +72,7 @@ async function resolveAndCheckIP(hostname: string): Promise<boolean> {
   return false;
 }
 
-export async function validateUrl(url: string): Promise<{ allowed: boolean; reason?: string }> {
+export async function validateUrl(url: string, securityPolicy: AgentSecurityPolicySnapshot = PROTECTED_AGENT_SECURITY_POLICY): Promise<{ allowed: boolean; reason?: string }> {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -85,14 +87,14 @@ export async function validateUrl(url: string): Promise<{ allowed: boolean; reas
     }
 
     // Check if hostname is a direct IP
-    if (isBlockedIP(hostname)) {
+    if (isBlockedIP(hostname, securityPolicy.webFetchPolicyEnabled)) {
       return { allowed: false, reason: 'Private/internal IP access blocked' };
     }
 
     // DNS resolution check — block resolved IPs that are private
     const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname);
     if (!isIP) {
-      const blocked = await resolveAndCheckIP(hostname);
+      const blocked = await resolveAndCheckIP(hostname, securityPolicy.webFetchPolicyEnabled);
       if (blocked) {
         return { allowed: false, reason: 'Domain resolves to private/internal IP' };
       }
@@ -104,7 +106,7 @@ export async function validateUrl(url: string): Promise<{ allowed: boolean; reas
   }
 }
 
-export function createWebFetchTool() {
+export function createWebFetchTool(securityPolicy: AgentSecurityPolicySnapshot = PROTECTED_AGENT_SECURITY_POLICY) {
   return tool({
     description: 'Fetch content from a URL via HTTP GET',
     inputSchema: z.object({
@@ -114,36 +116,16 @@ export function createWebFetchTool() {
       const startTime = Date.now();
       logToolExecution('webFetch', undefined, 'start', { input: { url } });
 
-      const urlCheck = await validateUrl(url);
+      const urlCheck = await validateUrl(url, securityPolicy);
       if (!urlCheck.allowed) {
         logToolExecution('webFetch', undefined, 'error', { error: urlCheck.reason, input: { url }, durationMs: Date.now() - startTime });
         return { error: urlCheck.reason, status: 0 };
       }
 
       try {
-        // Defense in depth against DNS rebinding (TOCTOU): re-resolve the
-        // hostname immediately before fetch and reject if the resolved IP is
-        // private/internal. Combined with the earlier lookup this narrows the
-        // TOCTOU window, though fetch() may still re-resolve internally.
-        const parsed = new URL(url);
-        const hostname = parsed.hostname.replace(/^\[(.+)\]$/, '$1');
-        const isDirectIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname);
-        if (!isDirectIP) {
-          let resolvedBlocked = false;
-          try {
-            const addrs = (await import('node:dns/promises')).lookup(hostname, { all: true });
-            const list = await addrs;
-            for (const a of list) {
-              if (isBlockedIP(a.address)) { resolvedBlocked = true; break; }
-            }
-          } catch {}
-          if (resolvedBlocked) {
-            return { error: 'Domain re-resolved to private/internal IP', status: 0 };
-          }
-        }
-        const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const response = await fetchWithValidatedRedirects(url, securityPolicy);
         let content = await response.text();
-        content = sanitizeForPrompt(content);
+        content = sanitizeForPrompt(content, securityPolicy.promptSanitizationEnabled);
         logToolExecution('webFetch', undefined, 'success', {
           output: { status: response.status, contentLength: content.length },
           durationMs: Date.now() - startTime,
@@ -159,4 +141,36 @@ export function createWebFetchTool() {
       }
     },
   });
+}
+
+async function fetchWithValidatedRedirects(initialUrl: string, securityPolicy: AgentSecurityPolicySnapshot): Promise<Response> {
+  let currentUrl = initialUrl;
+  for (let redirectCount = 0; redirectCount <= 5; redirectCount++) {
+    const urlCheck = await validateUrl(currentUrl, securityPolicy);
+    if (!urlCheck.allowed) throw new Error(urlCheck.reason);
+
+    // Defense in depth against DNS rebinding immediately before each request,
+    // including every redirect destination.
+    const parsed = new URL(currentUrl);
+    const hostname = parsed.hostname.replace(/^\[(.+)\]$/, '$1');
+    const isDirectIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname);
+    if (!isDirectIP) {
+      try {
+        const addresses = await (await import('node:dns/promises')).lookup(hostname, { all: true });
+        if (addresses.some(address => isBlockedIP(address.address, securityPolicy.webFetchPolicyEnabled))) {
+          throw new Error('Domain re-resolved to a blocked IP');
+        }
+      } catch (error: any) {
+        if (String(error?.message).includes('blocked IP')) throw error;
+      }
+    }
+
+    const response = await fetch(currentUrl, { signal: AbortSignal.timeout(15000), redirect: 'manual' });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get('location');
+    if (!location) return response;
+    if (redirectCount === 5) throw new Error('Too many redirects');
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+  throw new Error('Too many redirects');
 }

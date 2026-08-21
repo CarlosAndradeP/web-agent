@@ -1,137 +1,318 @@
-# Security Model — Web Agent
+# Inventário de segurança — Web Agent
 
-## Overview
+> Levantamento atualizado em 21/08/2026. A chave administrativa de proteções do agente está implementada; autenticação, ownership, workspace, segredos e assinaturas permanecem invariantes.
 
-Web Agent is a multi-user platform where an autonomous AI agent executes code and file operations on behalf of users. This document describes the security architecture, mitigations in place, known limitations, and reporting guidelines.
+## Resumo executivo
 
-## Threat Model
+O projeto possui agora uma política central para as proteções operacionais dos agentes. As demais proteções continuam distribuídas entre configuração de inicialização, middleware HTTP, autorização dentro dos endpoints, autenticação do Socket.IO, resolução de caminhos, limites de recursos, publicação de projetos e integrações externas.
 
-| Actor | Capability | Mitigated? |
+Já existem três controles dinâmicos, mas independentes:
+
+| Controle atual | Persistência | Painel/API | Alcance |
+|---|---|---|---|
+| `approval_mode` / `approval_tools` | tabela `config` | `ConfigPanel` e `PUT /api/config` | Somente ferramentas do agente principal |
+| `registration_enabled` | tabela `config` | Admin > Ajustes e `PATCH /api/admin/settings` | Somente cadastro de novos usuários |
+| `llm_rate_limit_enabled` | tabela `config` + memória | Admin > Ajustes e `PATCH /api/admin/settings` | Somente chamadas de saída ao provedor LLM |
+| `agent_security_mode` | tabela `config` | Admin > Ajustes e `PATCH /api/admin/settings` | Agente principal, subagente e quatro papéis do orquestrador |
+
+`src/services/security-policy.ts` converte `protected`/`permissive` em um snapshot imutável compartilhado. O padrão e o fallback são sempre `protected`.
+
+### Limite recomendado para o futuro botão
+
+“Desativar a segurança inteira” não deve significar remover autenticação, autorização entre usuários, isolamento de caminhos, validação de webhooks ou proteção de segredos. Essas camadas são fronteiras de dados e de infraestrutura; desligá-las permitiria que um usuário acessasse arquivos, sessões, créditos e processos de outros usuários ou do host.
+
+A implementação separa:
+
+- **Controles operacionais alternáveis:** aprovações humanas, bloqueio de comandos, filtro de código, SSRF do `webFetch`, sanitização de conteúdo, regras de prompt, instalação de pacotes e limites adicionais do agente.
+- **Invariantes sempre ativos:** JWT, função de administrador, ownership/IDOR, isolamento de workspace e symlinks, assinatura de webhook/ONLYOFFICE, filtragem de segredos do ambiente, limites básicos de corpo/upload e validações de integridade.
+
+Uma chave administrativa pode coordenar o primeiro grupo. O segundo deve permanecer `fail closed`, mesmo no modo permissivo.
+
+## Mapa das camadas e bloqueios
+
+### 1. Inicialização, segredos e configuração de implantação
+
+| Local | O que faz | Natureza |
 |---|---|---|
-| Malicious user (agent operator) | Uses agent tools to escape workspace, access other users' data, or attack the host | Partially — see per-mitigation status below |
-| Cross-user attack | User A accesses User B's workspace, sessions, tasks, or credits | Yes — workspace isolation + API authorization |
-| External attacker (unauthenticated) | Hits public endpoints, tries brute-force login, exploits SSRF via agent | Yes — auth middleware, rate limiting, SSRF protection |
-| Prompt injection via workspace content | Malicious files in workspace trick agent into executing unintended actions | Partially — system prompt hardening, no content filtering |
+| `src/config.ts` | Carrega os segredos de access token, refresh token, administrador e ONLYOFFICE. Em produção encerra o processo se estiverem ausentes; em desenvolvimento usa valores inseguros com aviso. Também lê CORS e proxy confiável. | Invariante de implantação |
+| `.env.example` | Documenta JWTs separados, senha administrativa, CORS, `TRUST_PROXY`, Mercado Pago e ONLYOFFICE. | Documentação/configuração |
+| `docker-compose.yml` | Exige `JWT_SECRET`, `ADMIN_PASSWORD` e `ONLYOFFICE_JWT_SECRET`; não publica diretamente as portas internas com `ports`; habilita JWT no ONLYOFFICE. | Invariante de implantação |
+| `Dockerfile` | Executa em produção, cria diretórios, usa `www-data` para workspace/projetos e define UID/GID 33 para comandos do agente. | Isolamento de processo |
+| `.dockerignore` e `.gitignore` | Excluem `.env`, bancos, WAL, workspace, dados, dependências e artefatos do contexto Docker/Git. | Proteção contra vazamento |
 
-## Mitigations
+Observação: `config.ts` não exige comprimento ou entropia mínima dos segredos; apenas presença em produção.
 
-### Authentication & Authorization
+### 2. Autenticação HTTP e sessões
 
-- **JWT with access/refresh tokens** — Access token 15min, refresh token 7d with rotation
-- **Separate secrets** — `ACCESS_TOKEN_SECRET` and `REFRESH_TOKEN_SECRET` are recommended (the legacy `JWT_SECRET` env maps to both for backward compatibility). Rotating either secret forces logout for the corresponding token type
-- **Production requires secrets** — Server refuses to start in production without both `ACCESS_TOKEN_SECRET`/`REFRESH_TOKEN_SECRET` (or `JWT_SECRET`) and `ADMIN_PASSWORD`
-- **Admin password authoritative** — On every boot the persisted admin password hash is re-synced to match the `ADMIN_PASSWORD` env value (changes via UI are reverted on restart; manage the secret via env/secrets, not the UI)
-- **Rate limiting** — Login/register: 5 req/min per IP. Refresh: 20 req/min per IP. In-memory limiter with 10k-key FIFO eviction cap; per-replica only (single-container deploy)
-- **No JWT in URLs** — HTTP downloads use Authorization header, no query-param token fallback for HTTP
-- **WebSocket authentication** — JWT verified on Socket.IO handshake; event handlers verify resource ownership via `socket.data.userId`. NB: socket handshake also accepts `socket.handshake.query.token` as a fallback to `auth.token` (see Known Limitations)
-- **API authorization** — Non-admin users can only access their own tasks, sessions, and resources. Admin bypass preserved for management endpoints
-- **Config API** — `GET /api/config/` filters `apiKey` for non-admin users
-
-### Workspace Isolation
-
-- **Per-user workspaces** — Each user operates in `workspace/<username>/`
-- **Path traversal protection** — `safeWorkspacePath()` (in `src/agent/tools/sanitize.ts`) validates all file paths in both agent tools and file API. Resolves `../` sequences and rejects paths outside the workspace
-- **Single source of truth** — Both `api/files.ts` and agent tools import `safeWorkspacePath` from `sanitize.ts` — no duplicate implementations
-- **Agent scoped to project** — Agent operates within the active project subfolder, not the user's root workspace
-
-### Agent Tool Security
-
-- **Command policy** — `runCommand` tool blocks dangerous patterns via `command-policy.ts`: `rm -rf /`, reading secrets (`.env`, `.key`, `.pem`), exfiltration via `curl`/`wget` with shell expansion, `env`/`printenv`, reverse shells, direct DB access
-- **SSRF protection** — `webFetch` blocks: `localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`, link-local (`169.254.*`), cloud metadata (`169.254.169.254`), private IP ranges, octal IPs (`0177.0.0.1`), hex IPs (`0x7f000001`), decimal IPs, IPv6-mapped addresses. Post-DNS resolution check via `dns.promises.resolve4/resolve6`
-- **No shell interpolation** — `installPackage` uses `execFile()` with argument array instead of `exec()` — eliminates shell injection via package names
-- **Zip Slip protection** — ZIP extraction iterates entries manually, validates each path with `safeWorkspacePath()` before extracting (no `extractAllTo()`)
-- **Content-Disposition injection** — `sanitizeFilename()` strips quotes, CRLF, and special characters
-
-### Credit System
-
-- **Atomic deduction** — `deduct()` uses `UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ?` with `changes` count check. No read-modify-write race (TOCTOU eliminated)
-- **Atomic addition** — `addCredits()` uses `UPDATE users SET credits = credits + ?`
-- **Pre-task credit check** — Chat endpoint returns 402 if user has zero credits before streaming starts
-- **Real-time updates** — Credit changes broadcast via Socket.IO to user-specific rooms (`io.to('user:ID').emit()`), never global broadcast
-
-### Database
-
-- **WAL mode** — SQLite in WAL mode for concurrent read/write
-- **Foreign keys with CASCADE** — Orphaned records cleaned automatically
-- **Indexes** — 7 indexes on `user_id` and `session_id` columns for query performance and to prevent full-table scans
-
-### Infrastructure
-
-- **Docker** — Multi-stage `Dockerfile` (frontend + backend + runtime) on `php:8.3-apache-bookworm`. **`.dockerignore` currently excludes only `*.log`, `README.md`, `CLAUDE.md`, `.claude`** — see Known Limitations for the gap this creates
-- **Apache** — Directory listing disabled (`Options -Indexes FollowSymLinks`), `ProxyRequests Off` (no forward proxying)
-- **Async logging** — Logger uses `createWriteStream` in append mode, never `appendFileSync` (no event loop blocking). No log rotation (one file per day, unbounded)
-- **Graceful shutdown** — `SIGINT`/`SIGTERM` handler closes DB WAL, kills Node.js project subprocesses, releases ports, unmounts symlinks, shuts down heartbeat and orchestrator runners
-- **Production fail-fast** — `config.ts` calls `process.exit(1)` if any required secret is missing under `NODE_ENV=production`
-- **HTTP headers — NOT hardened** — No `helmet` dependency, no `Content-Security-Policy`, no `X-Frame-Options`, no `X-Content-Type-Options`, no `Strict-Transport-Security`, no `Referrer-Policy`. `express.json()` has no explicit body-size limit. `cors()` and Socket.IO `cors: { origin: '*' }` accept any origin — see Known Limitations
-
-## Known Limitations
-
-| Severity | Issue | Status |
-|---|---|---|
-| **High** | Orchestrator IDOR — `GET /api/orchestrator/:sessionId/steps` and `GET /:sessionId/status` lack ownership checks; any authenticated user can read another user's orchestrator objective/plan/code by session ID | Open — see Orchestrator Limitations below |
-| **High** | Orchestrator session hijack — `POST /api/orchestrator/start` does not verify the parent `sessionId` belongs to the caller | Open |
-| **High** | Orchestrator sub-agents bypass ApprovalManager — `programador`/`auxiliar`/`arquiteto`/`revisor` toolsets are constructed without `buildToolSet`/`ApprovalManager`, so they run `writeFile`/`runCommand`/`executeCode`/`installPackage` without human approval regardless of the global `approvalMode` setting | Open |
-| **High** | `spawnNodeProject` runs `npm start` from an attacker-writable `package.json` — an agent task can `writeFile` a malicious `start` script and the next "start project" executes it with no command-policy filtering | Open |
-| **High** | **`.dockerignore` is thin** — excludes only `*.log`, `README.md`, `CLAUDE.md`, `.claude`. The full repo (incl. `node_modules/`, `dist/`, `data/`, `.git/`, and a reachable `.env` if present) is sent as build context. Slower builds and a secret-leak surface if any `COPY .` is ever added | Open |
-| **High** | No HTTP-layer hardening — wide-open `cors()` and Socket.IO `cors: { origin: '*' }`, no `helmet`/CSP/X-Frame/X-Content-Type/HSTS headers, no `express.json` body-size limit | Open (JWT-in-Authorization-header and no cookies mitigate CSRF, but any web origin can read API responses via JS-fetch) |
-| **High** | No tests, no linter, no CI — a code-execution platform with 10 agent tools has zero automated coverage. Security-critical code (`sanitize.ts`, `command-policy.ts`, `web-fetch.ts` IP blocklist, `credit` transactions) ships without regression protection | Open |
-| **Medium** | Orchestrator `search-files` denylist on `runCommand`/`executeCode` — `execAsync` (with shell) is used; the `command-policy.ts` regex denylist is bypassable (e.g. `rm -fr  /tmp/../`, `dd of=/etc/passwd`, fork bombs) | Open |
-| **Medium** | `printf`/`createWriteStream` in `executeCode` uses predictable path `exec-${Date.now()}.${ext}` — same-millisecond collisions and shell interpolation through the quoted path | Open |
-| **Medium** | Execute-then-bill credit model — both `TaskManager` and the orchestrator run the tool **before** deducting credits; a user with 1 credit gets 1 free step (potentially harmful: `writeFile` of malicious code, `runCommand`). No pre-flight reserve | Open |
-| **Medium** | No input validation in API routers — `zod` is a dependency but used only in agent tools. Negative `amount` in `POST /api/admin/users/:id/credits` could deduct credits via the "add" endpoint; `objective` in `POST /api/orchestrator/start` has no length cap | Open |
-| **Medium** | `uncaughtException`/`unhandledRejection` log-and-continue — `server.ts:271-277` logs the error but keeps the process alive (anti-pattern per Node docs; state may be corrupted) | Open |
-| **Medium** | Build artifacts and SQLite WAL files committed in git — `dist/` (213 files), `frontend/dist/`, `data/web-agent.db-shm`, `data/web-agent.db-wal`, `data/logs/*.log` were committed before `.gitignore` and remain tracked. `dist/services/execution-sandbox.js` is a deleted-source leftover | Open (hygiene; potential PII leak if WAL files contain user data in a public repo) |
-| **Medium** | `JWT_SECRET` length not enforced — `security.md` recommends ≥32 chars but `config.ts` accepts any non-empty string | Open |
-| **Medium** | `searchFiles` tool uses `grep` — doesn't work on Windows | Open |
-| **Medium** | Approval flow doesn't pause agent execution — tool runs before approval arrives | Open |
-| **Low** | WebSocket query-token fallback — `socket.handshake.auth.token ?? socket.handshake.query.token` accepts token via query params (leaks into access logs, browser history) — contradicts the HTTP "no query-param token" policy | Open |
-| **Low** | `change-password` doesn't invalidate existing refresh sessions — an attacker with an existing refresh token retains access after the victim changes their password | Open |
-| **Low** | Compaction sends conversation history to LLM for summarization — conversation data processed by LLM provider | Accepted (same provider as main agent) |
-| **Low** | No content sanitization on files read by agent — workspace content could influence agent behavior | Accepted (agent prompt hardening only) |
-| **Low** | `installPackage` can install arbitrary npm/pip packages with pre-install scripts | Accepted (no whitelist) |
-| **Low** | `executeCode` tool and Node.js spawned projects inherit a subset of `process.env` | Mitigated (secrets removed from Node project env) |
-| **Low** | Admin password re-sync overwrites UI changes on next restart — documented inline but may surprise operators who change the password via the UI | Accepted (env is canonical) |
-| **Low** | No index on `agent_steps.task_id` — `GET /api/tasks/:id/steps` is a full scan | Open |
-| **Low** | Orchestrator recovery resumes `running` sessions on startup with no staleness check on the session itself — a 3-day-old session gets resumed as if paused 3 days ago | Open |
-| **Low** | Compaction token estimate is a rough heuristic (~4 chars/token, 60k threshold) — not model-specific | Accepted |
-
-## Orchestrator Limitations (detail)
-
-The orchestrator subsystem is a newer addition relative to the chat agent and inherits a thinner security layer:
-
-- **Per-event auth is inconsistent across endpoints.** `:stop`, `:pause`, `:resume`, `:tasks`, `:upload-md` enforce `isAdminOrOwner`. `:start` only checks the parent `sessionId` exists (not ownership). `GET /:sessionId/status`, `GET /:sessionId/steps`, and `GET /status` perform **no** ownership check — they leak the session objective, plan prompts, task inputs/outputs, and the global `currentSessionId` to any authenticated user.
-- **Sub-agents are not approval-wrapped.** The four agent factories in `src/orchestrator/agents/*.ts` construct their toolsets with `createXTool(workspaceDir)` directly, skipping `buildToolSet`. If a deployment sets `approvalMode: 'all'` for the chat agent's safety, the orchestrator's `programador`/`auxiliar` sub-agents still execute `writeFile`/`deleteFile`/`runCommand`/`executeCode`/`installPackage` without human review.
-- **`MAX_PARALLEL_TASKS = 1`** despite the planner being prompted to "group independent tasks for parallelism" — execution is strictly serial. The `Promise.allSettled` over `batch` always has `batch.length === 1` (dead code or unfinished feature).
-- **Hardcoded model IDs** (`z-ai/glm-5.2`, fallback `openai/gpt-oss-120b`) ignoring the admin-configured `model_config` enabled flag — if the admin disables `z-ai/glm-5.2`, the orchestrator still uses it.
-- **`verifyProject` parses PASS/FAIL from free-text LLM output** — `"the implementation FAILS to..."` would set `hasFail=true` and fail verification even if the implementation is correct.
-
-## Agent Approval Modes
-
-| Mode | Behavior |
+| Local | O que faz |
 |---|---|
-| `none` (default) | All tools execute immediately |
-| `all` | Every tool call requires user approval |
-| `custom` | Only tools with `needsApproval: true` require approval (deleteFile, runCommand, executeCode, installPackage) |
+| `src/lib/jwt.ts` | Emite access token de 15 minutos e refresh token de 7 dias com segredos e claims de tipo separados; rejeita tipo de token incorreto. |
+| `src/middleware/auth.ts` | Exige `Authorization: Bearer` e valida access token. Não aceita token na URL. |
+| `src/api/auth.ts` | Login, cadastro, rotação de refresh token, logout, troca de senha, perfil e histórico. Hashes de refresh token ficam no banco; o token consumido é removido na rotação. |
+| `src/db/repositories/users.ts` | Usa bcrypt, custo 10, para senha de usuário. |
+| `src/server.ts` | Aplica limitador em memória: 5 requisições/minuto por IP em login/cadastro e 20/minuto em refresh. |
 
-> **Note:** The approval flow currently sends the request but does not block tool execution until the response arrives. This is a known limitation. It does **not** apply to orchestrator sub-agents (those bypass approval entirely — see above).
+Pontos relevantes:
 
-## Reporting Security Issues
+- O papel (`admin`/`user`) fica dentro do access token. Alteração de papel ou exclusão do usuário pode levar até 15 minutos para deixar de valer em rotas que confiam somente no token.
+- `change-password` não remove as sessões de refresh existentes; `logout` remove todas do usuário.
+- O limitador é por processo/contêiner, não compartilhado entre réplicas.
+- O refresh compara no máximo 20 hashes bcrypt por usuário para limitar amplificação de CPU.
 
-If you discover a security vulnerability:
+### 3. Autorização administrativa e ownership entre usuários
 
-1. **Do not** open a public GitHub issue
-2. Email the maintainer with details: affected component, attack vector, proof of concept
-3. Include the version/commit you tested against
-4. Allow reasonable time for a fix before public disclosure
+| Local | O que faz |
+|---|---|
+| `src/middleware/admin.ts` | Bloqueia qualquer requisição sem papel `admin`. |
+| `src/server.ts` | Monta todo `/api/admin` atrás de `authMiddleware` + `adminMiddleware`; monta chat, modelos, tarefas, arquivos, config, sessões, projetos, orquestrador e Word atrás de autenticação. |
+| `src/api/chat.ts` | Verifica dono da sessão, impede `system` vindo do cliente e exige que a mensagem mais recente seja de usuário. |
+| `src/api/tasks.ts` | Filtra listagem por usuário e verifica dono ao consultar, cancelar e ler passos. |
+| `src/api/sessions.ts` | Filtra listagem e verifica dono para mensagens, limpeza e exclusão. |
+| `src/api/projects.ts` | Todas as operações exigem que `project.userId` seja o usuário autenticado. |
+| `src/api/orchestrator.ts` | Verifica dono da sessão-pai no start/upload e aplica `isAdminOrOwner` em status, passos, tarefas, stop, pause, resume e upload. |
+| `src/api/config.ts` | Usuário autenticado recebe configuração sem `apiKey`; atualização é exclusiva de administrador. |
+| `src/api/payments.ts` | Operações Pix autenticadas são sempre filtradas pelo usuário dono. |
+| `src/api/word.ts` | Resolve o usuário autenticado no banco e mantém um workspace Word por usuário. |
 
-## Security Checklist for Deployment
+As falhas IDOR do orquestrador descritas na versão anterior deste documento foram corrigidas no código atual.
 
-- [ ] `ACCESS_TOKEN_SECRET` and `REFRESH_TOKEN_SECRET` set to strong random values (≥32 chars each). `JWT_SECRET` is accepted as a legacy fallback mapping to both
-- [ ] `ADMIN_PASSWORD` set to a strong password (and not subsequently edited via the UI — env is authoritative on restart)
-- [ ] `API_KEY` kept secret (not committed to git)
-- [ ] `.env` file not committed to version control (`data/web-agent.db-*`, `dist/`, `data/logs/*.log` are tracked in git today — verify before public release)
-- [ ] Docker container not exposing unnecessary ports
-- [ ] `PUBLIC_BASE_URL` set correctly for project links
-- [ ] `NODE_ENV=production` set in deployment (enables secret fail-fast)
-- [ ] File permissions on `data/` directory restricted
-- [ ] Consider adding `helmet` + a restrictive `cors({ origin: [...] })` allowlist and a CSP headermeta tag — current default is permissive (see Known Limitations)
+### 4. Socket.IO
+
+| Local | O que faz |
+|---|---|
+| `src/websocket/index.ts` | Valida JWT no handshake, grava usuário no socket e conecta o cliente à sala `user:<id>`. |
+| `src/websocket/events.ts` | Impede usuário comum de entrar em sala alheia, responder aprovação alheia, cancelar tarefa alheia ou assinar orquestração alheia. Administrador possui bypass explícito. |
+| `src/services/approval-manager.ts` | Emite pedidos na sala do dono e nega por padrão respostas sem owner; administrador pode responder. |
+
+Limitação atual: o handshake aceita `socket.handshake.auth.token` e, como fallback, `socket.handshake.query.token`. Token em query string pode aparecer em logs e histórico.
+
+### 5. Isolamento de workspace e caminhos
+
+| Local | O que faz |
+|---|---|
+| `src/agent/tools/sanitize.ts` | `safeWorkspacePath()` e `assertPathInsideWorkspace()` bloqueiam caminho absoluto/relativo fora da raiz, troca de drive e escape por symlink existente, usando `resolve`, `relative` e `realpath`. |
+| `src/lib/workspace-paths.ts` | Valida username como segmento único e resolve pasta de usuário/projeto exclusivamente dentro de `WORKSPACE_BASE_DIR`. |
+| `src/api/files.ts` | Todas as operações passam por workspace do usuário e `safeWorkspacePath`. |
+| `src/api/projects.ts` | Resolve `folderPath` dentro do workspace do dono. |
+| `src/api/orchestrator.ts` e `src/orchestrator/orchestrator-runner.ts` | Mantêm specs e arquivos gerados dentro do workspace resolvido. |
+| `src/api/word.ts` | Restringe documentos e modelos ao subdiretório Word do usuário. |
+| `src/agent/tools/write-file.ts`, `read-file.ts`, `list-files.ts`, `delete-file.ts`, `search-files.ts`, `execute-code.ts` | Reutilizam a mesma validação central. |
+
+Esta é uma fronteira multiusuário e não é desligada pela chave administrativa.
+
+### 6. Política de comandos e ambiente de subprocessos
+
+| Local | O que faz |
+|---|---|
+| `src/agent/tools/command-policy.ts` | `validateCommand()` bloqueia padrões destrutivos, leitura de segredos, rede interna, eval, expansão `$()`, elevação de privilégio, reverse shell e acesso ao app/banco. Analisa tokens e rejeita paths fora do workspace. |
+| `src/agent/tools/command-policy.ts` | `buildSafeEnv()` cria allowlist de variáveis; `buildWorkspaceEnv()` redefine HOME/caches para o workspace; `getUnprivilegedExecOptions()` usa UID/GID configurado ou `www-data` quando o processo Unix roda como root. |
+| `src/agent/tools/run-command.ts` | Aplica política, executa no workspace, usa ambiente reduzido, timeout e buffer máximo. |
+| `src/agent/tools/install-package.ts` | Valida nome, bloqueia metacaracteres/pacotes conhecidos, usa `execFile`; npm recebe `--ignore-scripts`, pip instala no workspace. |
+| `src/services/project-router.ts` | Projetos Node recebem ambiente reduzido por `buildSafeEnv()`. |
+
+Limitações atuais:
+
+- `runCommand` ainda usa shell (`exec`) e uma denylist regex; não é uma sandbox forte e pode haver variantes não cobertas.
+- Em Windows `getUnprivilegedExecOptions()` não reduz usuário/SID.
+- O agente-filho normal (`src/agent/tools/sub-agent.ts`) reutiliza ferramentas protegidas por path/política, mas não herda o fluxo de aprovação do agente pai.
+
+### 7. Execução de código do agente
+
+| Local | O que faz |
+|---|---|
+| `src/agent/tools/execute-code.ts` | Bloqueia imports, rede, processo, caminhos absolutos/traversal e geração dinâmica. JavaScript usa `vm`, permissões do Node e wrapper; Python usa `-I`, wrapper de `open` e allowlist de imports. Ambos usam ambiente reduzido, timeout e limpeza de temporários. |
+
+Esta proteção é defesa em profundidade, não um limite de virtualização. Regex, `node:vm` e monkey-patching de Python não devem ser tratados como sandbox equivalente a contêiner/microVM.
+
+### 8. SSRF e conteúdo não confiável
+
+| Local | O que faz |
+|---|---|
+| `src/agent/tools/web-fetch.ts` | Aceita somente HTTP/HTTPS; bloqueia localhost, IPs privados, link-local, metadata, formatos alternativos de IP e IPv6 privado; resolve DNS antes do fetch e repete uma checagem próxima da requisição; timeout de 15s e resposta máxima enviada ao agente de 50 mil caracteres. |
+| `src/agent/tools/content-sanitize.ts` | Substitui linhas que parecem injeção de prompt em inglês, português e espanhol por `[FILTERED]`. |
+| `src/agent/tools/read-file.ts` e `web-fetch.ts` | Aplicam `sanitizeForPrompt()` antes de devolver conteúdo ao modelo. |
+| `src/agent/prompts/shared-security.ts` | Injeta regras não negociáveis de workspace, segredos, persistência, exfiltração e conteúdo não confiável. |
+| `src/agent/prompts/development-prompt.ts`, `word-prompt.ts`, `sub-agent-prompt.ts` | Incorporam as regras compartilhadas aos perfis do agente. |
+
+O `webFetch` segue no máximo cinco redirects manualmente e revalida URL e DNS em cada salto. No modo permissivo, redes RFC1918/ULA são aceitas, mas localhost, loopback, link-local, metadata e formatos ambíguos de IP continuam bloqueados.
+
+### 9. Aprovação humana
+
+| Local | O que faz |
+|---|---|
+| `src/db/repositories/config.ts` | Persiste `approval_mode` (`none`, `custom`, `all`) e a lista `approval_tools`. O padrão atual é `none`. |
+| `src/agent/tools/index.ts` | Envolve ferramentas selecionadas e aguarda `requestApproval()` antes de executar. `all` envolve todas; `custom` somente a lista; `none` executa imediatamente. |
+| `src/services/approval-manager.ts` | Mantém aprovações pendentes, espera até 5 minutos, nega em timeout e valida o respondente. |
+| `src/websocket/events.ts` | Recebe `approval:respond` e repassa identidade/papel. |
+| `frontend/src/components/ApprovalDialog.tsx` | Interface do usuário para aprovar/negar. |
+| `frontend/src/components/ConfigPanel.tsx` | Interface atual para escolher modo e ferramentas. |
+
+A observação antiga de que a ferramenta executava antes da aprovação não é mais verdadeira: o wrapper atual aguarda a Promise e só então chama a execução original.
+
+Lacunas:
+
+- Os quatro agentes do orquestrador em `src/orchestrator/agents/*.ts` constroem ferramentas diretamente e não passam por `buildToolSet()`/`ApprovalManager`.
+- `src/agent/tools/sub-agent.ts` também constrói seu conjunto diretamente.
+- Portanto `approval_mode=all` não cobre todo o sistema.
+
+### 10. Uploads, ZIP e limites de recursos
+
+| Local | O que faz |
+|---|---|
+| `src/server.ts` | Limita JSON a 3 MB. |
+| `src/api/files.ts` | Limita arquivo a 25 MB, 10 arquivos e total a 100 MB; preview/editor a 2 MB; ZIP a 2.000 entradas, 50 MB por entrada e 200 MB descompactado; árvore a 10 mil entradas/20 níveis. Sanitiza filename e valida cada entrada contra Zip Slip. |
+| `src/api/orchestrator.ts` | Upload apenas `.md`, até 20 arquivos de 10 MB cada, nomes reduzidos a basename e destino validado. |
+| `src/api/word.ts` | Aceita extensões Word definidas, até 10 arquivos de 50 MB; valida destino e downloads/callbacks. |
+| `src/agent/tools/search-files.ts` | Limita resultados de busca a 100 e ignora ocultos/`node_modules`. |
+| `src/agent/tools/web-fetch.ts` | Timeout de 15s e truncamento para o agente. |
+| `src/orchestrator/orchestrator-runner.ts` | Máximo total de 500 passos, 3 tentativas por tarefa, 1 replanejamento e contexto de specs limitado a 100 mil caracteres. |
+
+Os uploads do orquestrador e Word usam memória e não possuem limite total agregado menor que `número de arquivos × limite individual`.
+
+### 11. Créditos e limitação de LLM
+
+| Local | O que faz |
+|---|---|
+| `src/db/repositories/credits.ts` | Dedução atômica com `WHERE credits >= ?`, adição atômica e registro na mesma transação. |
+| `src/services/credit-manager.ts` | Centraliza cobrança e isenta administrador. |
+| `src/api/chat.ts` e `src/orchestrator/orchestrator-runner.ts` | Verificam crédito antes de iniciar/continuar trabalho. |
+| `src/services/llm-rate-limiter.ts` | Fila FIFO dinâmica para chamadas LLM, configurável pelo admin. |
+| `src/agent/provider.ts` | Adquire vaga no limitador antes da chamada ao provedor. |
+
+Créditos e rate limit são controles de abuso/custo, não substituem as fronteiras de segurança.
+
+### 12. HTTP, CORS, proxy e exposição pública
+
+| Local | O que faz |
+|---|---|
+| `src/server.ts` | Configura allowlist CORS, `trust proxy`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, COOP, CORP e HSTS em produção. |
+| `src/server.ts` | `/health` é público e informa estado/heartbeat do orquestrador. |
+| `src/server.ts` e `src/services/project-router.ts` | `/p/<uuid>/...` é deliberadamente público, sem autenticação, e serve/proxy projetos publicados. |
+| `apache/projects.conf` | Desabilita listagem de diretório, permite symlinks necessários e desabilita forward proxy. |
+
+Lacunas atuais:
+
+- Se `CORS_ORIGINS` e `PUBLIC_BASE_URL` estiverem vazios em produção, `getAllowedOrigins()` retorna `true`, abrindo CORS para qualquer origem.
+- Não há CSP nem `Permissions-Policy`; não há `helmet`.
+- Projetos publicados são públicos para quem conhecer o UUID. PHP e Node executam código criado pelo usuário/agente.
+
+### 13. Execução e publicação de projetos
+
+| Local | O que faz |
+|---|---|
+| `src/api/projects.ts` | Exige ownership para criar, iniciar, parar, promover e excluir. |
+| `src/services/project-router.ts` | Usa portas internas em loopback, proxy por UUID, ambiente reduzido, reinício exponencial até 5 vezes e SIGTERM seguido de SIGKILL. |
+| `src/preload/port-force.cjs` | Força projetos Node a ouvirem na porta atribuída. |
+| `apache/projects.conf` | Publica PHP por symlink controlado no diretório de links. |
+
+Risco relevante: se `package.json` possuir `scripts.start`, `ProjectRouter` executa `npm start` sem passar o script pela `command-policy`. Como o workspace é gravável pelo agente/usuário, esse é um caminho de execução de código fora da política de comandos. O ambiente é filtrado, mas o processo não recebe `getUnprivilegedExecOptions()` explicitamente e não é isolado por contêiner próprio.
+
+### 14. ONLYOFFICE
+
+| Local | O que faz |
+|---|---|
+| `src/api/word.ts` | Cria links JWT com propósito: conteúdo por 2h e callback por 24h; restringe arquivo ao Word workspace. |
+| `src/api/word.ts` | Callback exige também JWT do Document Server, valida origem do URL de download contra ONLYOFFICE configurado, converte para URL interna confiável, rejeita redirect e limita arquivo a 50 MB. |
+| `docker-compose.yml` | Compartilha segredo JWT com o Document Server; permite IP privado para integração interna e bloqueia metadata IP. |
+
+Os tokens de conteúdo/callback ficam na URL e podem aparecer em logs, embora sejam assinados, tenham propósito e expiração.
+
+### 15. Mercado Pago
+
+| Local | O que faz |
+|---|---|
+| `src/api/payments.ts` | Exige autenticação nas operações de usuário; webhook público exige assinatura HMAC e usa `timingSafeEqual`; rejeita se o segredo não estiver configurado; confirma estado diretamente na API do Mercado Pago antes de creditar; crédito é idempotente/transacional. |
+
+Assinatura de webhook e confirmação no provedor são invariantes e não devem obedecer a um modo permissivo global.
+
+### 16. Banco, logs e encerramento
+
+| Local | O que faz |
+|---|---|
+| `src/db/index.ts` | Executa integrity check, faz backup de banco corrompido, habilita WAL, foreign keys e busy timeout. |
+| `src/db/schema.ts` e `src/db/migrate.ts` | Foreign keys, cascatas e índices de ownership/sessão. |
+| `src/services/logger.ts` | Escrita assíncrona e separação diária; logs registram operações e decisões de bloqueio. |
+| `src/server.ts` | Encerramento gracioso de orquestrador, watcher, projetos e banco. |
+
+`uncaughtException` e `unhandledRejection` apenas registram e mantêm o processo ativo; após uma exceção fatal o estado do processo pode não ser confiável.
+
+## Implementação da chave administrativa
+
+Os pontos integrados são:
+
+1. **Persistência:** `src/db/repositories/config.ts`, chave `agent_security_mode` com padrão `protected`.
+2. **Política central:** `src/services/security-policy.ts`, que produz snapshots imutáveis e transforma prompts.
+3. **API administrativa:** `src/api/admin.ts`, dentro de `GET/PATCH /settings`, com validação e auditoria em log.
+4. **Tipos e cliente:** `src/types/index.ts`, `frontend/src/types/index.ts` e `frontend/src/lib/api.ts`.
+5. **Botão único:** `frontend/src/components/AdminPanel.tsx`, aba Ajustes, com confirmação digitada e aviso persistente no painel.
+6. **Agente principal:** `src/agent/index.ts`, `src/agent/tools/index.ts` e ferramentas afetadas.
+7. **Agentes secundários:** `src/agent/tools/sub-agent.ts` e todos os `src/orchestrator/agents/*.ts` recebem o mesmo snapshot.
+8. **Execuções em andamento:** mantêm o snapshot capturado no início; a alteração vale para novas execuções.
+9. **Auditoria:** registra administrador, IP, valor anterior e novo sem registrar segredos.
+
+### Comportamento da chave
+
+| Camada | Modo protegido | Modo permissivo | Deve ser desligável? |
+|---|---|---|---|
+| Aprovação humana | Conforme configuração (`all/custom/none`) | `none` | Sim |
+| Denylist de comandos | Ativa | Desativada | Sim, somente para agente |
+| Filtro de `executeCode` | Ativo | Desativado; invólucros e isolamento de ambiente permanecem | Sim, somente em isolamento forte |
+| SSRF de `webFetch` | Bloqueia redes internas | Permite RFC1918/ULA | Metadata, loopback e link-local nunca desligam |
+| Sanitização de prompt | Ativa | Desativada | Sim |
+| Regras de prompt | Estritas | Perfil permissivo explícito | Sim |
+| Instalação de pacotes | Validada/sem scripts npm | Mais permissiva | Parcialmente |
+| JWT e admin | Ativos | Ativos | Não |
+| Ownership/IDOR | Ativo | Ativo | Não |
+| Workspace/symlink | Ativo | Ativo | Não |
+| Ambiente sem segredos | Ativo | Ativo | Não |
+| Webhook/ONLYOFFICE signatures | Ativas | Ativas | Não |
+| Limites básicos de upload/corpo | Ativos | Ativos | Não |
+
+## Lacunas atuais priorizadas
+
+| Prioridade | Lacuna | Local principal |
+|---|---|---|
+| Alta | `npm start` executa script gravável sem política/sandbox própria | `src/services/project-router.ts` |
+| Alta | Aprovação não cobre subagente nem agentes do orquestrador | `src/agent/tools/sub-agent.ts`, `src/orchestrator/agents/*.ts` |
+| Média | Política de shell é denylist e `runCommand` usa `exec` | `src/agent/tools/command-policy.ts`, `run-command.ts` |
+| Média | `executeCode` é defesa em profundidade, não sandbox forte | `src/agent/tools/execute-code.ts` |
+| Média | CORS fica aberto em produção se nenhuma origem for configurada | `src/server.ts` |
+| Média | `maxSteps` de chat/tarefa não é validado nem limitado no backend; o cliente pode enviar valor negativo ou excessivo | `src/api/chat.ts`, `src/api/tasks.ts`, `src/db/repositories/tasks.ts` |
+| Média | Endpoint admin de créditos aceita número negativo e pode reduzir/deixar saldo negativo pela rota de “adicionar” | `src/api/admin.ts`, `src/db/repositories/credits.ts` |
+| Média | Troca de senha não revoga refresh tokens | `src/api/auth.ts` |
+| Média | Papel/exclusão de usuário não é revalidado no banco a cada access token | `src/lib/jwt.ts`, `src/middleware/auth.ts` |
+| Média | Projetos PHP/Node executam código do workspace no mesmo contêiner do servidor | `src/services/project-router.ts`, Apache/Docker |
+| Média | Código crítico de segurança não possui testes automatizados, linter ou CI configurados | projeto inteiro |
+| Baixa | Token Socket.IO pode ser enviado na query string | `src/websocket/index.ts` |
+| Baixa | `/health` expõe estado e heartbeat do orquestrador | `src/server.ts` |
+| Baixa | Não há CSP/Permissions-Policy | `src/server.ts` |
+| Baixa | Segredos não têm comprimento mínimo validado | `src/config.ts` |
+| Baixa | Exceções não tratadas são registradas sem finalizar processo | `src/server.ts` |
+
+## Correções em relação ao documento anterior
+
+O inventário anterior estava desatualizado nos seguintes pontos:
+
+- ownership do orquestrador agora é verificado em start, status e steps;
+- `.dockerignore` agora exclui `.env`, dependências, builds, Git, dados e workspace;
+- CORS possui configuração de allowlist, embora ainda possa cair em modo aberto;
+- existem cabeçalhos de segurança e limite JSON de 3 MB;
+- arquivos lidos e páginas obtidas são sanitizados contra padrões de prompt injection;
+- aprovação aguarda a decisão antes de executar;
+- `executeCode` e a política de ambiente foram significativamente reforçados;
+- no modo protegido, `installPackage` usa `execFile`, `--ignore-scripts` no npm e ambiente reduzido; no permissivo, scripts npm são aceitos, mas `execFile` e o ambiente reduzido permanecem;
+- uploads e ZIP possuem limites e proteção contra Zip Slip;
+- o documento atual contém 16 tabelas no schema, incluindo Pix e Word, não 14.
+
+## Checklist da implementação
+
+- [x] Usar o nome “Proteções do agente” e modos `protected`/`permissive`.
+- [x] Manter autenticação, ownership, workspace, segredos e assinaturas sempre ativos.
+- [x] Criar uma única fonte de verdade para agente principal, subagente e orquestrador.
+- [x] Garantir atualização somente por administrador e fallback seguro.
+- [x] Exibir aviso persistente e exigir confirmação digitada para o modo permissivo.
+- [x] Registrar alterações da chave em log/auditoria.
+- [x] Manter snapshot em execuções em andamento; processos Node publicados não são reiniciados.
+- [ ] Criar testes para ambos os modos antes de disponibilizar o botão.
+- [ ] Cobrir também regressões de path traversal/symlink, SSRF/redirect, comando, approval, ownership, upload/ZIP e limites de `maxSteps`.
+- [ ] Testar Linux/Docker e Windows separadamente, pois a redução de UID/GID não existe no Windows.

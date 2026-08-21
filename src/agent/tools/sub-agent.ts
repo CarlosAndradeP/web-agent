@@ -9,6 +9,7 @@ import { createListFilesTool } from './list-files.js';
 import { createSearchFilesTool } from './search-files.js';
 import { createRunCommandTool } from './run-command.js';
 import { createLogger, logSubAgentEvent } from '../../services/logger.js';
+import { applyAgentSecurityPrompt, PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
 
 const log = createLogger('SubAgentTool');
 
@@ -18,7 +19,9 @@ export function createInvokeSubAgentTool(options: {
   apiKey: string;
   agentType?: string;
   abortSignal?: AbortSignal;
+  securityPolicy?: AgentSecurityPolicySnapshot;
 }) {
+  const securityPolicy = options.securityPolicy ?? PROTECTED_AGENT_SECURITY_POLICY;
   return tool({
     description: 'Spawn a sub-agent to handle a focused sub-task autonomously. The sub-agent has read/write/search/command tools but with fewer steps. Use this for parallelizable or decomposable work like "refactor all files matching X" or "search the codebase and fix all instances of Y".',
     inputSchema: z.object({
@@ -40,17 +43,17 @@ export function createInvokeSubAgentTool(options: {
         const provider = createProvider(options.apiBaseUrl, options.apiKey, options.agentType);
         const subTools: Record<string, any> = {
           writeFile: createWriteFileTool(options.workspaceDir),
-          readFile: createReadFileTool(options.workspaceDir),
+          readFile: createReadFileTool(options.workspaceDir, securityPolicy),
           listFiles: createListFilesTool(options.workspaceDir),
           searchFiles: createSearchFilesTool(options.workspaceDir),
-          runCommand: createRunCommandTool(options.workspaceDir),
+          runCommand: createRunCommandTool(options.workspaceDir, securityPolicy),
         };
 
         const model = provider.chatModel('z-ai/glm-5.2') as any;
 
         const subAgent = new ToolLoopAgent({
           model,
-          instructions: DEVELOPMENT_SUB_AGENT_SYSTEM_PROMPT,
+          instructions: applyAgentSecurityPrompt(DEVELOPMENT_SUB_AGENT_SYSTEM_PROMPT, securityPolicy),
           tools: subTools,
           stopWhen: stepCountIs(cappedSteps),
           maxOutputTokens: 8192,

@@ -1,8 +1,9 @@
-export declare function validateUrl(url: string): Promise<{
+import { type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
+export declare function validateUrl(url: string, securityPolicy?: AgentSecurityPolicySnapshot): Promise<{
     allowed: boolean;
     reason?: string;
 }>;
-export declare function createWebFetchTool(): import("ai").Tool<{
+export declare function createWebFetchTool(securityPolicy?: AgentSecurityPolicySnapshot): import("ai").Tool<{
     url: string;
 }, {
     content: string;

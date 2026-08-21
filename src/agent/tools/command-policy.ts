@@ -22,10 +22,12 @@ const BLOCKED_PATTERNS = [
   /\bsqlite3?\b\s+\/app\/data/,
 ];
 
-export function validateCommand(command: string, workspaceDir?: string): { allowed: boolean; reason?: string } {
-  for (const pattern of BLOCKED_PATTERNS) {
-    if (pattern.test(command)) {
-      return { allowed: false, reason: `Command blocked by security policy` };
+export function validateCommand(command: string, workspaceDir?: string, policyEnabled = true): { allowed: boolean; reason?: string } {
+  if (policyEnabled) {
+    for (const pattern of BLOCKED_PATTERNS) {
+      if (pattern.test(command)) {
+        return { allowed: false, reason: `Command blocked by security policy` };
+      }
     }
   }
   if (workspaceDir) {

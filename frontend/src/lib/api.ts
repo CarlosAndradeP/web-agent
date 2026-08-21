@@ -290,7 +290,7 @@ export const api = {
       fetchJSON<{ success: boolean }>(`${BASE}/admin/node-processes/${uuid}/restart`, { method: 'POST' }),
     settings: () =>
       fetchJSON<AdminSettings>(`${BASE}/admin/settings`),
-    updateSettings: (data: { registrationEnabled?: boolean; llmRateLimitEnabled?: boolean; llmRequestsPerMinute?: number }) =>
+    updateSettings: (data: { registrationEnabled?: boolean; llmRateLimitEnabled?: boolean; llmRequestsPerMinute?: number; agentSecurityMode?: 'protected' | 'permissive' }) =>
       fetchJSON<AdminSettings>(`${BASE}/admin/settings`, {
         method: 'PATCH',
         body: JSON.stringify(data),

@@ -1,4 +1,5 @@
-export declare function createExecuteCodeTool(workspaceDir: string): import("ai").Tool<{
+import { type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
+export declare function createExecuteCodeTool(workspaceDir: string, securityPolicy?: AgentSecurityPolicySnapshot): import("ai").Tool<{
     code: string;
     language: "javascript" | "typescript" | "python";
     timeout?: number | undefined;

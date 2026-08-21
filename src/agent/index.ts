@@ -7,6 +7,7 @@ import { createLogger } from '../services/logger.js';
 import type { ApprovalMode, AgentStep } from '../types/index.js';
 import type { ApprovalManager } from '../services/approval-manager.js';
 import { config } from '../config.js';
+import { applyAgentSecurityPrompt, PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../services/security-policy.js';
 
 const log = createLogger('Agent');
 
@@ -35,10 +36,12 @@ export interface CreateAgentOptions {
   conversationContext?: Array<ModelMessage>;
   workspaceProfile?: 'development' | 'word';
   maxRetries?: number;
+  securityPolicy?: AgentSecurityPolicySnapshot;
 }
 
 export function createAgent(options: CreateAgentOptions) {
-  log.info('Creating agent', { model: options.model, maxSteps: options.maxSteps, workspaceDir: options.workspaceDir, agentType: options.agentType });
+  const securityPolicy = options.securityPolicy ?? PROTECTED_AGENT_SECURITY_POLICY;
+  log.info('Creating agent', { model: options.model, maxSteps: options.maxSteps, workspaceDir: options.workspaceDir, agentType: options.agentType, securityMode: securityPolicy.mode });
 
   const provider = createProvider(options.apiBaseUrl, options.apiKey, options.agentType);
   const tools = buildToolSet({
@@ -52,6 +55,7 @@ export function createAgent(options: CreateAgentOptions) {
     userId: options.userId,
     abortSignal: options.abortSignal,
     workspaceProfile: options.workspaceProfile ?? 'development',
+    securityPolicy,
   });
 
   log.info('Provider and tools created', { toolCount: Object.keys(tools).length, toolNames: Object.keys(tools) });
@@ -59,7 +63,10 @@ export function createAgent(options: CreateAgentOptions) {
   const isGlmModel = options.model.toLowerCase().includes('glm');
   const maxOutputTokens = isGlmModel ? 16384 : 8192;
 
-  const systemPrompt = buildSystemPrompt(options.projectInfo ?? null, options.workspaceProfile ?? 'development');
+  const systemPrompt = applyAgentSecurityPrompt(
+    buildSystemPrompt(options.projectInfo ?? null, options.workspaceProfile ?? 'development'),
+    securityPolicy,
+  );
 
   const agent = new ToolLoopAgent({
     model: provider.chatModel(options.model) as any,

@@ -13,6 +13,7 @@ import type { ApprovalManager } from '../../services/approval-manager.js';
 import { createLogger } from '../../services/logger.js';
 import { v4 as uuid } from 'uuid';
 import type { WorkspaceProfile } from '../instructions.js';
+import { PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
 
 const log = createLogger('ToolSet');
 
@@ -52,20 +53,22 @@ export function buildToolSet(options: {
   userId?: string;
   abortSignal?: AbortSignal;
   workspaceProfile?: WorkspaceProfile;
+  securityPolicy?: AgentSecurityPolicySnapshot;
 }) {
   const workspaceProfile = options.workspaceProfile ?? 'development';
-  log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode, workspaceProfile });
+  const securityPolicy = options.securityPolicy ?? PROTECTED_AGENT_SECURITY_POLICY;
+  log.info('Building tool set', { workspaceDir: options.workspaceDir, approvalMode: options.approvalMode, workspaceProfile, securityMode: securityPolicy.mode });
 
   const allTools: Record<string, any> = {
     writeFile: createWriteFileTool(options.workspaceDir),
-    readFile: createReadFileTool(options.workspaceDir),
+    readFile: createReadFileTool(options.workspaceDir, securityPolicy),
     listFiles: createListFilesTool(options.workspaceDir),
     deleteFile: createDeleteFileTool(options.workspaceDir),
-    runCommand: createRunCommandTool(options.workspaceDir),
-    executeCode: createExecuteCodeTool(options.workspaceDir),
+    runCommand: createRunCommandTool(options.workspaceDir, securityPolicy),
+    executeCode: createExecuteCodeTool(options.workspaceDir, securityPolicy),
     searchFiles: createSearchFilesTool(options.workspaceDir),
-    webFetch: createWebFetchTool(),
-    installPackage: createInstallPackageTool(options.workspaceDir),
+    webFetch: createWebFetchTool(securityPolicy),
+    installPackage: createInstallPackageTool(options.workspaceDir, securityPolicy),
   };
 
   // The Word agent is deliberately isolated from programming-oriented delegation
@@ -81,10 +84,11 @@ export function buildToolSet(options: {
       apiKey: options.apiKey,
       agentType: options.agentType,
       abortSignal: options.abortSignal,
+      securityPolicy,
     });
   }
 
-  if (options.approvalMode === 'none' || !options.approvalManager) {
+  if (!securityPolicy.approvalsEnabled || options.approvalMode === 'none' || !options.approvalManager) {
     log.info('Approval mode: none — all tools execute immediately');
     return allTools;
   }

@@ -1,4 +1,5 @@
 export type ApprovalMode = 'all' | 'none' | 'custom';
+export type AgentSecurityMode = 'protected' | 'permissive';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface Session {
@@ -58,6 +59,7 @@ export interface AppConfig {
   workspaceDir: string;
   agentType: string;
   apiKeyConfigured?: boolean;
+  agentSecurityMode: AgentSecurityMode;
 }
 
 export interface ApprovalRequest {
@@ -179,6 +181,7 @@ export interface LlmRateLimitStatus {
 
 export interface AdminSettings {
   registrationEnabled: boolean;
+  agentSecurityMode: AgentSecurityMode;
   llmRateLimit: LlmRateLimitStatus;
 }
 

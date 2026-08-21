@@ -1,4 +1,5 @@
-export declare function createReadFileTool(workspaceDir: string): import("ai").Tool<{
+import { type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
+export declare function createReadFileTool(workspaceDir: string, securityPolicy?: AgentSecurityPolicySnapshot): import("ai").Tool<{
     path: string;
 }, {
     content: string;

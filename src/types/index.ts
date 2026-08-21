@@ -1,4 +1,5 @@
 export type ApprovalMode = 'all' | 'none' | 'custom';
+export type AgentSecurityMode = 'protected' | 'permissive';
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -62,6 +63,7 @@ export interface AppConfig {
   workspaceDir: string;
   agentType: string;
   registrationEnabled: string;
+  agentSecurityMode: AgentSecurityMode;
 }
 
 /** AppConfig without sensitive fields — safe to return to non-admin users */

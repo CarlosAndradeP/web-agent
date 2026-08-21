@@ -11,6 +11,7 @@ const DEFAULTS = {
     registration_enabled: 'true',
     llm_rate_limit_enabled: 'false',
     llm_requests_per_minute: '60',
+    agent_security_mode: 'protected',
 };
 const LEGACY_MODEL_MAP = {
     'meta/llama-3.1-405b-instruct': 'z-ai/glm-5.2',
@@ -49,6 +50,7 @@ export class ConfigRepository {
             workspaceDir: this.get('workspace_dir'),
             agentType: this.get('agent_type') ?? 'none',
             registrationEnabled: this.get('registration_enabled') ?? 'true',
+            agentSecurityMode: (this.get('agent_security_mode') === 'permissive' ? 'permissive' : 'protected'),
         };
     }
     /** Returns config without sensitive fields (apiKey) — safe for non-admin users */
@@ -74,6 +76,8 @@ export class ConfigRepository {
             this.set('workspace_dir', data.workspaceDir);
         if (data.agentType !== undefined)
             this.set('agent_type', data.agentType);
+        if (data.agentSecurityMode !== undefined)
+            this.set('agent_security_mode', data.agentSecurityMode);
     }
 }
 //# sourceMappingURL=config.js.map

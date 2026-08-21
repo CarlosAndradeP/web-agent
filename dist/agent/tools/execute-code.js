@@ -7,6 +7,7 @@ import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { safeWorkspacePath } from './sanitize.js';
 import { buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
 import { logToolExecution } from '../../services/logger.js';
+import { PROTECTED_AGENT_SECURITY_POLICY } from '../../services/security-policy.js';
 const execFileAsync = promisify(execFile);
 const JS_BLOCKED_PATTERNS = [
     /\b(?:import|require)\b/,
@@ -111,7 +112,7 @@ script.runInContext(context, {
   displayErrors: true,
 });
 `;
-export function createExecuteCodeTool(workspaceDir) {
+export function createExecuteCodeTool(workspaceDir, securityPolicy = PROTECTED_AGENT_SECURITY_POLICY) {
     return tool({
         description: 'Execute JavaScript/TypeScript/Python code and return the result',
         inputSchema: z.object({
@@ -122,7 +123,7 @@ export function createExecuteCodeTool(workspaceDir) {
         execute: async ({ code, language, timeout = 30 }) => {
             const startTime = Date.now();
             logToolExecution('executeCode', undefined, 'start', { input: { language, codeLength: code.length, timeout } });
-            const safety = validateCodeSafety(code, language);
+            const safety = securityPolicy.codePolicyEnabled ? validateCodeSafety(code, language) : { allowed: true };
             if (!safety.allowed) {
                 logToolExecution('executeCode', undefined, 'error', { error: safety.reason, input: { language }, durationMs: Date.now() - startTime });
                 return { stdout: '', stderr: safety.reason, exitCode: 126 };
