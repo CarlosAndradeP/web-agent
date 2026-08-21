@@ -14,7 +14,8 @@ const DEFAULTS = {
     agent_security_mode: 'protected',
 };
 const LEGACY_MODEL_MAP = {
-    'meta/llama-3.1-405b-instruct': 'z-ai/glm-5.2',
+    'meta/llama-3.1-405b-instruct': 'moonshotai/kimi-k3',
+    'z-ai/glm-5.2': 'moonshotai/kimi-k3',
 };
 export class ConfigRepository {
     db;

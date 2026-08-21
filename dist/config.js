@@ -52,7 +52,7 @@ export const config = {
     projectLinkBaseDir: process.env.PROJECT_LINK_BASE_DIR || './data/project-links',
     maxSteps: parseInt(process.env.MAX_STEPS || '100', 10),
     agentMaxRetries,
-    defaultModel: process.env.DEFAULT_MODEL || 'z-ai/glm-5.2',
+    defaultModel: process.env.DEFAULT_MODEL || 'moonshotai/kimi-k3',
     agentType: (process.env.AGENT_TYPE || 'none'),
     jwtSecret: accessTokenSecret,
     accessTokenSecret,

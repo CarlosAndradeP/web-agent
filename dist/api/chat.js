@@ -232,8 +232,13 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
             const createdFiles = new Set();
             let assistantContent = '';
             const persistedToolCalls = [];
+            let generatedModelMessages = [];
             for await (const event of eventStream) {
                 totalEvents++;
+                if (event.type === 'model-messages') {
+                    generatedModelMessages = Array.isArray(event.messages) ? event.messages : [];
+                    continue;
+                }
                 if (event.type === 'text-delta' && typeof event.content === 'string') {
                     assistantContent += event.content;
                 }
@@ -287,10 +292,11 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
             }
             const finalContent = assistantContent || 'Tarefa concluída sem uma resposta em texto.';
             messagesRepo.create(effectiveSessionId, 'assistant', finalContent, JSON.stringify({
+                model: selectedModel,
                 calls: persistedToolCalls,
                 createdFiles: allCreatedFiles.slice(0, 5),
                 createdFileCount: allCreatedFiles.length,
-            }));
+            }), null, null, generatedModelMessages.length > 0 ? JSON.stringify(generatedModelMessages) : null);
             res.write(`data: ${JSON.stringify({
                 type: 'finish',
                 taskId: task.id,

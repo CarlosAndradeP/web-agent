@@ -18,6 +18,7 @@ import { safeWorkspacePath } from '../agent/tools/sanitize.js';
 import { getUserWorkspaceDir } from '../lib/workspace-paths.js';
 import { createLogger, logSubAgentEvent } from '../services/logger.js';
 import { createAgentSecurityPolicy } from '../services/security-policy.js';
+import { AGENT_FALLBACK_MODEL, KIMI_K3_MODEL } from '../agent/models.js';
 
 const log = createLogger('OrchestratorRunner');
 
@@ -30,7 +31,7 @@ const MAX_REPLAN_ATTEMPTS = 1;
 const MAX_SPEC_CONTEXT_CHARS = 100_000;
 const IGNORED_SCAN_DIRECTORIES = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', 'vendor', '.cache']);
 
-const FALLBACK_MODEL = 'openai/gpt-oss-120b';
+const FALLBACK_MODEL = AGENT_FALLBACK_MODEL;
 
 export class OrchestratorRunner {
   private sessionsRepo: OrchestratorSessionsRepository;
@@ -269,7 +270,7 @@ export class OrchestratorRunner {
 
   private async planWithArquiteto(session: OrchestratorSession, mdContent: string, architectureReport: string): Promise<PlanTask[]> {
     const appConfig = this.getAppConfig();
-    const step = this.recordStep('orchestrator', 'z-ai/glm-5.2', 'plan', 'Generate project plan from specs + codebase scan');
+    const step = this.recordStep('orchestrator', KIMI_K3_MODEL, 'plan', 'Generate project plan from specs + codebase scan');
 
     const prompt = `You are a software architect. Analyze the project specification and codebase scan, then produce a structured implementation plan.
 
@@ -297,20 +298,34 @@ Requirements:
 10. Return ONLY the JSON array, no markdown, no explanation before or after.`;
 
     let planText = '';
+    let modelUsed = KIMI_K3_MODEL;
     try {
       const provider = this.getOrCreateProvider(appConfig.apiBaseUrl, appConfig.apiKey, 'orchestrator');
-      const model = provider.chatModel('z-ai/glm-5.2');
+      const modelChain = [KIMI_K3_MODEL, FALLBACK_MODEL];
+      let lastError: any;
+      for (const modelId of modelChain) {
+        try {
+          const model = provider.chatModel(modelId);
+          const result = await this.callWithRetry(() => generateText({
+            model,
+            prompt,
+            maxOutputTokens: 16384,
+            abortSignal: this.abortController?.signal,
+            timeout: { totalMs: SUB_AGENT_TIMEOUT_MS },
+          }), `orchestrator-plan:${modelId}`);
+          planText = result.text;
+          modelUsed = modelId;
+          break;
+        } catch (err: any) {
+          lastError = err;
+          const canFallback = this.isRateLimitError(err) || this.isModelUnavailableError(err);
+          if (!canFallback || modelId === modelChain[modelChain.length - 1]) throw err;
+          log.warn('Planning model unavailable, switching to fallback', { sessionId: session.id, failedModel: modelId, fallbackModel: FALLBACK_MODEL });
+        }
+      }
+      if (!planText) throw lastError ?? new Error('No planning model produced a response');
 
-      const result = await this.callWithRetry(() => generateText({
-          model,
-          prompt,
-          maxOutputTokens: 16384,
-          abortSignal: this.abortController?.signal,
-          timeout: { totalMs: SUB_AGENT_TIMEOUT_MS },
-        }), 'orchestrator-plan');
-
-      planText = result.text;
-      this.deductCreditForStep(session.userId, 'z-ai/glm-5.2');
+      this.deductCreditForStep(session.userId, modelUsed);
       this.totalStepsUsed += 1;
       this.sessionsRepo.incrementStepsUsed(session.id, 1);
       this.updateStepResult(step.id, planText.slice(0, 5000), 'completed', null, 0);
@@ -804,20 +819,21 @@ Requirements:
       } catch (err: any) {
         if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
         const isRateLimit = this.isRateLimitError(err);
+        const isUnavailable = this.isModelUnavailableError(err);
         const isLastModel = modelId === modelChain[modelChain.length - 1];
 
-        if (isRateLimit && !isLastModel) {
-          log.warn('Rate limited, trying next fallback model', { role, failedModel: modelId, nextModel: modelChain[modelChain.indexOf(modelId) + 1], sessionId: session.id });
+        if ((isRateLimit || isUnavailable) && !isLastModel) {
+          log.warn('Model unavailable, trying next fallback model', { role, failedModel: modelId, reason: isRateLimit ? 'rate-limit' : 'unavailable', nextModel: modelChain[modelChain.indexOf(modelId) + 1], sessionId: session.id });
           continue;
         }
 
-        if (!isRateLimit) {
+        if (!isRateLimit && !isUnavailable) {
           log.error('Sub-agent call failed (non-rate-limit)', { role, modelId, error: err.message, sessionId: session.id });
           return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: err.message, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
         }
 
-        log.error('Sub-agent call failed — all fallback models rate-limited', { role, error: err.message, sessionId: session.id });
-        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All models rate-limited. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
+        log.error('Sub-agent call failed — fallback chain exhausted', { role, error: err.message, sessionId: session.id });
+        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All fallback models failed. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
       }
     }
 
@@ -891,20 +907,21 @@ Requirements:
       } catch (err: any) {
         if (this.isCreditsError(err) || this.isStepLimitError(err)) throw err;
         const isRateLimit = this.isRateLimitError(err);
+        const isUnavailable = this.isModelUnavailableError(err);
         const isLastModel = modelId === modelChain[modelChain.length - 1];
 
-        if (isRateLimit && !isLastModel) {
-          log.warn('Rate limited, trying next fallback model', { role, failedModel: modelId, nextModel: modelChain[modelChain.indexOf(modelId) + 1], sessionId: session.id });
+        if ((isRateLimit || isUnavailable) && !isLastModel) {
+          log.warn('Model unavailable, trying next fallback model', { role, failedModel: modelId, reason: isRateLimit ? 'rate-limit' : 'unavailable', nextModel: modelChain[modelChain.indexOf(modelId) + 1], sessionId: session.id });
           continue;
         }
 
-        if (!isRateLimit) {
+        if (!isRateLimit && !isUnavailable) {
           log.error('Sub-agent call failed (non-rate-limit)', { role, modelId, error: err.message, sessionId: session.id });
           return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: err.message, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
         }
 
-        log.error('Sub-agent call failed — all fallback models rate-limited', { role, error: err.message, sessionId: session.id });
-        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All models rate-limited. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
+        log.error('Sub-agent call failed — fallback chain exhausted', { role, error: err.message, sessionId: session.id });
+        return { text: '', filesCreated: [], filesModified: [], commandsRun: [], errors: [{ message: `All fallback models failed. Last error: ${err.message}`, step: 0 }], stepsUsed: 0, success: false, modelUsed: modelId };
       }
     }
 
@@ -1079,6 +1096,16 @@ Requirements:
     const msg = (err.message ?? '').toLowerCase();
     const status = err.statusCode || err.status;
     return status === 429 || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('quota exceeded');
+  }
+
+  private isModelUnavailableError(err: any): boolean {
+    const status = err?.statusCode || err?.status;
+    const details = `${err?.message ?? ''} ${err?.responseBody ?? ''}`.toLowerCase();
+    return status === 404 && (
+      details.includes('not found for account') ||
+      details.includes('model not found') ||
+      details.includes('does not exist')
+    );
   }
 
   private async callWithRetry<T>(fn: () => Promise<T>, context: string = ''): Promise<T> {
@@ -1373,9 +1400,9 @@ Be thorough but fair — minor style issues are acceptable, but broken code is n
   private getModelForRole(role: OrchestratorRole): string {
     switch (role) {
       case 'auxiliar': return 'nvidia/nemotron-3-ultra-550b-a55b';
-      case 'arquiteto': return 'z-ai/glm-5.2';
+      case 'arquiteto': return KIMI_K3_MODEL;
       case 'programador': return 'deepseek-ai/deepseek-v4-pro';
-      case 'revisor': return 'z-ai/glm-5.2';
+      case 'revisor': return KIMI_K3_MODEL;
       default: return 'deepseek-ai/deepseek-v4-pro';
     }
   }

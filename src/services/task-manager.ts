@@ -13,14 +13,21 @@ import { createAgentSecurityPolicy } from './security-policy.js';
 
 const log = createLogger('TaskManager');
 
-function streamChunkError(value: unknown): Error {
-  if (value instanceof Error) return value;
+function streamChunkError(value: unknown, model: string): Error {
+  if (value instanceof Error) {
+    const providerError = value as Error & { statusCode?: number; responseBody?: string };
+    const responseBody = providerError.responseBody ?? '';
+    if (providerError.statusCode === 404 && /function\s+['"].+['"]:\s*not found for account/i.test(responseBody)) {
+      return new Error(`O modelo "${model}" está listado pelo provedor, mas sua função de inferência está indisponível. Selecione outro modelo e tente novamente.`);
+    }
+    return value;
+  }
   if (typeof value === 'string' && value.trim()) return new Error(value);
   return new Error('Agent stream failed');
 }
 
 export interface StreamEvent {
-  type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'finish' | 'error' | 'credits-exhausted';
+  type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'model-messages' | 'finish' | 'error' | 'credits-exhausted';
   taskId: string;
   [key: string]: unknown;
 }
@@ -328,7 +335,19 @@ export class TaskManager {
               // streamText reports terminal provider failures as data chunks
               // instead of rejecting the iterator. Ignoring this used to make
               // exhausted 429 retries look like successful task completion.
-              throw streamChunkError((chunk as any).error);
+              throw streamChunkError((chunk as any).error, model);
+            }
+          }
+
+          // Preserve the exact assistant/tool transcript produced by the SDK.
+          // Kimi K3 requires reasoning_content and tool calls to be returned on
+          // subsequent turns. This event is internal and is never sent to the
+          // browser by the chat router.
+          if (sawFinish) {
+            const completedSteps = await streamResult.steps;
+            const responseMessages = completedSteps.flatMap(step => step.response.messages);
+            if (responseMessages.length > 0) {
+              yield { type: 'model-messages' as const, taskId, messages: responseMessages };
             }
           }
 

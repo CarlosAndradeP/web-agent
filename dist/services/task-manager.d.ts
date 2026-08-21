@@ -6,7 +6,7 @@ import { CreditManager } from '../services/credit-manager.js';
 import type { ApprovalManager } from './approval-manager.js';
 import type { Server } from 'socket.io';
 export interface StreamEvent {
-    type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'finish' | 'error' | 'credits-exhausted';
+    type: 'text-delta' | 'tool-call' | 'tool-result' | 'step-start' | 'step-end' | 'model-messages' | 'finish' | 'error' | 'credits-exhausted';
     taskId: string;
     [key: string]: unknown;
 }

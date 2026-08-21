@@ -22,6 +22,32 @@ const CHARS_PER_TOKEN = 4;
 // Threshold: compact when estimated tokens exceed 80% of this value
 const DEFAULT_MAX_ESTIMATED_TOKENS = 60000;
 
+function parsePersistedModelMessages(value: string | null): Array<ModelMessage> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+
+    const messages: Array<ModelMessage> = [];
+    for (const candidate of parsed) {
+      if (!candidate || typeof candidate !== 'object') return null;
+      const message = candidate as { role?: unknown; content?: unknown };
+      if (message.role === 'assistant') {
+        if (typeof message.content !== 'string' && !Array.isArray(message.content)) return null;
+        messages.push({ role: 'assistant', content: message.content } as ModelMessage);
+      } else if (message.role === 'tool') {
+        if (!Array.isArray(message.content)) return null;
+        messages.push({ role: 'tool', content: message.content } as ModelMessage);
+      } else {
+        return null;
+      }
+    }
+    return messages;
+  } catch {
+    return null;
+  }
+}
+
 export class CompactionService {
   private messagesRepo: MessagesRepository;
   private sessionsRepo: SessionsRepository;
@@ -111,12 +137,19 @@ export class CompactionService {
     }
 
     // Include all non-compacted messages
-    const messages = this.messagesRepo.findBySession(sessionId);
+    const messages = this.messagesRepo.findForModelContext(sessionId);
     for (const msg of messages) {
       // Skip system messages that are the compacted summary (already included above)
       if (msg.role === 'system' && msg.content?.startsWith('[Conversation summary')) continue;
       // Only include user, assistant, and system roles that the LLM understands
       if (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'system') {
+        if (msg.role === 'assistant') {
+          const preservedMessages = parsePersistedModelMessages(msg.modelContext);
+          if (preservedMessages) {
+            context.push(...preservedMessages);
+            continue;
+          }
+        }
         context.push({ role: msg.role as 'user' | 'assistant' | 'system', content: msg.content || '' });
       }
     }

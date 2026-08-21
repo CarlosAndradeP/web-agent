@@ -231,6 +231,7 @@ Assinatura de webhook e confirmação no provedor são invariantes e não devem 
 |---|---|
 | `src/db/index.ts` | Executa integrity check, faz backup de banco corrompido, habilita WAL, foreign keys e busy timeout. |
 | `src/db/schema.ts` e `src/db/migrate.ts` | Foreign keys, cascatas e índices de ownership/sessão. |
+| `messages.model_context` e `src/services/compaction-service.ts` | Preservam internamente o transcript exigido por modelos com raciocínio contínuo, incluindo Kimi K3. O campo não é retornado por `findBySession()` nem exposto no histórico da API. |
 | `src/services/logger.ts` | Escrita assíncrona e separação diária; logs registram operações e decisões de bloqueio. |
 | `src/server.ts` | Encerramento gracioso de orquestrador, watcher, projetos e banco. |
 

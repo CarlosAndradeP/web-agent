@@ -6,8 +6,9 @@ import { createSearchFilesTool } from '../../agent/tools/search-files.js';
 import { createRunCommandTool } from '../../agent/tools/run-command.js';
 import { buildRevisorPrompt } from '../prompts/revisor-prompt.js';
 import { applyAgentSecurityPrompt, PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
+import { KIMI_K3_MODEL } from '../../agent/models.js';
 
-const DEFAULT_MODEL = 'z-ai/glm-5.2';
+const DEFAULT_MODEL = KIMI_K3_MODEL;
 
 export function createRevisorAgent(workspaceDir: string, apiBaseUrl: string, apiKey: string, projectType?: string, objective?: string, modelOverride?: string, securityPolicy: AgentSecurityPolicySnapshot = PROTECTED_AGENT_SECURITY_POLICY) {
   const provider = createProvider(apiBaseUrl, apiKey, 'sub');

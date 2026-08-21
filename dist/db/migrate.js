@@ -9,6 +9,7 @@ export function migrate(db) {
         { table: 'sessions', column: 'project_id', type: 'TEXT' },
         { table: 'projects', column: 'session_id', type: 'TEXT' },
         { table: 'messages', column: 'is_compacted', type: 'INTEGER DEFAULT 0' },
+        { table: 'messages', column: 'model_context', type: 'TEXT DEFAULT NULL' },
         { table: 'sessions', column: 'summary_text', type: 'TEXT DEFAULT NULL' },
         { table: 'orchestrator_sessions', column: 'total_steps_used', type: 'INTEGER DEFAULT 0' },
     ];

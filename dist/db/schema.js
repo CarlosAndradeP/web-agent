@@ -2,7 +2,7 @@ export const schema = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  model TEXT NOT NULL DEFAULT 'z-ai/glm-5.2',
+  model TEXT NOT NULL DEFAULT 'moonshotai/kimi-k3',
   user_id TEXT,
   project_id TEXT,
   summary_text TEXT DEFAULT NULL,
@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS messages (
   role TEXT NOT NULL,
   content TEXT,
   tool_calls TEXT,
+  model_context TEXT,
   tool_call_id TEXT,
   step_number INTEGER,
   user_id TEXT,

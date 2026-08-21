@@ -90,7 +90,7 @@ export default function OrchestratorHeader({ status, isLoading }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-zinc-100">Agente autônomo</span>
-            <span className="text-[10px] text-zinc-500 font-mono">z-ai/glm-5.2</span>
+            <span className="text-[10px] text-zinc-500 font-mono">moonshotai/kimi-k3</span>
             {statusBadge && (
               <span className={cn(
                 'inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border',

@@ -10,6 +10,7 @@ import { UsersRepository } from '../db/repositories/users.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { WordWorkspacesRepository } from '../db/repositories/word-workspaces.js';
 import { resolveModels } from '../services/model-resolver.js';
+import type { ModelMessage } from '@ai-sdk/provider-utils';
 import { config } from '../config.js';
 import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
@@ -256,8 +257,13 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       const createdFiles = new Set<string>();
       let assistantContent = '';
       const persistedToolCalls: Array<Record<string, unknown>> = [];
+      let generatedModelMessages: ModelMessage[] = [];
       for await (const event of eventStream) {
         totalEvents++;
+        if (event.type === 'model-messages') {
+          generatedModelMessages = Array.isArray(event.messages) ? event.messages as ModelMessage[] : [];
+          continue;
+        }
         if (event.type === 'text-delta' && typeof event.content === 'string') {
           assistantContent += event.content;
         }
@@ -310,10 +316,11 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       }
       const finalContent = assistantContent || 'Tarefa concluída sem uma resposta em texto.';
       messagesRepo.create(effectiveSessionId, 'assistant', finalContent, JSON.stringify({
+        model: selectedModel,
         calls: persistedToolCalls,
         createdFiles: allCreatedFiles.slice(0, 5),
         createdFileCount: allCreatedFiles.length,
-      }));
+      }), null, null, generatedModelMessages.length > 0 ? JSON.stringify(generatedModelMessages) : null);
       res.write(`data: ${JSON.stringify({
         type: 'finish',
         taskId: task.id,

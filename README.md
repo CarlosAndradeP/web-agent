@@ -161,7 +161,7 @@ The Docker Compose stack starts ONLYOFFICE Docs together with Web Agent. The URL
 | `WORKSPACE_BASE_DIR` | `./workspace` | Per-user workspace base directory (each user gets `workspace/<username>/`) |
 | `DATA_DIR` | `./data` | SQLite database directory |
 | `MAX_STEPS` | `100` | Max agent steps per task |
-| `DEFAULT_MODEL` | `z-ai/glm-5.2` | Default LLM model |
+| `DEFAULT_MODEL` | `moonshotai/kimi-k3` | Default LLM model |
 | `ACCESS_TOKEN_SECRET` | *(recommended, separate)* | Access token JWT secret (15min tokens) |
 | `REFRESH_TOKEN_SECRET` | *(recommended, separate)* | Refresh token JWT secret (7d tokens) |
 | `JWT_SECRET` | *(legacy, optional)* | If set, applies to both access and refresh secrets when the specific ones are unset |
@@ -359,7 +359,7 @@ See full details in [`CHANGELOG.md`](CHANGELOG.md).
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | Internal UUID |
-| `model_id` | TEXT UNIQUE | Model ID (e.g. `z-ai/glm-5.2`) |
+| `model_id` | TEXT UNIQUE | Model ID (e.g. `moonshotai/kimi-k3`) |
 | `enabled` | INTEGER | 1=enabled, 0=disabled (default 1) |
 | `cost_per_step` | REAL | Credits per step (default 1) |
 | `display_name` | TEXT | Custom display name |

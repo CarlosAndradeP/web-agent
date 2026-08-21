@@ -10,6 +10,7 @@ import { createSearchFilesTool } from './search-files.js';
 import { createRunCommandTool } from './run-command.js';
 import { createLogger, logSubAgentEvent } from '../../services/logger.js';
 import { applyAgentSecurityPrompt, PROTECTED_AGENT_SECURITY_POLICY } from '../../services/security-policy.js';
+import { KIMI_K3_MODEL } from '../models.js';
 const log = createLogger('SubAgentTool');
 export function createInvokeSubAgentTool(options) {
     const securityPolicy = options.securityPolicy ?? PROTECTED_AGENT_SECURITY_POLICY;
@@ -36,7 +37,7 @@ export function createInvokeSubAgentTool(options) {
                     searchFiles: createSearchFilesTool(options.workspaceDir),
                     runCommand: createRunCommandTool(options.workspaceDir, securityPolicy),
                 };
-                const model = provider.chatModel('z-ai/glm-5.2');
+                const model = provider.chatModel(KIMI_K3_MODEL);
                 const subAgent = new ToolLoopAgent({
                     model,
                     instructions: applyAgentSecurityPrompt(DEVELOPMENT_SUB_AGENT_SYSTEM_PROMPT, securityPolicy),

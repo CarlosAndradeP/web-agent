@@ -3,8 +3,12 @@ import type { Message } from '../../types/index.js';
 export declare class MessagesRepository {
     private db;
     constructor(db: Database.Database);
-    create(sessionId: string, role: string, content: string | null, toolCalls?: string | null, toolCallId?: string | null, stepNumber?: number | null): Message;
+    create(sessionId: string, role: string, content: string | null, toolCalls?: string | null, toolCallId?: string | null, stepNumber?: number | null, modelContext?: string | null): Message;
     findBySession(sessionId: string, includeCompacted?: boolean): Message[];
+    /** Internal model transcript. model_context is intentionally not returned by findBySession(). */
+    findForModelContext(sessionId: string, includeCompacted?: boolean): Array<Message & {
+        modelContext: string | null;
+    }>;
     deleteBySession(sessionId: string): number;
     /**
      * Compact a session: insert a summary message and mark all prior messages as compacted.
