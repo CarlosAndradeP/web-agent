@@ -39,12 +39,21 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
   const activeTaskIdRef = useRef<string | null>(null);
   const attachedFilesRef = useRef<string[]>([]);
   const historyRequestRef = useRef(0);
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
 
   // Ref to always read the latest messages without stale closure
   const messagesRef = useRef<ChatMessage[]>(messages);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
+    const previousController = abortRef.current;
+    const previousTask = activeTaskIdRef.current;
+    previousController?.abort();
+    if (previousTask) void api.tasks.cancel(previousTask).catch(() => {});
+    abortRef.current = null;
+    activeTaskIdRef.current = null;
+    attachedFilesRef.current = [];
     const requestId = ++historyRequestRef.current;
     setMessages([]);
     setCurrentStep(0);
@@ -87,6 +96,9 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
   }, [sessionId, historyReloadKey]);
 
   const send = useCallback(async (content: string, model: string, maxSteps?: number) => {
+    if (abortRef.current || !sessionId || isLoadingHistory || historyError) return;
+    // Prevent an in-flight history request from replacing this new conversation turn.
+    ++historyRequestRef.current;
     // Prepend attached file context to the message if any
     const attachedFiles = attachedFilesRef.current;
     let effectiveContent = content;
@@ -122,7 +134,8 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
           options?.onCreditsRequired?.();
           throw new Error('Créditos esgotados. Fale com um administrador para adicionar mais créditos.');
         }
-        throw new Error(`Erro da API: ${response.status} ${response.statusText}`);
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || `Erro da API: ${response.status} ${response.statusText}`);
       }
 
       const reader = response.body?.getReader();
@@ -142,6 +155,7 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
 
         while (true) {
           const { done, value } = await reader.read();
+          if (sessionRef.current !== sessionId) { await reader.cancel(); return; }
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -192,7 +206,7 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
                     result: data.result,
                     stepNumber: data.stepNumber,
                     durationMs: data.durationMs,
-                    status: 'completed',
+                    status: data.result?.success === false || !!data.result?.error || (data.result?.exitCode !== undefined && data.result.exitCode !== 0) ? 'error' : 'completed',
                   };
                 }
                 setCurrentToolName(null);
@@ -275,6 +289,7 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
         });
       }
     } catch (err: any) {
+      if (sessionRef.current !== sessionId) return;
       if (err.name === 'AbortError') {
         setStatus('cancelled');
       } else {
@@ -287,12 +302,18 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
         });
       }
     } finally {
+      if (abortRef.current !== controller) return;
       setIsStreaming(false);
       setCurrentToolName(null);
       abortRef.current = null;
       activeTaskIdRef.current = null;
     }
-  }, [sessionId, options]);
+  }, [sessionId, options, isLoadingHistory, historyError]);
+
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (activeTaskIdRef.current) void api.tasks.cancel(activeTaskIdRef.current).catch(() => {});
+  }, []);
 
   const cancel = useCallback(async () => {
     // First, cancel the server-side task so the agent stops executing
@@ -327,16 +348,19 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
   }, []);
 
   const clearChat = useCallback(async () => {
+    if (abortRef.current) return;
+    try {
+      await api.sessions.clearMessages(sessionId);
+    } catch (err) {
+      console.warn('[Chat] Failed to clear messages from server', err);
+      return;
+    }
+    messagesRef.current = [];
     setMessages([]);
     setCurrentStep(0);
     setStatus('idle');
     setCurrentToolName(null);
     attachedFilesRef.current = [];
-    try {
-      await api.sessions.clearMessages(sessionId);
-    } catch (err) {
-      console.warn('[Chat] Failed to clear messages from server', err);
-    }
   }, [sessionId]);
 
   const reloadHistory = useCallback(() => setHistoryReloadKey(key => key + 1), []);

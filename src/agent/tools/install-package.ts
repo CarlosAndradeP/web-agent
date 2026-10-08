@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { validateCommand, buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
 import { logToolExecution } from '../../services/logger.js';
 import { PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
+import { npmCommand } from '../../lib/npm-command.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,7 +50,8 @@ export function createInstallPackageTool(workspaceDir: string, securityPolicy: A
       package: z.string().describe('Package name (e.g., "lodash" or "requests")'),
       manager: z.enum(['npm', 'pip']).describe('Package manager to use'),
     }),
-    execute: async ({ package: pkg, manager }) => {
+    execute: async ({ package: pkg, manager }, { abortSignal }) => {
+      abortSignal?.throwIfAborted();
       const startTime = Date.now();
       logToolExecution('installPackage', undefined, 'start', { input: { package: pkg, manager } });
 
@@ -74,8 +76,10 @@ export function createInstallPackageTool(workspaceDir: string, securityPolicy: A
         if (manager === 'npm') {
           const npmArgs = ['install', '--prefix', workspaceDir, pkg];
           if (securityPolicy.packagePolicyEnabled) npmArgs.push('--ignore-scripts');
-          ({ stdout, stderr } = await execFileAsync('npm', npmArgs, {
+          const npm = npmCommand(npmArgs);
+          ({ stdout, stderr } = await execFileAsync(npm.command, npm.args, {
             timeout: 60000,
+            signal: abortSignal,
             maxBuffer: 1024 * 1024 * 5,
             cwd: workspaceDir,
             env: buildWorkspaceEnv(workspaceDir),
@@ -84,6 +88,7 @@ export function createInstallPackageTool(workspaceDir: string, securityPolicy: A
         } else {
           ({ stdout, stderr } = await execFileAsync('pip', ['install', '--no-cache-dir', '--target', workspaceDir, pkg], {
             timeout: 60000,
+            signal: abortSignal,
             maxBuffer: 1024 * 1024 * 5,
             cwd: workspaceDir,
             env: buildWorkspaceEnv(workspaceDir),

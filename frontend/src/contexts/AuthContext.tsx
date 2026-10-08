@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { authApi, type UserPublic } from '../lib/auth-api';
+import { authApi, type UserPublic, type AuthResponse } from '../lib/auth-api';
 import { setAuthFetch } from '../lib/api';
 import { connectWithAuth, disconnectSocket } from '../lib/socket';
 import type { Socket } from 'socket.io-client';
@@ -43,6 +43,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => { refreshTokenRef.current = refreshToken; }, [refreshToken]);
 
   const storeAuth = (access: string, refresh: string, userData: UserPublic) => {
+    accessTokenRef.current = access;
+    refreshTokenRef.current = refresh;
     localStorage.setItem(TOKEN_KEY, access);
     localStorage.setItem(REFRESH_KEY, refresh);
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
@@ -52,6 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const clearAuth = () => {
+    accessTokenRef.current = null;
+    refreshTokenRef.current = null;
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(USER_KEY);
@@ -105,7 +109,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Auth-aware fetch: adds Authorization header, handles 401 with transparent refresh
-  const refreshingRef = useRef(false);
+  const refreshPromiseRef = useRef<Promise<AuthResponse> | null>(null);
+  const refreshAuth = useCallback((): Promise<AuthResponse> => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    const refresh = refreshTokenRef.current;
+    if (!refresh) return Promise.reject(new Error('No refresh token'));
+    const promise = authApi.refresh(refresh).then(data => {
+      // A late refresh must not sign a user back in after logout or another login.
+      if (refreshTokenRef.current !== refresh) throw new Error('Authentication changed during refresh');
+      storeAuth(data.accessToken, data.refreshToken, data.user);
+      return data;
+    }).catch(err => {
+      if (refreshTokenRef.current === refresh && (err.status === 401 || err.status === 403)) clearAuth();
+      throw err;
+    }).finally(() => { refreshPromiseRef.current = null; });
+    refreshPromiseRef.current = promise;
+    return promise;
+  }, []);
   const authFetch = useCallback(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = accessTokenRef.current;
     const headers = new Headers(init?.headers);
@@ -115,31 +135,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const response = await fetch(input, { ...init, headers });
 
-    if (response.status === 401 && !refreshingRef.current) {
+    if (response.status === 401) {
       const currentRefreshToken = refreshTokenRef.current;
       if (!currentRefreshToken) {
         clearAuth();
         return response;
       }
 
-      refreshingRef.current = true;
       try {
-        const data = await authApi.refresh(currentRefreshToken);
-        storeAuth(data.accessToken, data.refreshToken, data.user);
+        const data = accessTokenRef.current && accessTokenRef.current !== token
+          ? { accessToken: accessTokenRef.current }
+          : await refreshAuth();
 
         // Retry the original request with new token
         const retryHeaders = new Headers(init?.headers);
         retryHeaders.set('Authorization', `Bearer ${data.accessToken}`);
         return fetch(input, { ...init, headers: retryHeaders });
-      } catch {
-        clearAuth();
-      } finally {
-        refreshingRef.current = false;
-      }
+      } catch { /* Transient refresh failures retain the session for a later retry. */ }
     }
 
     return response;
-  }, []);
+  }, [refreshAuth]);
 
   // Register authFetch with the API module on mount
   useEffect(() => {
@@ -154,15 +170,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentRefreshToken = refreshTokenRef.current;
       if (!currentRefreshToken) return;
       try {
-        const data = await authApi.refresh(currentRefreshToken);
-        storeAuth(data.accessToken, data.refreshToken, data.user);
-      } catch {
-        clearAuth();
-      }
+        await refreshAuth();
+      } catch { /* The next request can retry after a temporary outage. */ }
     }, 14 * 60 * 1000);
 
     return () => clearInterval(interval);
-  }, [accessToken, refreshToken]);
+  }, [accessToken, refreshToken, refreshAuth]);
 
   // Socket.IO connection using singleton — managed by AuthContext lifecycle.
   // Re-connect whenever the access token changes so the socket handshake uses

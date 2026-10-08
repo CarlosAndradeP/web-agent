@@ -26,6 +26,8 @@ export function registerSocketEvents(socket: Socket, io: Server, approvalManager
   });
 
   socket.on('task:subscribe', (data: { taskId: string }) => {
+    const task = taskManager.getTask(data.taskId);
+    if (!task || (!isAdmin && task.userId !== user?.userId)) return;
     log.debug('Task subscribe', { socketId: socket.id, taskId: data.taskId });
     socket.join(`task:${data.taskId}`);
   });
@@ -48,7 +50,7 @@ export function registerSocketEvents(socket: Socket, io: Server, approvalManager
       log.warn('Task cancel — task not found', { taskId: data.taskId });
       return;
     }
-    if (task.userId && task.userId !== user?.userId) {
+    if (task.userId !== user?.userId) {
       log.warn('Task cancel denied — not owner', { taskId: data.taskId, userId: user?.userId, taskUserId: task.userId });
       return;
     }

@@ -255,7 +255,7 @@ export function createWordRouter(db: Database.Database) {
       return;
     }
     const appConfig = configRepo.getAll();
-    const models = await resolveModels(appConfig.apiBaseUrl);
+    const models = await resolveModels(appConfig.apiBaseUrl, appConfig.apiKey);
     if (models.length > 0 && !models.some(item => item.id === model)) {
       res.status(400).json({ error: 'Selected model is not available' });
       return;

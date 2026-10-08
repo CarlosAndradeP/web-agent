@@ -10,7 +10,7 @@ export function createModelsRouter(db: Database.Database, configRepo: ConfigRepo
 
   router.get('/', async (_req, res) => {
     const appConfig = configRepo.getAll();
-    const models = await resolveModels(appConfig.apiBaseUrl);
+    const models = await resolveModels(appConfig.apiBaseUrl, appConfig.apiKey);
     const modelConfigList = modelConfigRepo.list();
     const configMap = new Map(modelConfigList.map(mc => [mc.modelId, mc]));
 

@@ -19,6 +19,7 @@ import { getUserWorkspaceDir } from '../lib/workspace-paths.js';
 import { createLogger, logSubAgentEvent } from '../services/logger.js';
 import { createAgentSecurityPolicy } from '../services/security-policy.js';
 import { AGENT_FALLBACK_MODEL, KIMI_K3_MODEL } from '../agent/models.js';
+import { assertAgentCompleted } from '../agent/completion.js';
 
 const log = createLogger('OrchestratorRunner');
 
@@ -51,6 +52,7 @@ export class OrchestratorRunner {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private providerCache = new Map<string, any>();
   private appConfigCache: any = null;
+  private workflowPromise: Promise<void> | null = null;
 
   constructor(
     private db: Database.Database,
@@ -71,10 +73,24 @@ export class OrchestratorRunner {
   setIo(io: Server): void { this.io = io; }
   isRunning(): boolean { return this.running; }
   getCurrentSessionId(): string | null { return this.currentSessionId; }
+  hasPendingWork(): boolean { return this.workflowPromise !== null; }
+  async waitForIdle(): Promise<void> { await this.workflowPromise; }
+
+  private launchWorkflow(session: OrchestratorSession): void {
+    const workflow = this.runPhasedWorkflow(session).catch((err: any) => {
+      log.error('Orchestrator loop failed', { sessionId: session.id, error: err.message });
+      if (this.running) this.handleFatalError(session.id, err.message);
+    }).finally(() => {
+      if (this.workflowPromise === workflow) this.workflowPromise = null;
+    });
+    this.workflowPromise = workflow;
+  }
 
   // ====== LIFECYCLE ======
 
   async start(sessionId: string): Promise<void> {
+    if (this.running) throw new Error('Orchestrator is already running');
+    if (this.workflowPromise) await this.waitForIdle();
     if (this.running) throw new Error('Orchestrator is already running');
     const session = this.sessionsRepo.findById(sessionId);
     if (!session) throw new Error('Orchestrator session not found');
@@ -93,13 +109,12 @@ export class OrchestratorRunner {
     this.emitEvent('orchestrator:status', { sessionId, status: 'running', progressPercent: 0 });
     log.info('Orchestrator started', { sessionId, objective: session.objective });
 
-    this.runPhasedWorkflow(session).catch((err: any) => {
-      log.error('Orchestrator loop failed', { sessionId, error: err.message, stack: err.stack });
-      this.handleFatalError(sessionId, err.message);
-    });
+    this.launchWorkflow(session);
   }
 
   async resume(sessionId: string): Promise<void> {
+    if (this.running) throw new Error('Orchestrator is already running');
+    if (this.workflowPromise) await this.waitForIdle();
     if (this.running) throw new Error('Orchestrator is already running');
     const session = this.sessionsRepo.findById(sessionId);
     if (!session) throw new Error('Orchestrator session not found');
@@ -112,14 +127,13 @@ export class OrchestratorRunner {
     this.replanCount.clear();
     this.appConfigCache = null;
     this.abortController = new AbortController();
+    this.db.prepare("UPDATE orchestrator_tasks SET status = 'pending', error_message = 'Execution interrupted; resume from existing workspace progress', updated_at = ? WHERE orchestrator_session_id = ? AND status = 'running'")
+      .run(new Date().toISOString(), sessionId);
     this.sessionsRepo.updateStatus(sessionId, 'running');
     this.stateRepo.setRunning(true, sessionId);
     this.startHeartbeat();
     this.emitEvent('orchestrator:status', { sessionId, status: 'running', progressPercent: session.progressPercent });
-    this.runPhasedWorkflow(session).catch((err: any) => {
-      log.error('Orchestrator loop failed on resume', { sessionId, error: err.message });
-      this.handleFatalError(sessionId, err.message);
-    });
+    this.launchWorkflow(session);
   }
 
   pause(sessionId: string): void {
@@ -170,6 +184,9 @@ export class OrchestratorRunner {
       await this.executePendingTasks(session);
 
       if (!this.running || this.abortController?.signal.aborted) return;
+
+      const unfinishedTasks = this.tasksRepo.findBySession(session.id).filter(t => t.status !== 'completed' && t.status !== 'superseded');
+      if (unfinishedTasks.length > 0) throw new Error(`${unfinishedTasks.length} tasks remain unfinished; project completion cannot be confirmed.`);
 
       const verificationPassed = await this.verifyProject(session);
       if (!this.running || this.abortController?.signal.aborted) return;
@@ -810,6 +827,7 @@ Requirements:
           }
         }
 
+        assertAgentCompleted(agentResult.finishReason, agentResult.text ?? '');
         text = this.extractTextFromResult(agentResult);
         agentSteps = agentResult?.steps ?? [];
         stepsUsed = agentSteps.length;
@@ -898,6 +916,7 @@ Requirements:
           }
         }
 
+        assertAgentCompleted(agentResult.finishReason, agentResult.text ?? '');
         text = this.extractTextFromResult(agentResult);
         agentSteps = agentResult?.steps ?? [];
         stepsUsed = agentSteps.length;
@@ -1120,7 +1139,7 @@ Requirements:
     let rateLimitAttempts = 0;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      if (this.abortController?.signal.aborted) {
+      if (!this.running || this.abortController?.signal.aborted) {
         throw new Error('Aborted by orchestrator stop');
       }
 

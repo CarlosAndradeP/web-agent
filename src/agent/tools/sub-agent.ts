@@ -11,6 +11,7 @@ import { createRunCommandTool } from './run-command.js';
 import { createLogger, logSubAgentEvent } from '../../services/logger.js';
 import { applyAgentSecurityPrompt, PROTECTED_AGENT_SECURITY_POLICY, type AgentSecurityPolicySnapshot } from '../../services/security-policy.js';
 import { KIMI_K3_MODEL } from '../models.js';
+import { assertAgentCompleted } from '../completion.js';
 
 const log = createLogger('SubAgentTool');
 
@@ -30,7 +31,7 @@ export function createInvokeSubAgentTool(options: {
       maxSteps: z.number().optional().describe('Maximum steps for the sub-agent (default: 15, max: 30)'),
     }),
     execute: async ({ task, maxSteps: subMaxSteps = 15 }) => {
-      const cappedSteps = Math.min(subMaxSteps, 30);
+      const cappedSteps = Math.min(30, Math.max(1, Math.trunc(subMaxSteps)));
 
       logSubAgentEvent('sub-agent', undefined, 'start', { task });
       log.info('Spawning sub-agent', { task: task.slice(0, 100), maxSteps: cappedSteps });
@@ -39,6 +40,7 @@ export function createInvokeSubAgentTool(options: {
       const parentSignal = options.abortSignal;
       const onParentAbort = () => { subAbortController.abort(); };
       parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+      if (parentSignal?.aborted) onParentAbort();
 
       try {
         const provider = createProvider(options.apiBaseUrl, options.apiKey, options.agentType);
@@ -66,7 +68,8 @@ export function createInvokeSubAgentTool(options: {
           timeout: { totalMs: 300_000, stepMs: 120_000 },
         });
 
-        const text = result.text ?? 'Sub-agent completed with no output';
+        assertAgentCompleted(result.finishReason, result.text);
+        const text = result.text;
         const stepsUsed = result.steps?.length ?? 0;
         const createdFiles = new Set<string>();
         for (const step of result.steps ?? []) {

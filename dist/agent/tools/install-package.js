@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { validateCommand, buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
 import { logToolExecution } from '../../services/logger.js';
 import { PROTECTED_AGENT_SECURITY_POLICY } from '../../services/security-policy.js';
+import { npmCommand } from '../../lib/npm-command.js';
 const execFileAsync = promisify(execFile);
 const ALLOWED_NPM_SCOPE_PREFIXES = ['@'];
 const BLOCKED_PACKAGES = [
@@ -42,7 +43,8 @@ export function createInstallPackageTool(workspaceDir, securityPolicy = PROTECTE
             package: z.string().describe('Package name (e.g., "lodash" or "requests")'),
             manager: z.enum(['npm', 'pip']).describe('Package manager to use'),
         }),
-        execute: async ({ package: pkg, manager }) => {
+        execute: async ({ package: pkg, manager }, { abortSignal }) => {
+            abortSignal?.throwIfAborted();
             const startTime = Date.now();
             logToolExecution('installPackage', undefined, 'start', { input: { package: pkg, manager } });
             const pkgCheck = validatePackageName(pkg, manager, securityPolicy.packagePolicyEnabled);
@@ -65,8 +67,10 @@ export function createInstallPackageTool(workspaceDir, securityPolicy = PROTECTE
                     const npmArgs = ['install', '--prefix', workspaceDir, pkg];
                     if (securityPolicy.packagePolicyEnabled)
                         npmArgs.push('--ignore-scripts');
-                    ({ stdout, stderr } = await execFileAsync('npm', npmArgs, {
+                    const npm = npmCommand(npmArgs);
+                    ({ stdout, stderr } = await execFileAsync(npm.command, npm.args, {
                         timeout: 60000,
+                        signal: abortSignal,
                         maxBuffer: 1024 * 1024 * 5,
                         cwd: workspaceDir,
                         env: buildWorkspaceEnv(workspaceDir),
@@ -76,6 +80,7 @@ export function createInstallPackageTool(workspaceDir, securityPolicy = PROTECTE
                 else {
                     ({ stdout, stderr } = await execFileAsync('pip', ['install', '--no-cache-dir', '--target', workspaceDir, pkg], {
                         timeout: 60000,
+                        signal: abortSignal,
                         maxBuffer: 1024 * 1024 * 5,
                         cwd: workspaceDir,
                         env: buildWorkspaceEnv(workspaceDir),

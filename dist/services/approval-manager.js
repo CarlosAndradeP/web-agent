@@ -7,15 +7,25 @@ export class ApprovalManager {
         this.io = io;
         log.info('Socket.IO instance set');
     }
-    requestApproval(request, userId) {
+    requestApproval(request, userId, signal) {
+        if (signal?.aborted)
+            return Promise.resolve(false);
         log.info('Approval requested', { id: request.id, toolName: request.toolName, userId });
         return new Promise((resolve) => {
             const timeout = setTimeout(() => {
+                this.pending.get(request.id)?.cleanup?.();
                 this.pending.delete(request.id);
                 log.warn('Approval timed out (5min)', { id: request.id });
                 resolve(false);
             }, 300000);
-            this.pending.set(request.id, { resolve, timeout, userId });
+            const onAbort = () => {
+                clearTimeout(timeout);
+                this.pending.delete(request.id);
+                signal?.removeEventListener('abort', onAbort);
+                resolve(false);
+            };
+            signal?.addEventListener('abort', onAbort, { once: true });
+            this.pending.set(request.id, { resolve, timeout, userId, cleanup: () => signal?.removeEventListener('abort', onAbort) });
             if (this.io) {
                 const target = userId ? this.io.to(`user:${userId}`) : this.io;
                 target.emit('approval:request', request);
@@ -43,6 +53,7 @@ export class ApprovalManager {
             }
         }
         clearTimeout(entry.timeout);
+        entry.cleanup?.();
         entry.resolve(approved);
         this.pending.delete(id);
         log.info('Approval responded', { id, approved });

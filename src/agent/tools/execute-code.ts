@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { safeWorkspacePath } from './sanitize.js';
 import { buildWorkspaceEnv, getUnprivilegedExecOptions } from './command-policy.js';
@@ -124,9 +125,10 @@ export function createExecuteCodeTool(workspaceDir: string, securityPolicy: Agen
     inputSchema: z.object({
       code: z.string().describe('Code to execute'),
       language: z.enum(['javascript', 'typescript', 'python']).describe('Programming language'),
-      timeout: z.number().optional().describe('Timeout in seconds (default: 30)'),
+      timeout: z.number().min(1).max(300).optional().describe('Timeout in seconds (default: 30)'),
     }),
-    execute: async ({ code, language, timeout = 30 }) => {
+    execute: async ({ code, language, timeout = 30 }, { abortSignal }) => {
+      abortSignal?.throwIfAborted();
       const startTime = Date.now();
       logToolExecution('executeCode', undefined, 'start', { input: { language, codeLength: code.length, timeout } });
 
@@ -139,7 +141,8 @@ export function createExecuteCodeTool(workspaceDir: string, securityPolicy: Agen
       const tmpDir = safeWorkspacePath(workspaceDir, '.tmp-exec');
       mkdirSync(tmpDir, { recursive: true });
       const ext = language === 'python' ? 'py' : language === 'typescript' ? 'ts' : 'js';
-      const filename = `exec-${Date.now()}.${ext}`;
+      const executionId = randomUUID();
+      const filename = `exec-${executionId}.${ext}`;
       const filePath = join(tmpDir, filename);
       const executableCode = language === 'typescript' ? stripBasicTypeScript(code) : code;
       writeFileSync(filePath, executableCode, 'utf-8');
@@ -148,12 +151,12 @@ export function createExecuteCodeTool(workspaceDir: string, securityPolicy: Agen
       let args: string[];
       let wrapperPath: string | null = null;
       if (language === 'python') {
-        wrapperPath = join(tmpDir, `wrapper-${Date.now()}.py`);
+        wrapperPath = join(tmpDir, `wrapper-${executionId}.py`);
         writeFileSync(wrapperPath, PYTHON_WRAPPER, 'utf-8');
         command = process.platform === 'win32' ? 'py' : 'python3';
         args = ['-I', wrapperPath];
       } else {
-        wrapperPath = join(tmpDir, `wrapper-${Date.now()}.cjs`);
+        wrapperPath = join(tmpDir, `wrapper-${executionId}.cjs`);
         writeFileSync(wrapperPath, JS_WRAPPER, 'utf-8');
         command = 'node';
         args = [
@@ -170,6 +173,7 @@ export function createExecuteCodeTool(workspaceDir: string, securityPolicy: Agen
         const { stdout, stderr } = await execFileAsync(command, args, {
           cwd: workspaceDir,
           timeout: timeout * 1000,
+          signal: abortSignal,
           maxBuffer: 1024 * 1024 * 10,
           env: buildWorkspaceEnv(workspaceDir, {
             EXECUTE_CODE_WORKSPACE: workspaceDir,

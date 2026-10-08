@@ -89,7 +89,7 @@ export function createAdminRouter(db, usersRepo, creditsRepo, projectRouter, llm
     router.get('/models', async (_req, res) => {
         try {
             const appConfig = configRepo.getAll();
-            const apiModels = await resolveModels(appConfig.apiBaseUrl);
+            const apiModels = await resolveModels(appConfig.apiBaseUrl, appConfig.apiKey);
             const configuredModels = modelConfigRepo.list();
             const configMap = new Map(configuredModels.map(mc => [mc.modelId, mc]));
             const models = apiModels.map(m => {

@@ -54,12 +54,15 @@ export function subscribeSocketChange(listener: (socket: Socket | null) => void)
  * If no socket is connected yet, the listener is deferred until connection.
  */
 export function onSocketEvent(event: string, handler: (...args: any[]) => void): () => void {
-  const socket = getSocket();
-  if (socket) {
-    socket.on(event, handler);
-    return () => { socket.off(event, handler); };
-  }
-  // No socket yet — listener will be attached when AuthContext connects
-  // Return a no-op cleanup; the event will be missed until connection
-  return () => {};
+  let attached: Socket | null = null;
+  const unsubscribe = subscribeSocketChange(socket => {
+    attached?.off(event, handler);
+    attached = socket;
+    attached?.on(event, handler);
+  });
+  return () => {
+    unsubscribe();
+    attached?.off(event, handler);
+    attached = null;
+  };
 }

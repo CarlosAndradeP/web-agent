@@ -25,7 +25,7 @@ export function createTasksRouter(db, taskManager) {
     });
     router.post('/', (req, res) => {
         const { sessionId, description, model, maxSteps } = req.body;
-        if (!description) {
+        if (typeof description !== 'string' || !description.trim() || (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 500))) {
             res.status(400).json({ error: 'description is required' });
             return;
         }
@@ -37,7 +37,7 @@ export function createTasksRouter(db, taskManager) {
                 // No session provided: prefer the caller's own default session, never
                 // another user's. Admins fall back to any existing session.
                 const sessions = sessionsRepo.list();
-                const ownSessions = isAdminRole ? sessions : (userId ? sessions.filter(s => !s.userId || s.userId === userId) : []);
+                const ownSessions = isAdminRole ? sessions : (userId ? sessions.filter(s => s.userId === userId) : []);
                 if (ownSessions.length === 0) {
                     const session = sessionsRepo.create('Default Session', config.defaultModel);
                     effectiveSessionId = session.id;
@@ -57,7 +57,7 @@ export function createTasksRouter(db, taskManager) {
                 }
                 // Ownership: non-admin may only create tasks on sessions they own (or
                 // legacy sessions with no owner if they are otherwise permitted).
-                if (!isAdminRole && existing.userId && existing.userId !== userId) {
+                if (!isAdminRole && existing.userId !== userId) {
                     res.status(403).json({ error: 'Access denied' });
                     return;
                 }
@@ -76,7 +76,7 @@ export function createTasksRouter(db, taskManager) {
             res.status(404).json({ error: 'Task not found' });
             return;
         }
-        if (!isAdmin(req) && task.userId && task.userId !== req.user?.userId) {
+        if (!isAdmin(req) && task.userId !== req.user?.userId) {
             res.status(403).json({ error: 'Access denied' });
             return;
         }
@@ -89,7 +89,7 @@ export function createTasksRouter(db, taskManager) {
             res.status(404).json({ error: 'Task not found' });
             return;
         }
-        if (!isAdmin(req) && task.userId && task.userId !== req.user?.userId) {
+        if (!isAdmin(req) && task.userId !== req.user?.userId) {
             res.status(403).json({ error: 'Access denied' });
             return;
         }
@@ -106,7 +106,7 @@ export function createTasksRouter(db, taskManager) {
             res.status(404).json({ error: 'Task not found' });
             return;
         }
-        if (!isAdmin(req) && task.userId && task.userId !== req.user?.userId) {
+        if (!isAdmin(req) && task.userId !== req.user?.userId) {
             res.status(403).json({ error: 'Access denied' });
             return;
         }

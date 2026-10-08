@@ -1,21 +1,18 @@
 import express from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, extname } from 'node:path';
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { npmCommand } from '../lib/npm-command.js';
 import http from 'node:http';
 import net from 'node:net';
+import { pipeline } from 'node:stream';
 import { createLogger } from '../services/logger.js';
 import { buildSafeEnv } from '../agent/tools/command-policy.js';
 import { resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 import { config } from '../config.js';
 const log = createLogger('ProjectRouter');
-// createRequire lets us dynamically load a project's package.json from an ESM
-// module. Using `require(...)` directly throws ReferenceError in ESM, which
-// silently broke script/main detection (it always fell back to index.js).
-const projectRequire = createRequire(import.meta.url);
 const PORT_MIN = 9000;
 const PORT_MAX = 65535;
 const MAX_PORT_SCAN_ATTEMPTS = PORT_MAX - PORT_MIN + 1;
@@ -117,47 +114,6 @@ export class ProjectRouter {
             }
             const rewrittenSubPath = subPath === '' ? '/' : `/${subPath}`;
             req.url = rewrittenSubPath + queryString;
-            if (active.project.type === 'node') {
-                const originalWriteHead = res.writeHead.bind(res);
-                const originalEnd = res.end.bind(res);
-                const chunks = [];
-                let headersSent = false;
-                let isHtml = false;
-                const basePath = `/p/${projectUuid}/`;
-                const originalWrite = res.write.bind(res);
-                res.write = (chunk, ...args) => {
-                    if (!headersSent) {
-                        const contentType = res.getHeader('content-type');
-                        isHtml = !!contentType && contentType.includes('text/html');
-                        headersSent = true;
-                    }
-                    if (isHtml) {
-                        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-                        return true;
-                    }
-                    return originalWrite(chunk, ...args);
-                };
-                res.end = (chunk, ...args) => {
-                    if (!headersSent) {
-                        const contentType = res.getHeader('content-type');
-                        isHtml = !!contentType && contentType.includes('text/html');
-                    }
-                    if (isHtml) {
-                        if (chunk)
-                            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-                        const fullBody = Buffer.concat(chunks).toString('utf8');
-                        const headInjection = `<base href="${basePath}"><script>window.__BASE_PATH__="${basePath}";</script>`;
-                        let injected = fullBody.replace(/<head([^>]*)>/i, `<head$1>${headInjection}`);
-                        if (!injected.includes(headInjection)) {
-                            injected = headInjection + injected;
-                        }
-                        res.removeHeader('content-length');
-                        originalEnd(injected, ...args);
-                        return;
-                    }
-                    return originalEnd(chunk, ...args);
-                };
-            }
             active.middleware(req, res, (err) => {
                 if (active.project.type === 'static') {
                     res.status(404).send('Not Found');
@@ -233,7 +189,7 @@ export class ProjectRouter {
             const port = await allocatePort();
             const active = {
                 project,
-                middleware: this.createNodeProxy(port),
+                middleware: this.createNodeProxy(port, project.uuid),
                 port,
                 restartCount: 0,
                 stopped: false,
@@ -310,7 +266,7 @@ export class ProjectRouter {
         if (existing)
             this.cleanupActive(project.uuid, existing, { releasePort: false });
         const port = await allocatePort();
-        const middleware = this.createNodeProxy(port);
+        const middleware = this.createNodeProxy(port, project.uuid);
         const active = {
             project,
             middleware,
@@ -372,7 +328,7 @@ export class ProjectRouter {
         // respects the wraparound/PORT_MAX bounds. Directly mutating nextNodePort
         // was bypassing the released-ports pool and could yield port 65536.
         const port = await allocatePort();
-        const middleware = this.createNodeProxy(port);
+        const middleware = this.createNodeProxy(port, project.uuid);
         const active = {
             project: { ...project, type: 'node' },
             middleware,
@@ -509,7 +465,7 @@ export class ProjectRouter {
                                 releasePort(active.port);
                             const nextPort = await allocatePort();
                             active.port = nextPort;
-                            active.middleware = this.createNodeProxy(nextPort);
+                            active.middleware = this.createNodeProxy(nextPort, project.uuid);
                             this.spawnAndWatch(project, fullFolderPath, nextPort);
                         }
                         catch (err) {
@@ -523,10 +479,42 @@ export class ProjectRouter {
             }
         });
     }
-    createNodeProxy(port) {
+    createNodeProxy(port, uuid) {
+        const interceptHtml = responseInterceptor(async (buffer, _proxyRes, _req, res) => {
+            const basePath = `/p/${uuid}/`;
+            const injection = `<base href="${basePath}"><script>window.__BASE_PATH__="${basePath}";</script>`;
+            const html = buffer.toString('utf8');
+            const injected = html.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
+            // Validators for the original body no longer describe the transformed HTML.
+            res.removeHeader('etag');
+            res.removeHeader('content-md5');
+            return injected.includes(injection) ? injected : injection + injected;
+        });
         return createProxyMiddleware({
             target: `http://localhost:${port}`,
             changeOrigin: true,
+            selfHandleResponse: true,
+            on: {
+                proxyRes: (proxyRes, req, res) => {
+                    if (proxyRes.headers['content-type']?.includes('text/html')) {
+                        void interceptHtml(proxyRes, req, res);
+                        return;
+                    }
+                    // Keep API responses, binary downloads and SSE streaming unbuffered.
+                    res.statusCode = proxyRes.statusCode ?? 502;
+                    if (proxyRes.statusMessage)
+                        res.statusMessage = proxyRes.statusMessage;
+                    for (const [name, value] of Object.entries(proxyRes.headers)) {
+                        if (value !== undefined && name !== 'connection' && name !== 'transfer-encoding') {
+                            res.setHeader(name, value);
+                        }
+                    }
+                    pipeline(proxyRes, res, (err) => {
+                        if (err)
+                            log.warn('Project response stream failed', { uuid, error: err.message });
+                    });
+                },
+            },
         });
     }
     closeProxy(active) {
@@ -567,11 +555,12 @@ export class ProjectRouter {
         releasePort(port);
     }
     terminateProcess(process, uuid, reason) {
-        if (process.killed)
+        if (process.exitCode !== null || process.signalCode !== null)
             return;
         process.kill('SIGTERM');
         const killTimer = setTimeout(() => {
-            if (!process.killed && process.exitCode === null) {
+            // killed means a signal was sent, not that the child exited.
+            if (process.exitCode === null && process.signalCode === null) {
                 try {
                     process.kill('SIGKILL');
                     log.warn('Escalated Node process kill to SIGKILL', { uuid, pid: process.pid, reason });
@@ -581,6 +570,7 @@ export class ProjectRouter {
                 }
             }
         }, 5000);
+        process.once('exit', () => clearTimeout(killTimer));
         if (killTimer.unref)
             killTimer.unref();
     }
@@ -613,7 +603,7 @@ export class ProjectRouter {
         let entryFile = 'index.js';
         if (existsSync(pkgJsonPath)) {
             try {
-                const pkgJson = projectRequire(pkgJsonPath);
+                const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
                 if (pkgJson.scripts?.start) {
                     startCmd = 'npm';
                     startArgs = ['start'];
@@ -646,7 +636,8 @@ export class ProjectRouter {
         const spawnArgs = startCmd === 'node'
             ? ['-r', preloadPath, ...startArgs]
             : startArgs;
-        const child = spawn(startCmd, spawnArgs, {
+        const execution = startCmd === 'npm' ? npmCommand(spawnArgs) : { command: startCmd, args: spawnArgs };
+        const child = spawn(execution.command, execution.args, {
             cwd: folderPath,
             env,
             stdio: 'pipe',

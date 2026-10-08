@@ -46,10 +46,12 @@ export function migrate(db: Database.Database): void {
   }
 
   try {
-    db.prepare("UPDATE config SET value = 'none' WHERE key = 'approval_mode' AND value = 'custom'").run();
-    log.info('Migrated approval_mode from custom to none (default changed)');
+    // A default change must never override an administrator's explicit setting.
+    // Legacy bcrypt refresh hashes cannot distinguish JWTs sharing 72-byte prefixes.
+    const revoked = db.prepare("DELETE FROM auth_sessions WHERE refresh_token_hash NOT LIKE 'sha256:%'").run();
+    if (revoked.changes) log.info('Revoked legacy refresh sessions; a new login is required', { count: revoked.changes });
   } catch (err: any) {
-    log.warn('approval_mode migration skipped', { error: err.message });
+    log.warn('Refresh-session migration failed', { error: err.message });
   }
 
   try {

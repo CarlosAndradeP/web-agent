@@ -44,8 +44,10 @@ export class OrchestratorManager {
    */
   async start(sessionId: string): Promise<void> {
     this.pruneInactive();
-    if (this.runners.has(sessionId)) {
-      log.warn('Session already has an active runner', { sessionId });
+    const existing = this.runners.get(sessionId);
+    if (existing) {
+      if (existing.isRunning()) throw new Error('Session already has an active runner');
+      await existing.start(sessionId);
       return;
     }
 
@@ -103,7 +105,6 @@ export class OrchestratorManager {
     const runner = this.runners.get(sessionId);
     if (runner) {
       runner.stop(sessionId);
-      this.runners.delete(sessionId);
       return;
     }
     const session = this.sessionsRepo.findById(sessionId);
@@ -145,7 +146,7 @@ export class OrchestratorManager {
   pruneInactive(): void {
     let removed = 0;
     for (const [id, runner] of this.runners) {
-      if (!runner.isRunning()) {
+      if (!runner.isRunning() && !runner.hasPendingWork()) {
         this.runners.delete(id);
         removed++;
       }
@@ -165,6 +166,10 @@ export class OrchestratorManager {
     log.info('Recovering orchestrator sessions', { count: running.length });
 
     for (const session of running) {
+      if (!session.autoRecover) {
+        this.sessionsRepo.updateStatus(session.id, 'paused');
+        continue;
+      }
       try {
         log.info('Recovering session', { sessionId: session.id });
         const runner = this.createRunner();

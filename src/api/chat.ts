@@ -9,7 +9,6 @@ import { SessionsRepository } from '../db/repositories/sessions.js';
 import { UsersRepository } from '../db/repositories/users.js';
 import { ProjectsRepository } from '../db/repositories/projects.js';
 import { WordWorkspacesRepository } from '../db/repositories/word-workspaces.js';
-import { resolveModels } from '../services/model-resolver.js';
 import type { ModelMessage } from '@ai-sdk/provider-utils';
 import { config } from '../config.js';
 import { mkdirSync } from 'node:fs';
@@ -21,7 +20,7 @@ const log = createLogger('ChatAPI');
 function compactToolValue(value: unknown): unknown {
   try {
     const serialized = JSON.stringify(value);
-    return serialized.length > 5000 ? `${serialized.slice(0, 5000)}...` : value;
+    return serialized && serialized.length > 5000 ? `${serialized.slice(0, 5000)}...` : value;
   } catch {
     return String(value);
   }
@@ -35,6 +34,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
   const usersRepo = new UsersRepository(db);
   const projectsRepo = new ProjectsRepository(db);
   const wordWorkspacesRepo = new WordWorkspacesRepository(db);
+  const busySessions = new Set<string>();
 
   // POST /compact — Compress conversation context for a session
   router.post('/compact', async (req, res) => {
@@ -53,23 +53,39 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       return;
     }
     const isAdmin = req.user?.role === 'admin';
-    if (!isAdmin && session.userId && session.userId !== userId) {
+    if (!isAdmin && session.userId !== userId) {
       res.status(403).json({ error: 'Access denied' });
       return;
     }
 
+    let compactLockAcquired = false;
     try {
+      if (busySessions.has(sessionId) || taskManager.getTasksBySession(sessionId).some(task => task.status === 'running' || task.status === 'pending')) {
+        res.status(409).json({ error: 'Stop the active task before compacting its history' });
+        return;
+      }
+      busySessions.add(sessionId);
+      compactLockAcquired = true;
       const summary = await compactionService.compactSession(sessionId);
       res.json({ success: true, summary });
     } catch (err: any) {
       log.error('Compaction failed', { sessionId, error: err.message });
       res.status(500).json({ error: `Compaction failed: ${err.message}` });
+    } finally {
+      if (compactLockAcquired) busySessions.delete(sessionId);
     }
   });
 
   router.post('/', async (req, res) => {
     const { sessionId, model, messages, maxSteps } = req.body;
     const userId = req.user?.userId;
+    if (!Array.isArray(messages) || messages.length === 0 || messages.some(msg => !msg || typeof msg.content !== 'string' || typeof msg.role !== 'string') ||
+        (sessionId != null && typeof sessionId !== 'string') ||
+        (model !== undefined && (typeof model !== 'string' || !model.trim())) ||
+        (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 500))) {
+      res.status(400).json({ error: 'Valid messages, model and maxSteps (1-500) are required' });
+      return;
+    }
     const user = userId ? usersRepo.findById(userId) : undefined;
     const username = user?.username ?? 'default';
 
@@ -103,16 +119,8 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     } else {
       const existing = sessionsRepo.findById(effectiveSessionId);
       if (!existing) {
-        log.warn('Session not found, creating new', { sessionId: effectiveSessionId });
-        const session = sessionsRepo.create('Default Session', config.defaultModel);
-        effectiveSessionId = session.id;
-        if (userId) {
-          try {
-            db.prepare('UPDATE sessions SET user_id = ? WHERE id = ?').run(userId, session.id);
-          } catch (err: any) {
-            log.error('Failed to assign session owner', { sessionId: session.id, userId, error: err.message });
-          }
-        }
+        res.status(404).json({ error: 'Session not found' });
+        return;
       } else {
         // Ownership check: a non-admin may only chat in their own session.
         // Sessions with user_id NULL (legacy/orphan) are admin-only — a non-admin
@@ -128,6 +136,14 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     }
 
     log.info('Chat request received', { sessionId, model, messageCount: messages?.length, maxSteps, userId, workspaceDir });
+    if (busySessions.has(effectiveSessionId) || taskManager.getTasksBySession(effectiveSessionId).some(task => task.status === 'pending' || task.status === 'running')) {
+      res.status(409).json({ error: 'A task is already running in this session' });
+      return;
+    }
+    busySessions.add(effectiveSessionId);
+    const releaseSession = () => busySessions.delete(effectiveSessionId);
+    res.once('finish', releaseSession);
+    res.once('close', releaseSession);
 
     if (!messages?.length) {
       log.warn('Chat request rejected: no messages');
@@ -167,7 +183,9 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
           }
         }
       } catch (err: any) {
-        log.warn('Failed to resolve project workspace', { error: err.message });
+        log.error('Failed to resolve project workspace', { error: err.message });
+        res.status(500).json({ error: 'Failed to resolve the project workspace' });
+        return;
       }
     }
 
@@ -192,25 +210,21 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     }
 
     const latestMessage = messages[messages.length - 1];
-    if (latestMessage.role !== 'user') {
+    if (latestMessage.role !== 'user' || !latestMessage.content.trim()) {
       res.status(400).json({ error: 'The latest message must be from the user' });
       return;
     }
     const appConfig = configRepo.getAll();
     const selectedModel = model ?? appConfig.defaultModel;
-
     try {
-      const availableModels = await resolveModels(appConfig.apiBaseUrl);
-      if (!availableModels.find(m => m.id === selectedModel)) {
-        log.warn('Requested model not available, using first available', { selectedModel, fallback: availableModels[0]?.id });
-        if (availableModels.length > 0) {
-          res.status(400).json({ error: `Model "${selectedModel}" is not available. Available models: ${availableModels.map(m => m.id).join(', ')}` });
-          return;
-        }
-      }
+      mkdirSync(workspaceDir, { recursive: true });
     } catch (err: any) {
-      log.warn('Could not validate model, proceeding anyway', { error: err.message });
+      res.status(500).json({ error: `Cannot prepare workspace: ${err.message}` });
+      return;
     }
+
+    // A cached/fallback model catalog cannot establish inference availability.
+    // Let the actual inference request report provider errors for the selected model.
 
     // The payload contains conversation context; only the newest user turn is new.
     messagesRepo.create(effectiveSessionId, latestMessage.role, latestMessage.content);
@@ -225,6 +239,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     }
 
     // Build the full conversation context after persisting and compacting the new turn.
+    if (res.destroyed || req.aborted) return;
     const conversationContext = compactionService.getConversationContext(effectiveSessionId);
 
     const description = messages[messages.length - 1].content;
@@ -241,11 +256,28 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       res.write(': keepalive\n\n');
     }, 15000);
 
-    req.on('close', () => {
+    res.on('close', () => {
       log.info('Client disconnected, canceling task', { taskId: task.id });
       clearInterval(keepAlive);
-      taskManager.cancelTask(task.id);
+      if (!res.writableEnded) taskManager.cancelTask(task.id);
     });
+
+    const createdFiles = new Set<string>();
+    let assistantContent = '';
+    const persistedToolCalls: Array<Record<string, unknown>> = [];
+    let generatedModelMessages: ModelMessage[] = [];
+    let savedMessageId: string | undefined;
+    const saveProgress = (status: string, error?: string) => {
+      const interruption = status === 'completed' ? '' : `\n\n[Task ${status}: ${error ?? 'interrupted'}. Work is incomplete; continue from saved progress.]`;
+      const content = (assistantContent || (status === 'completed' ? 'Task completed.' : '')) + interruption;
+      const metadata = JSON.stringify({ model: selectedModel, taskId: task.id, status, error, calls: persistedToolCalls, createdFiles: [...createdFiles].slice(0, 5), createdFileCount: createdFiles.size });
+      const modelContext = generatedModelMessages.length ? JSON.stringify(generatedModelMessages) : null;
+      if (savedMessageId) {
+        db.prepare('UPDATE messages SET content = ?, tool_calls = ?, model_context = ? WHERE id = ?').run(content, metadata, modelContext, savedMessageId);
+      } else {
+        savedMessageId = messagesRepo.create(effectiveSessionId, 'assistant', content, metadata, null, null, modelContext).id;
+      }
+    };
 
     try {
       log.info('Starting stream for task', { taskId: task.id });
@@ -254,14 +286,11 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       res.write(`data: ${JSON.stringify({ type: 'task-start', taskId: task.id })}\n\n`);
 
       let totalEvents = 0;
-      const createdFiles = new Set<string>();
-      let assistantContent = '';
-      const persistedToolCalls: Array<Record<string, unknown>> = [];
-      let generatedModelMessages: ModelMessage[] = [];
       for await (const event of eventStream) {
         totalEvents++;
         if (event.type === 'model-messages') {
           generatedModelMessages = Array.isArray(event.messages) ? event.messages as ModelMessage[] : [];
+          saveProgress('running');
           continue;
         }
         if (event.type === 'text-delta' && typeof event.content === 'string') {
@@ -283,7 +312,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
             result: compactToolValue(event.result),
             stepNumber: event.stepNumber,
             durationMs: event.durationMs,
-            status: 'completed',
+            status: (event.result as any)?.success === false || !!(event.result as any)?.error || ((event.result as any)?.exitCode !== undefined && (event.result as any).exitCode !== 0) ? 'error' : 'completed',
           };
           if (index >= 0) persistedToolCalls[index] = { ...persistedToolCalls[index], ...result };
           else persistedToolCalls.push(result);
@@ -302,6 +331,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
             }
           }
         }
+        if (event.type === 'tool-result') saveProgress('running');
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
 
@@ -310,17 +340,13 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       const allCreatedFiles = [...createdFiles];
       const finalTask = taskManager.getTask(task.id);
       if (finalTask?.status === 'cancelled') {
+        saveProgress('cancelled');
         res.write(`data: ${JSON.stringify({ type: 'cancelled', taskId: task.id })}\n\n`);
         res.end();
         return;
       }
-      const finalContent = assistantContent || 'Tarefa concluída sem uma resposta em texto.';
-      messagesRepo.create(effectiveSessionId, 'assistant', finalContent, JSON.stringify({
-        model: selectedModel,
-        calls: persistedToolCalls,
-        createdFiles: allCreatedFiles.slice(0, 5),
-        createdFileCount: allCreatedFiles.length,
-      }), null, null, generatedModelMessages.length > 0 ? JSON.stringify(generatedModelMessages) : null);
+      if (finalTask?.status !== 'completed') throw new Error(finalTask?.error || 'Task did not complete');
+      saveProgress('completed');
       res.write(`data: ${JSON.stringify({
         type: 'finish',
         taskId: task.id,
@@ -329,6 +355,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       })}\n\n`);
       res.end();
     } catch (err: any) {
+      saveProgress(taskManager.getTask(task.id)?.status === 'cancelled' ? 'cancelled' : 'failed', err.message);
       log.error('Stream error in chat', { taskId: task.id, error: err.message, stack: err.stack });
       try {
         res.write(`data: ${JSON.stringify({ type: 'error', error: err.message, taskId: task.id })}\n\n`);

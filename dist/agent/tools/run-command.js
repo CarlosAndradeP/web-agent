@@ -11,9 +11,10 @@ export function createRunCommandTool(workspaceDir, securityPolicy = PROTECTED_AG
         description: 'Execute a shell command in the workspace directory',
         inputSchema: z.object({
             command: z.string().describe('Shell command to execute'),
-            timeout: z.number().optional().describe('Timeout in seconds (default: 30)'),
+            timeout: z.number().min(1).max(300).optional().describe('Timeout in seconds (default: 30)'),
         }),
-        execute: async ({ command, timeout = 30 }) => {
+        execute: async ({ command, timeout = 30 }, { abortSignal }) => {
+            abortSignal?.throwIfAborted();
             const startTime = Date.now();
             logToolExecution('runCommand', undefined, 'start', { input: { command: command.slice(0, 200), timeout } });
             const policyResult = validateCommand(command, workspaceDir, securityPolicy.commandPolicyEnabled);
@@ -25,6 +26,7 @@ export function createRunCommandTool(workspaceDir, securityPolicy = PROTECTED_AG
                 const { stdout, stderr } = await execAsync(command, {
                     cwd: workspaceDir,
                     timeout: timeout * 1000,
+                    signal: abortSignal,
                     maxBuffer: 1024 * 1024 * 10,
                     env: buildWorkspaceEnv(workspaceDir),
                     ...getUnprivilegedExecOptions(),

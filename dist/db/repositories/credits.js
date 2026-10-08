@@ -7,6 +7,8 @@ export class CreditsRepository {
         this.db = db;
     }
     deduct(userId, amount, type, description, taskId) {
+        if (!Number.isSafeInteger(amount) || amount <= 0)
+            throw new Error('Credit amount must be a positive safe integer');
         const id = uuid();
         const now = new Date().toISOString();
         // Atomic deduct: UPDATE with balance check in WHERE clause. Both the
@@ -35,6 +37,8 @@ export class CreditsRepository {
         };
     }
     add(userId, amount, type, description) {
+        if (!Number.isSafeInteger(amount) || amount < 0)
+            throw new Error('Credit amount must be a non-negative safe integer');
         const id = uuid();
         const now = new Date().toISOString();
         // Atomic add: increment via `credits = credits + ?` (no read-modify-write)

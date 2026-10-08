@@ -9,6 +9,7 @@ export class CreditsRepository {
   constructor(private db: Database.Database) {}
 
   deduct(userId: string, amount: number, type: CreditTransaction['type'], description?: string, taskId?: string): CreditTransaction {
+    if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Credit amount must be a positive safe integer');
     const id = uuid();
     const now = new Date().toISOString();
 
@@ -48,6 +49,7 @@ export class CreditsRepository {
   }
 
   add(userId: string, amount: number, type: CreditTransaction['type'], description?: string): CreditTransaction {
+    if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('Credit amount must be a non-negative safe integer');
     const id = uuid();
     const now = new Date().toISOString();
 

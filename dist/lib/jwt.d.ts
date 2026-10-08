@@ -17,6 +17,7 @@ export declare function signAccessToken(payload: {
 export declare function signRefreshToken(payload: {
     userId: string;
 }): string;
+export declare function hashRefreshToken(token: string): string;
 /**
  * Verifies an ACCESS token. Rejects refresh tokens (which have a different secret
  * anyway) and tokens that fail signature/expiry checks.

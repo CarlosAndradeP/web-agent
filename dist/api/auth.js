@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
 import { UsersRepository, toPublic } from '../db/repositories/users.js';
 import { CreditsRepository } from '../db/repositories/credits.js';
 import { ConfigRepository } from '../db/repositories/config.js';
-import { signAccessToken, signRefreshToken, verifyToken, verifyRefreshToken } from '../lib/jwt.js';
+import { signAccessToken, signRefreshToken, verifyToken, verifyRefreshToken, hashRefreshToken } from '../lib/jwt.js';
 import { createLogger } from '../services/logger.js';
 import { v4 as uuid } from 'uuid';
 import { resolve } from 'node:path';
@@ -23,7 +22,7 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
         router.use('/refresh', refreshLimiter);
     router.post('/login', async (req, res) => {
         const { username, password } = req.body;
-        if (!username || !password) {
+        if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
             res.status(400).json({ error: 'username and password are required' });
             return;
         }
@@ -34,7 +33,7 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
         }
         const accessToken = signAccessToken({ userId: user.id, role: user.role });
         const refreshToken = signRefreshToken({ userId: user.id });
-        const refreshTokenHash = bcrypt.hashSync(refreshToken, 10);
+        const refreshTokenHash = hashRefreshToken(refreshToken);
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         db.prepare('INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(uuid(), user.id, refreshTokenHash, expiresAt, new Date().toISOString());
         log.info('User logged in', { userId: user.id, username: user.username });
@@ -55,7 +54,7 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
             res.status(400).json({ error: 'username, password and email are required' });
             return;
         }
-        if (typeof username !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(username) || password.length < 6) {
+        if (typeof username !== 'string' || typeof password !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(username) || password.length < 6) {
             res.status(400).json({ error: 'username must be 3-32 characters using only letters, numbers, _ or -; password must be 6+ characters' });
             return;
         }
@@ -69,42 +68,40 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
             return;
         }
         const initialCredits = config.initialCredits;
-        const user = usersRepo.create(username, password, 'user', initialCredits, email.trim());
+        const user = usersRepo.create(username, password, 'user', 0, email.trim());
         creditsRepo.add(user.id, initialCredits, 'bonus', 'Initial credits');
+        user.credits = usersRepo.findById(user.id).credits;
         mkdirSync(resolve(config.workspaceBaseDir, username), { recursive: true });
         log.info('User registered', { userId: user.id, username: user.username });
         const accessToken = signAccessToken({ userId: user.id, role: user.role });
         const refreshToken = signRefreshToken({ userId: user.id });
-        const refreshTokenHash = bcrypt.hashSync(refreshToken, 10);
+        const refreshTokenHash = hashRefreshToken(refreshToken);
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         db.prepare('INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(uuid(), user.id, refreshTokenHash, expiresAt, new Date().toISOString());
         res.status(201).json({ accessToken, refreshToken, user: toPublic(user) });
     });
     router.post('/refresh', async (req, res) => {
         const { refreshToken } = req.body;
-        if (!refreshToken) {
+        if (typeof refreshToken !== 'string' || !refreshToken) {
             res.status(400).json({ error: 'refreshToken is required' });
             return;
         }
+        let payload;
         try {
-            const payload = verifyRefreshToken(refreshToken);
+            payload = verifyRefreshToken(refreshToken);
+        }
+        catch {
+            res.status(401).json({ error: 'Invalid or expired refresh token' });
+            return;
+        }
+        try {
             const user = usersRepo.findById(payload.userId);
             if (!user) {
                 res.status(401).json({ error: 'User not found' });
                 return;
             }
-            // Load only the user's non-expired sessions. Cap the loop iteration count
-            // to avoid pathological bcrypt-amplification DoS if a user accumulates
-            // many refresh tokens.
-            const sessions = db.prepare('SELECT * FROM auth_sessions WHERE user_id = ? AND expires_at > ?').all(user.id, new Date().toISOString());
-            let validSession = null;
-            const compareLimit = Math.min(sessions.length, 20);
-            for (let i = 0; i < compareLimit; i++) {
-                if (bcrypt.compareSync(refreshToken, sessions[i].refresh_token_hash)) {
-                    validSession = sessions[i];
-                    break;
-                }
-            }
+            const validSession = db.prepare('SELECT * FROM auth_sessions WHERE user_id = ? AND refresh_token_hash = ? AND expires_at > ?')
+                .get(user.id, hashRefreshToken(refreshToken), new Date().toISOString());
             if (!validSession) {
                 // Prune all expired sessions opportunistically. Closes DB rows that no
                 // longer correspond to a usable token and bounds future loop cost.
@@ -115,17 +112,21 @@ export function createAuthRouter(db, authLimiter, refreshLimiter) {
                 res.status(401).json({ error: 'Invalid refresh token' });
                 return;
             }
-            // Rotation: delete the consumed token
-            db.prepare('DELETE FROM auth_sessions WHERE id = ?').run(validSession.id);
             const accessToken = signAccessToken({ userId: user.id, role: user.role });
             const newRefreshToken = signRefreshToken({ userId: user.id });
-            const newRefreshTokenHash = bcrypt.hashSync(newRefreshToken, 10);
+            const newRefreshTokenHash = hashRefreshToken(newRefreshToken);
             const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-            db.prepare('INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(uuid(), user.id, newRefreshTokenHash, expiresAt, new Date().toISOString());
+            db.transaction(() => {
+                const consumed = db.prepare('DELETE FROM auth_sessions WHERE id = ?').run(validSession.id);
+                if (consumed.changes !== 1)
+                    throw new Error('Refresh token was already consumed');
+                db.prepare('INSERT INTO auth_sessions (id, user_id, refresh_token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(uuid(), user.id, newRefreshTokenHash, expiresAt, new Date().toISOString());
+            })();
             res.json({ accessToken, refreshToken: newRefreshToken, user: toPublic(user) });
         }
-        catch {
-            res.status(401).json({ error: 'Invalid or expired refresh token' });
+        catch (err) {
+            log.error('Refresh session storage failed', { error: err.message });
+            res.status(500).json({ error: 'Session refresh temporarily unavailable. Try again.' });
         }
     });
     router.get('/me', async (req, res) => {

@@ -34,10 +34,10 @@ function parsePersistedModelMessages(value: string | null): Array<ModelMessage> 
       const message = candidate as { role?: unknown; content?: unknown };
       if (message.role === 'assistant') {
         if (typeof message.content !== 'string' && !Array.isArray(message.content)) return null;
-        messages.push({ role: 'assistant', content: message.content } as ModelMessage);
+        messages.push(candidate as ModelMessage);
       } else if (message.role === 'tool') {
         if (!Array.isArray(message.content)) return null;
-        messages.push({ role: 'tool', content: message.content } as ModelMessage);
+        messages.push(candidate as ModelMessage);
       } else {
         return null;
       }
@@ -77,7 +77,8 @@ export class CompactionService {
   async compactSession(sessionId: string): Promise<string> {
     log.info('Starting compaction', { sessionId });
 
-    const messages = this.messagesRepo.findBySession(sessionId);
+    // Keep recent turns verbatim, including the request that triggered compaction.
+    const messages = this.messagesRepo.findBySession(sessionId).slice(0, -6);
     if (messages.length === 0) {
       log.info('No messages to compact', { sessionId });
       return 'No messages to compact.';
@@ -99,8 +100,13 @@ export class CompactionService {
     const summary = await this.generateSummary(conversationText);
 
     // Compact: insert summary message and mark old messages as compacted
-    this.messagesRepo.compactSession(sessionId, summary);
-    this.sessionsRepo.updateSummary(sessionId, summary);
+    this.db.transaction(() => {
+      if (this.sessionsRepo.getSummary(sessionId) !== previousSummary || messages.some(message => !this.db.prepare('SELECT 1 FROM messages WHERE id = ? AND session_id = ? AND is_compacted = 0').get(message.id, sessionId))) {
+        throw new Error('Conversation changed during compaction; original history was preserved');
+      }
+      this.messagesRepo.compactSession(sessionId, summary, messages.map(m => m.id));
+      this.sessionsRepo.updateSummary(sessionId, summary);
+    })();
 
     log.info('Compaction complete', { sessionId, summaryLength: summary.length });
     return summary;
@@ -147,6 +153,12 @@ export class CompactionService {
           const preservedMessages = parsePersistedModelMessages(msg.modelContext);
           if (preservedMessages) {
             context.push(...preservedMessages);
+            try {
+              const metadata = JSON.parse(msg.toolCalls ?? '{}');
+              if (metadata.status && metadata.status !== 'completed') {
+                context.push({ role: 'assistant', content: `[Previous task ${metadata.status}: ${metadata.error ?? 'interrupted'}. Work is incomplete. Continue from existing files and recorded tool results; verify before claiming completion.]` });
+              }
+            } catch { /* Legacy tool metadata may not be JSON. */ }
             continue;
           }
         }
@@ -169,25 +181,15 @@ export class CompactionService {
         model,
         prompt: `${COMPACT_PROMPT}\n\n---\n\n${conversationText}`,
         maxOutputTokens: 2048,
+        timeout: { totalMs: 60_000 },
       });
 
-      return result.text || 'Conversation compacted (summary unavailable).';
+      if (result.finishReason !== 'stop' || !result.text.trim()) throw new Error('The provider did not return a complete compaction summary');
+      return result.text;
     } catch (err: any) {
-      log.error('Failed to generate summary via LLM, using fallback', { error: err.message });
-      // Fallback: create a simple summary from the last few messages
-      return this.fallbackSummary(conversationText);
+      log.error('Failed to generate summary; preserving original history', { error: err.message });
+      throw err;
     }
   }
 
-  private fallbackSummary(conversationText: string): string {
-    const lines = conversationText.split('\n').filter(l => l.trim());
-    const totalLines = lines.length;
-    if (totalLines <= 10) {
-      return `[Compact summary - original conversation had ${totalLines} entries]:\n${lines.join('\n')}`;
-    }
-    // Keep first 5 (context) and last 5 (recent)
-    const head = lines.slice(0, 5);
-    const tail = lines.slice(-5);
-    return `[Compact summary - original conversation had ${totalLines} entries. Showing first 5 and last 5]:\n${head.join('\n')}\n...\n${tail.join('\n')}`;
-  }
 }

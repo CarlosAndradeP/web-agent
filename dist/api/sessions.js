@@ -59,7 +59,7 @@ export function createSessionsRouter(db) {
             res.status(404).json({ error: 'Session not found' });
             return;
         }
-        if (!isAdmin(req) && session.userId && session.userId !== req.user?.userId) {
+        if (!isAdmin(req) && session.userId !== req.user?.userId) {
             res.status(403).json({ error: 'Access denied' });
             return;
         }
@@ -73,11 +73,22 @@ export function createSessionsRouter(db) {
             res.status(404).json({ error: 'Session not found' });
             return;
         }
-        if (!isAdmin(req) && session.userId && session.userId !== req.user?.userId) {
+        if (!isAdmin(req) && session.userId !== req.user?.userId) {
             res.status(403).json({ error: 'Access denied' });
             return;
         }
-        const deleted = messagesRepo.deleteBySession(req.params.id);
+        const deleted = db.transaction(() => {
+            const active = db.prepare("SELECT 1 FROM tasks WHERE session_id = ? AND status IN ('pending', 'running') LIMIT 1").get(req.params.id);
+            if (active)
+                return null;
+            const count = messagesRepo.deleteBySession(req.params.id);
+            sessionsRepo.updateSummary(req.params.id, '');
+            return count;
+        })();
+        if (deleted === null) {
+            res.status(409).json({ error: 'Stop the active task before clearing its history' });
+            return;
+        }
         res.json({ success: true, deleted });
     });
     // DELETE /:id — Verify ownership for non-admins
@@ -87,8 +98,12 @@ export function createSessionsRouter(db) {
             res.status(404).json({ error: 'Session not found' });
             return;
         }
-        if (!isAdmin(req) && session.userId && session.userId !== req.user?.userId) {
+        if (!isAdmin(req) && session.userId !== req.user?.userId) {
             res.status(403).json({ error: 'Access denied' });
+            return;
+        }
+        if (db.prepare("SELECT 1 FROM tasks WHERE session_id = ? AND status IN ('pending', 'running') LIMIT 1").get(req.params.id)) {
+            res.status(409).json({ error: 'Stop the active task before deleting its session' });
             return;
         }
         sessionsRepo.delete(req.params.id);

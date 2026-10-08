@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import { useAuth } from '../contexts/AuthContext';
-import { getSocket } from '../lib/socket';
+import { onSocketEvent } from '../lib/socket';
 import type { Project } from '../types';
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const { accessToken } = useAuth();
 
   const refresh = useCallback(async () => {
     try {
@@ -34,32 +32,7 @@ export function useProjects() {
       }));
     };
 
-    // Attach listener when socket becomes available
-    const attach = () => {
-      const socket = getSocket();
-      if (socket) {
-        socket.on('project:node-detected', handler);
-        return true;
-      }
-      return false;
-    };
-
-    if (!attach()) {
-      // Socket not connected yet — poll briefly until AuthContext connects it
-      const interval = setInterval(() => {
-        if (attach()) clearInterval(interval);
-      }, 500);
-      return () => {
-        clearInterval(interval);
-        const socket = getSocket();
-        if (socket) socket.off('project:node-detected', handler);
-      };
-    }
-
-    return () => {
-      const socket = getSocket();
-      if (socket) socket.off('project:node-detected', handler);
-    };
+    return onSocketEvent('project:node-detected', handler);
   }, []);
 
   const createProject = useCallback(async (name: string, folderPath: string, type?: 'static' | 'php' | 'node') => {

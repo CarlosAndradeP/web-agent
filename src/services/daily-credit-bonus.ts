@@ -24,10 +24,11 @@ export class DailyCreditBonus {
   ) {}
 
   start(): void {
+    if (this.timer) return;
     this.ensureInitialMarker();
-    void this.checkAndGrant();
+    void this.checkAndGrant().catch(err => log.error('Daily bonus check failed; will retry', { error: err.message }));
     this.timer = setInterval(() => {
-      void this.checkAndGrant();
+      void this.checkAndGrant().catch(err => log.error('Daily bonus check failed; will retry', { error: err.message }));
     }, CHECK_INTERVAL_MS);
     this.timer.unref?.();
     log.info('Daily credit bonus started', { creditsPerDay: this.getBonusAmount() });
@@ -67,30 +68,26 @@ export class DailyCreditBonus {
       const periods = Math.floor((now - lastGrantTime) / DAY_MS);
       if (periods < 1) return;
 
-      const totalBonus = bonusAmount * periods;
-      const users = this.usersRepo.list().filter(user => user.role === 'user');
-      for (const user of users) {
-        try {
-          const tx = this.creditsRepo.add(user.id, totalBonus, 'bonus', `Daily bonus (${periods} day${periods > 1 ? 's' : ''})`);
-          this.io.to(`user:${user.id}`).emit('credits:added', {
-            userId: user.id,
-            newBalance: tx.balanceAfter,
-            added: totalBonus,
-          });
-        } catch (err: any) {
-          log.warn('Daily bonus failed for user', { userId: user.id, error: err.message });
-        }
-      }
-
       const nextMarker = new Date(lastGrantTime + periods * DAY_MS).toISOString();
-      this.configRepo.set(LAST_GRANT_KEY, nextMarker);
-      log.info('Daily credit bonus granted', { users: users.length, periods, totalBonusPerUser: totalBonus, nextMarker });
+      const grants = this.db.transaction(() => {
+        if (this.configRepo.get(LAST_GRANT_KEY) !== lastGrantRaw) return [];
+        const users = this.usersRepo.list().filter(user => user.role === 'user');
+        const results = users.flatMap(user => {
+          const amount = bonusAmount * periods;
+          const tx = this.creditsRepo.add(user.id, amount, 'bonus', `Daily bonus (${periods} day${periods > 1 ? 's' : ''})`);
+          return [{ userId: user.id, newBalance: tx.balanceAfter, added: amount }];
+        });
+        this.configRepo.set(LAST_GRANT_KEY, nextMarker);
+        return results;
+      })();
+      for (const grant of grants) this.io.to(`user:${grant.userId}`).emit('credits:added', grant);
+      log.info('Daily credit bonus granted', { users: grants.length, periods, nextMarker });
     } finally {
       this.running = false;
     }
   }
 
   private getBonusAmount(): number {
-    return Math.max(0, Math.floor(config.dailyBonusCredits));
+    return Number.isSafeInteger(config.dailyBonusCredits) ? Math.max(0, config.dailyBonusCredits) : 0;
   }
 }

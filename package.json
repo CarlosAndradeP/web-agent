@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --import tsx --test tests/*.test.ts",
     "dev": "tsx watch src/server.ts",
     "build": "tsc && node scripts/copy-preload.cjs",
     "start": "node dist/server.js",

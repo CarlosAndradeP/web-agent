@@ -14,7 +14,7 @@ export declare class MessagesRepository {
      * Compact a session: insert a summary message and mark all prior messages as compacted.
      * Returns the ID of the created summary message.
      */
-    compactSession(sessionId: string, summaryText: string): string;
+    compactSession(sessionId: string, summaryText: string, messageIds: string[]): string;
     /**
      * Count non-compacted messages for a session.
      */

@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { createHash, randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { createLogger } from '../services/logger.js';
 
@@ -24,7 +25,13 @@ export function signAccessToken(payload: { userId: string; role: 'admin' | 'user
 }
 
 export function signRefreshToken(payload: { userId: string }): string {
-  return jwt.sign({ userId: payload.userId, type: 'refresh' }, config.refreshTokenSecret, { expiresIn: '7d' });
+  return jwt.sign({ userId: payload.userId, type: 'refresh' }, config.refreshTokenSecret, { expiresIn: '7d', jwtid: randomUUID() });
+}
+
+// Refresh tokens are high-entropy secrets. Hash the entire token; bcrypt truncates
+// inputs at 72 bytes, which can make different JWTs match the same stored hash.
+export function hashRefreshToken(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
 
 /**

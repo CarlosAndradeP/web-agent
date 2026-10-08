@@ -46,7 +46,7 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(data.error || `${res.status}`);
+    throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status });
   }
   return res.json();
 }

@@ -14,7 +14,7 @@ export function createConfigRouter(configRepo, adminMiddleware) {
         if (modelToValidate !== undefined) {
             try {
                 const apiBaseUrl = req.body.apiBaseUrl ?? configRepo.getAll().apiBaseUrl;
-                const availableModels = await resolveModels(apiBaseUrl);
+                const availableModels = await resolveModels(apiBaseUrl, req.body.apiKey || configRepo.getAll().apiKey);
                 if (!availableModels.some(m => m.id === modelToValidate)) {
                     log.warn('Default model not available, saving anyway', { model: modelToValidate, available: availableModels.map(m => m.id) });
                     res.status(400).json({ error: `Model "${modelToValidate}" is not available. Available models: ${availableModels.map(m => m.id).join(', ')}` });

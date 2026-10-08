@@ -12,24 +12,28 @@ import { createLogger } from '../../services/logger.js';
 import { v4 as uuid } from 'uuid';
 import { PROTECTED_AGENT_SECURITY_POLICY } from '../../services/security-policy.js';
 const log = createLogger('ToolSet');
-function wrapWithApproval(tool, toolName, approvalManager, userId) {
+function wrapWithApproval(tool, toolName, approvalManager, userId, signal) {
     const originalExecute = tool.execute;
     if (!originalExecute)
         return tool;
     return {
         ...tool,
-        execute: async (input) => {
+        execute: async (input, executionOptions) => {
+            const effectiveSignal = signal && executionOptions?.abortSignal
+                ? AbortSignal.any([signal, executionOptions.abortSignal]) : signal ?? executionOptions?.abortSignal;
+            effectiveSignal?.throwIfAborted();
             const requestId = uuid();
             const approved = await approvalManager.requestApproval({
                 id: requestId,
                 taskName: 'Agent',
                 toolName,
                 toolInput: input,
-            }, userId);
+            }, userId, effectiveSignal);
             if (!approved) {
-                return { error: 'Approval denied by user', blocked: true };
+                return { success: false, error: 'Approval denied by user', blocked: true };
             }
-            return originalExecute(input);
+            effectiveSignal?.throwIfAborted();
+            return originalExecute(input, { ...executionOptions, abortSignal: effectiveSignal });
         },
     };
 }
@@ -71,14 +75,14 @@ export function buildToolSet(options) {
     const userId = options.userId;
     if (options.approvalMode === 'all') {
         for (const key of Object.keys(allTools)) {
-            allTools[key] = wrapWithApproval(allTools[key], key, approvalManager, userId);
+            allTools[key] = wrapWithApproval(allTools[key], key, approvalManager, userId, options.abortSignal);
         }
         log.info('Approval mode: all — all tools require approval');
         return allTools;
     }
     for (const toolName of options.approvalTools) {
         if (allTools[toolName]) {
-            allTools[toolName] = wrapWithApproval(allTools[toolName], toolName, approvalManager, userId);
+            allTools[toolName] = wrapWithApproval(allTools[toolName], toolName, approvalManager, userId, options.abortSignal);
         }
     }
     log.info('Approval mode: custom', { approvalTools: options.approvalTools });

@@ -150,6 +150,8 @@ app.use((req, _res, next) => {
 const dbPath = resolve(config.dataDir, 'web-agent.db');
 log.info('Initializing database', { dbPath });
 const db = initDatabase(dbPath);
+// No in-memory controller survives a restart. Do not leave interrupted work running.
+db.prepare("UPDATE tasks SET status = 'failed', error = 'Server restarted before task completion. Continue from saved workspace progress.', updated_at = ? WHERE status IN ('running', 'pending')").run(new Date().toISOString());
 const configRepo = new ConfigRepository(db);
 llmRateLimiter.configure(configRepo.get('llm_rate_limit_enabled') === 'true', parseInt(configRepo.get('llm_requests_per_minute') ?? '60', 10));
 const usersRepo = new UsersRepository(db);
@@ -157,7 +159,7 @@ const creditsRepo = new CreditsRepository(db);
 const sessionsRepo = new SessionsRepository(db);
 let adminUser = usersRepo.findByUsername('admin');
 if (!adminUser) {
-    adminUser = usersRepo.create('admin', config.adminPassword, 'admin', 999999, 'admin@webagent.local');
+    adminUser = usersRepo.create('admin', config.adminPassword, 'admin', 0, 'admin@webagent.local');
     creditsRepo.add(adminUser.id, 999999, 'bonus', 'Admin initial credits');
     log.info('Admin user bootstrapped', { userId: adminUser.id });
 }
