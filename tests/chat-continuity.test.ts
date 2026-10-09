@@ -92,6 +92,17 @@ async function chat(sessionId: string, maxSteps = 5, content = 'Do the work') {
   return realFetch(`${base}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, model: 'test-model', maxSteps, messages: [{ role: 'user', content }] }) });
 }
 
+test('chat validation identifies the rejected field before creating a task', async () => {
+  const id = newSession();
+  const valid = { sessionId: id, model: 'test-model', maxSteps: 5, messages: [{ role: 'user', content: 'Hello' }] };
+  for (const [change, field] of [[{ maxSteps: 501 }, 'maxSteps'], [{ model: '' }, 'model'], [{ messages: [] }, 'messages'], [{ sessionId: 123 }, 'sessionId']] as const) {
+    const response = await realFetch(`${base}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...valid, ...change }) });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, new RegExp(field));
+  }
+  assert.equal(manager.getTasksBySession(id).length, 0);
+});
+
 for (const failure of ['http-failure', 'stream-error', 'length', 'empty']) {
   test(`${failure} never produces a successful finish`, async () => {
     scenario = failure; calls = [];

@@ -10,6 +10,7 @@ import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
 import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
 import { writeSse } from '../lib/sse.js';
+import { MAX_AGENT_STEPS } from '../lib/agent-limits.js';
 const log = createLogger('ChatAPI');
 function compactToolValue(value) {
     try {
@@ -69,13 +70,23 @@ export function createChatRouter(db, taskManager, creditManager, compactionServi
         }
     });
     router.post('/', async (req, res) => {
-        const { sessionId, model, messages, maxSteps } = req.body;
+        const { sessionId, model, messages, maxSteps } = req.body ?? {};
         const userId = req.user?.userId;
-        if (!Array.isArray(messages) || messages.length === 0 || messages.some(msg => !msg || typeof msg.content !== 'string' || typeof msg.role !== 'string') ||
-            (sessionId != null && typeof sessionId !== 'string') ||
-            (model !== undefined && (typeof model !== 'string' || !model.trim())) ||
-            (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 500))) {
-            res.status(400).json({ error: 'Valid messages, model and maxSteps (1-500) are required' });
+        let validationError;
+        if (!Array.isArray(messages) || messages.length === 0 || messages.some(msg => !msg || typeof msg.content !== 'string' || typeof msg.role !== 'string')) {
+            validationError = 'messages must be a non-empty array with string role and content fields';
+        }
+        else if (sessionId != null && typeof sessionId !== 'string') {
+            validationError = 'sessionId must be a string';
+        }
+        else if (model !== undefined && (typeof model !== 'string' || !model.trim())) {
+            validationError = 'model must be a non-empty string';
+        }
+        else if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > MAX_AGENT_STEPS)) {
+            validationError = `maxSteps must be an integer between 1 and ${MAX_AGENT_STEPS}`;
+        }
+        if (validationError) {
+            res.status(400).json({ error: validationError });
             return;
         }
         const user = userId ? usersRepo.findById(userId) : undefined;

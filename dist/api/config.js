@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { resolveModels, invalidateModelCache } from '../services/model-resolver.js';
 import { createLogger } from '../services/logger.js';
+import { MAX_AGENT_STEPS } from '../lib/agent-limits.js';
 const log = createLogger('ConfigAPI');
 export function createConfigRouter(configRepo, adminMiddleware) {
     const router = Router();
@@ -10,6 +11,10 @@ export function createConfigRouter(configRepo, adminMiddleware) {
     });
     // PUT is admin-only — returns full config including apiKey
     router.put('/', adminMiddleware, async (req, res) => {
+        if (req.body?.maxSteps !== undefined && (!Number.isInteger(req.body.maxSteps) || req.body.maxSteps < 1 || req.body.maxSteps > MAX_AGENT_STEPS)) {
+            res.status(400).json({ error: `maxSteps must be an integer between 1 and ${MAX_AGENT_STEPS}` });
+            return;
+        }
         const modelToValidate = req.body.defaultModel;
         if (modelToValidate !== undefined) {
             try {

@@ -1,4 +1,5 @@
 import { config as envConfig } from '../../config.js';
+import { normalizeConfiguredSteps } from '../../lib/agent-limits.js';
 const DEFAULTS = {
     default_model: envConfig.defaultModel,
     max_steps: String(envConfig.maxSteps),
@@ -43,7 +44,7 @@ export class ConfigRepository {
     getAll() {
         return {
             defaultModel: this.get('default_model'),
-            maxSteps: parseInt(this.get('max_steps'), 10),
+            maxSteps: normalizeConfiguredSteps(this.get('max_steps')),
             approvalMode: (this.get('approval_mode') ?? 'custom'),
             approvalTools: JSON.parse(this.get('approval_tools') ?? '[]'),
             apiBaseUrl: this.get('api_base_url'),

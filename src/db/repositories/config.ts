@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentSecurityMode, ApprovalMode, AppConfig, AppConfigPublic } from '../../types/index.js';
 import { config as envConfig } from '../../config.js';
+import { normalizeConfiguredSteps } from '../../lib/agent-limits.js';
 
 const DEFAULTS: Record<string, string> = {
   default_model: envConfig.defaultModel,
@@ -50,7 +51,7 @@ export class ConfigRepository {
   getAll(): AppConfig {
     return {
       defaultModel: this.get('default_model')!,
-      maxSteps: parseInt(this.get('max_steps')!, 10),
+      maxSteps: normalizeConfiguredSteps(this.get('max_steps')),
       approvalMode: (this.get('approval_mode') ?? 'custom') as ApprovalMode,
       approvalTools: JSON.parse(this.get('approval_tools') ?? '[]'),
       apiBaseUrl: this.get('api_base_url')!,

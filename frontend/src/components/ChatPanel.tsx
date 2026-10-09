@@ -83,7 +83,9 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
     api.config.get()
       .then(cfg => {
         defaultModel = cfg.defaultModel;
-        setDefaultMaxSteps(cfg.maxSteps);
+        setDefaultMaxSteps(Number.isInteger(cfg.maxSteps)
+          ? Math.min(500, Math.max(1, cfg.maxSteps))
+          : 100);
       })
       .catch(() => {})
       .finally(() => {
@@ -199,9 +201,9 @@ export default function ChatPanel({ sessionId, onStreamingChange, onNewSession, 
           addSystemMessage(`Limite atual de etapas: \`${customMaxSteps ?? 'padrão'}\``);
           return true;
         }
-        const stepsValue = parseInt(args[0], 10);
-        if (isNaN(stepsValue) || stepsValue < 1 || stepsValue > 200) {
-          addSystemMessage('O limite de etapas deve ser um número entre 1 e 200.');
+        const stepsValue = Number(args[0]);
+        if (!Number.isInteger(stepsValue) || stepsValue < 1 || stepsValue > 500) {
+          addSystemMessage('O limite de etapas deve ser um número inteiro entre 1 e 500.');
           return true;
         }
         setCustomMaxSteps(stepsValue);
