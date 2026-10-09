@@ -115,14 +115,9 @@ export function useChat(sessionId: string, options?: { onCreditsRequired?: () =>
     setCurrentStep(0);
     setTotalSteps(maxSteps || 20);
 
-    // Only user/assistant turns are real conversation history. `system` entries
-    // here are local-only UI notices (slash commands, upload feedback) and must
-    // never be sent to the server — `chat.ts` rejects requests containing them.
-    const allMessages = [...messagesRef.current, userMsg]
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => ({ role: m.role, content: m.content }));
-    // Replace last message content with effective content (including attached files context)
-    allMessages[allMessages.length - 1].content = effectiveContent;
+    // The server owns persisted history and compaction. Send only the new turn
+    // rather than retransmitting an ever-growing conversation on every request.
+    const allMessages = [{ role: 'user', content: effectiveContent }];
     const controller = new AbortController();
     abortRef.current = controller;
 

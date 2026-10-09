@@ -4,19 +4,7 @@ import remarkGfm from 'remark-gfm';
 import 'highlight.js/styles/github-dark.css';
 import { Check, Copy } from 'lucide-react';
 import { cn } from '../lib/utils';
-
-let hljs: any = null;
-let hljsLoadPromise: Promise<any> | null = null;
-
-function loadHighlight() {
-  if (hljs) return Promise.resolve(hljs);
-  if (hljsLoadPromise) return hljsLoadPromise;
-  hljsLoadPromise = import('highlight.js').then(mod => {
-    hljs = mod.default;
-    return hljs;
-  });
-  return hljsLoadPromise;
-}
+import { loadHighlight } from '../lib/highlight';
 
 interface Props {
   content: string;
@@ -24,9 +12,9 @@ interface Props {
 
 function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
-  const [highlighted, setHighlighted] = useState(false);
   const codeRef = useRef<HTMLElement>(null);
   const match = /language-(\w+)/.exec(className || '');
+  const language = match?.[1];
   const codeString = String(children).replace(/\n$/, '');
 
   const handleCopy = useCallback(() => {
@@ -37,26 +25,15 @@ function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLE
   }, [codeString]);
 
   useEffect(() => {
-    if (match && codeRef.current && hljs) {
-      try {
-        hljs.highlightElement(codeRef.current);
-        setHighlighted(true);
-      } catch {}
-    }
-  }, [match, codeString]);
-
-  useEffect(() => {
-    if (match && !hljs) {
-      loadHighlight().then(() => {
-        if (codeRef.current) {
-          try {
-            hljs.highlightElement(codeRef.current);
-            setHighlighted(true);
-          } catch {}
-        }
-      });
-    }
-  }, []);
+    if (!language) return;
+    let disposed = false;
+    void loadHighlight(language).then(highlighter => {
+      if (disposed || !codeRef.current || !highlighter.getLanguage(language)) return;
+      codeRef.current.removeAttribute('data-highlighted');
+      highlighter.highlightElement(codeRef.current);
+    }).catch(() => { /* Keep readable plain code when an optional download fails. */ });
+    return () => { disposed = true; };
+  }, [language, codeString]);
 
   if (match) {
     return (

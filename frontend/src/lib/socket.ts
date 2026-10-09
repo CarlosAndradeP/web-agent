@@ -15,10 +15,11 @@ export function getSocket(): Socket | null {
 
 export function connectWithAuth(token: string): Socket {
   if (socketInstance) {
-    // If already connected with same auth, return existing
-    if (socketInstance.connected) return socketInstance;
-    // Disconnect stale instance before reconnecting
-    socketInstance.disconnect();
+    const previousToken = (socketInstance.auth as { token?: string }).token;
+    socketInstance.auth = { token };
+    if (previousToken !== token) socketInstance.disconnect();
+    if (!socketInstance.connected) socketInstance.connect();
+    return socketInstance;
   }
 
   socketInstance = io('/', {

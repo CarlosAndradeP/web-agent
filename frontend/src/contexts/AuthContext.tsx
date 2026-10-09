@@ -177,19 +177,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [accessToken, refreshToken, refreshAuth]);
 
-  // Socket.IO connection using singleton — managed by AuthContext lifecycle.
-  // Re-connect whenever the access token changes so the socket handshake uses
-  // a fresh token (the previous one may have expired after a refresh).
+  // Keep event subscriptions for the user's lifetime. Token renewal updates
+  // the existing socket and reauthenticates without replacing its listeners.
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    if (!user || !accessToken) {
+    const token = accessTokenRef.current;
+    if (!user || !token) {
       disconnectSocket();
       socketRef.current = null;
       return;
     }
 
-    const socket = connectWithAuth(accessToken);
+    const socket = connectWithAuth(token);
     socketRef.current = socket;
 
     const joinRoom = () => {
@@ -199,33 +199,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     socket.on('connect', joinRoom);
     if (socket.connected) joinRoom();
 
-    socket.on('credits:deducted', (data: { userId: string; newBalance: number }) => {
+    const onBalance = (data: { userId: string; newBalance: number }) => {
       if (data.userId === user.id) {
         updateCredits(data.newBalance);
       }
-    });
+    };
+    socket.on('credits:deducted', onBalance);
+    socket.on('credits:added', onBalance);
 
-    socket.on('credits:added', (data: { userId: string; newBalance: number }) => {
-      if (data.userId === user.id) {
-        updateCredits(data.newBalance);
-      }
-    });
-
-    socket.on('credits:exhausted', (data: { userId: string }) => {
+    const onExhausted = (data: { userId: string }) => {
       if (data.userId === user.id) {
         updateCredits(0);
       }
-    });
+    };
+    socket.on('credits:exhausted', onExhausted);
 
     return () => {
       socket.off('connect', joinRoom);
-      socket.off('credits:deducted');
-      socket.off('credits:added');
-      socket.off('credits:exhausted');
+      socket.off('credits:deducted', onBalance);
+      socket.off('credits:added', onBalance);
+      socket.off('credits:exhausted', onExhausted);
       disconnectSocket();
       socketRef.current = null;
     };
-  }, [user?.id, accessToken, updateCredits]);
+  }, [user?.id, updateCredits]);
+
+  useEffect(() => {
+    if (accessToken && user?.id) connectWithAuth(accessToken);
+    else disconnectSocket();
+  }, [accessToken, user?.id]);
 
   return (
     <AuthContext.Provider value={{

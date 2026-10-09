@@ -1,13 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
-import FileManager from './FileManager';
-import ConfigPanel from './ConfigPanel';
-import AdminPanel from './AdminPanel';
-import UserPanel from './UserPanel';
 import Header from './Header';
-import AutonomousPanel from './AutonomousPanel';
-import WordWorkspace from './WordWorkspace';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -21,8 +15,24 @@ import type { Project } from '../types';
 
 type Tab = 'chat' | 'word' | 'autonomous' | 'tasks' | 'files' | 'config' | 'admin' | 'account';
 
+const FileManager = lazy(() => import('./FileManager'));
+const ConfigPanel = lazy(() => import('./ConfigPanel'));
+const AdminPanel = lazy(() => import('./AdminPanel'));
+const UserPanel = lazy(() => import('./UserPanel'));
+const AutonomousPanel = lazy(() => import('./AutonomousPanel'));
+const WordWorkspace = lazy(() => import('./WordWorkspace'));
+
+function PanelFallback() {
+  return <div role="status" className="flex h-full items-center justify-center text-sm text-zinc-500">Loading panel...</div>;
+}
+
 export default function Layout() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set<Tab>(['chat']));
+  useEffect(() => {
+    setVisitedTabs(previous => previous.has(activeTab) ? previous : new Set([...previous, activeTab]));
+  }, [activeTab]);
+  const shouldRender = (tab: Tab) => activeTab === tab || visitedTabs.has(tab);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -201,10 +211,10 @@ export default function Layout() {
             )}
           </div>
           <div className={activeTab === 'autonomous' ? 'h-full' : 'h-full hidden'}>
-            <AutonomousPanel sessionId={effectiveSessionId} onCreditsRequired={openCreditsPanel} />
+            {shouldRender('autonomous') && <Suspense fallback={<PanelFallback />}><AutonomousPanel sessionId={effectiveSessionId} onCreditsRequired={openCreditsPanel} /></Suspense>}
           </div>
           <div className={activeTab === 'word' ? 'h-full' : 'h-full hidden'}>
-            <WordWorkspace onStreamingChange={setIsChatStreaming} onCreditsRequired={openCreditsPanel} />
+            {shouldRender('word') && <Suspense fallback={<PanelFallback />}><WordWorkspace onStreamingChange={setIsChatStreaming} onCreditsRequired={openCreditsPanel} /></Suspense>}
           </div>
           <div className={activeTab === 'tasks' ? 'h-full' : 'h-full hidden'}>
             <div className="flex items-center justify-center h-full">
@@ -212,19 +222,19 @@ export default function Layout() {
             </div>
           </div>
           <div className={activeTab === 'files' ? 'h-full' : 'h-full hidden'}>
-            <FileManager basePath={activeProject?.folderPath || '.'} />
+            {shouldRender('files') && <Suspense fallback={<PanelFallback />}><FileManager basePath={activeProject?.folderPath || '.'} /></Suspense>}
           </div>
           <div className={activeTab === 'config' ? 'h-full' : 'h-full hidden'}>
-            <ConfigPanel />
+            {shouldRender('config') && <Suspense fallback={<PanelFallback />}><ConfigPanel /></Suspense>}
           </div>
           {isAdmin && (
             <div className={activeTab === 'admin' ? 'h-full' : 'h-full hidden'}>
-              <AdminPanel />
+              {shouldRender('admin') && <Suspense fallback={<PanelFallback />}><AdminPanel /></Suspense>}
             </div>
           )}
           {!isAdmin && (
             <div className={activeTab === 'account' ? 'h-full' : 'h-full hidden'}>
-              <UserPanel initialTab={accountInitialTab} />
+              {shouldRender('account') && <Suspense fallback={<PanelFallback />}><UserPanel initialTab={accountInitialTab} /></Suspense>}
             </div>
           )}
         </main>

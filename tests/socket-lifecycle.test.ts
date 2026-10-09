@@ -12,24 +12,36 @@ test('socket events subscribed before connection survive authentication reconnec
   const oldLocation = (globalThis as any).location;
   (globalThis as any).location = new URL(`http://127.0.0.1:${(http.address() as any).port}`);
   const received: string[] = [];
+  const tokens: string[] = [];
   const dispose = onSocketEvent('test:notification', value => received.push(value));
-  server.on('connection', socket => { socket.on('test:request', value => socket.emit('test:notification', value)); });
+  server.on('connection', socket => {
+    tokens.push(socket.handshake.auth.token);
+    socket.on('test:request', value => socket.emit('test:notification', value));
+  });
   try {
     const first = connectWithAuth('first-token');
     await once(first, 'connect');
+    assert.equal(connectWithAuth('first-token'), first);
     first.emit('test:request', 'first');
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.deepEqual(received, ['first']);
+    const renewed = connectWithAuth('renewed-token');
+    assert.equal(renewed, first, 'token renewal preserves the socket and subscriptions');
+    await once(renewed, 'connect');
+    renewed.emit('test:request', 'renewed');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(received, ['first', 'renewed']);
+    assert.deepEqual(tokens, ['first-token', 'renewed-token']);
     disconnectSocket();
     const second = connectWithAuth('second-token');
     await once(second, 'connect');
     second.emit('test:request', 'second');
     await new Promise(resolve => setTimeout(resolve, 100));
-    assert.deepEqual(received, ['first', 'second']);
+    assert.deepEqual(received, ['first', 'renewed', 'second']);
     dispose();
     second.emit('test:request', 'after-dispose');
     await new Promise(resolve => setTimeout(resolve, 100));
-    assert.deepEqual(received, ['first', 'second']);
+    assert.deepEqual(received, ['first', 'renewed', 'second']);
   } finally {
     dispose(); disconnectSocket();
     await new Promise<void>(resolve => server.close(() => resolve()));

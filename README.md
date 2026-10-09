@@ -44,6 +44,20 @@ npm run dev:frontend
 
 ## Features
 
+### Communication and resource usage
+
+- Chat requests send only the newest user turn; the server reconstructs saved history and compaction context.
+- Concurrent model-catalog requests share one upstream call per URL and credential pair. Successful results are cached for five minutes; failures for 30 seconds. Changing API settings invalidates the cache, including pending old responses.
+- Socket token renewal reuses the connection object and listeners while performing a new authenticated handshake.
+- SSE waits for slow clients to drain their buffers, and announces task IDs before provider initialization so cancellation is available while connecting.
+- Secondary panels load on first opening and then remain mounted to preserve active work. Common code languages use a smaller highlighting bundle, with the full bundle loaded only when an uncommon language needs it.
+
+To verify the local proxy integration without consuming inference quota:
+
+```bash
+node --import tsx scripts/verify-proxy-integration.ts ../Claude-api
+```
+
 ### Multi-user
 - JWT login/register with transparent 401 retry and token rotation
 - Admin can pause new registrations (toggle in Settings panel)

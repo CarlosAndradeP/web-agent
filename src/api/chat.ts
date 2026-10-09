@@ -14,6 +14,7 @@ import { config } from '../config.js';
 import { mkdirSync } from 'node:fs';
 import { createLogger } from '../services/logger.js';
 import { getUserWorkspaceDir, resolveUserWorkspacePath } from '../lib/workspace-paths.js';
+import { writeSse } from '../lib/sse.js';
 
 const log = createLogger('ChatAPI');
 
@@ -253,7 +254,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
     res.setHeader('X-Accel-Buffering', 'no');
 
     const keepAlive = setInterval(() => {
-      res.write(': keepalive\n\n');
+      if (!res.destroyed && !res.writableEnded && !res.writableNeedDrain) res.write(': keepalive\n\n');
     }, 15000);
 
     res.on('close', () => {
@@ -281,9 +282,8 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
 
     try {
       log.info('Starting stream for task', { taskId: task.id });
+      await writeSse(res, { type: 'task-start', taskId: task.id });
       const eventStream = await taskManager.streamTask(task.id);
-
-      res.write(`data: ${JSON.stringify({ type: 'task-start', taskId: task.id })}\n\n`);
 
       let totalEvents = 0;
       for await (const event of eventStream) {
@@ -332,7 +332,7 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
           }
         }
         if (event.type === 'tool-result') saveProgress('running');
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        await writeSse(res, event);
       }
 
       log.info('Stream finished', { taskId: task.id, totalEvents });
@@ -341,24 +341,24 @@ export function createChatRouter(db: Database.Database, taskManager: TaskManager
       const finalTask = taskManager.getTask(task.id);
       if (finalTask?.status === 'cancelled') {
         saveProgress('cancelled');
-        res.write(`data: ${JSON.stringify({ type: 'cancelled', taskId: task.id })}\n\n`);
+        await writeSse(res, { type: 'cancelled', taskId: task.id });
         res.end();
         return;
       }
       if (finalTask?.status !== 'completed') throw new Error(finalTask?.error || 'Task did not complete');
       saveProgress('completed');
-      res.write(`data: ${JSON.stringify({
+      await writeSse(res, {
         type: 'finish',
         taskId: task.id,
         createdFiles: allCreatedFiles.slice(0, 5),
         createdFileCount: allCreatedFiles.length,
-      })}\n\n`);
+      });
       res.end();
     } catch (err: any) {
       saveProgress(taskManager.getTask(task.id)?.status === 'cancelled' ? 'cancelled' : 'failed', err.message);
       log.error('Stream error in chat', { taskId: task.id, error: err.message, stack: err.stack });
       try {
-        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message, taskId: task.id })}\n\n`);
+        await writeSse(res, { type: 'error', error: err.message, taskId: task.id });
         res.end();
       } catch {
         log.error('Failed to write error to SSE response', { taskId: task.id });
